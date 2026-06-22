@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
     sentiment_confidence_threshold: float = 0.55
+    internal_api_token: str = ""
 
     class Config:
         env_file = ".env"

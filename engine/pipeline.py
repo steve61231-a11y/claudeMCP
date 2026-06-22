@@ -112,6 +112,12 @@ def run_pipeline(db: Session, politician: Politician, period: str, window_start:
 
     influence_ranking = influence.score_influence(stored_mentions, sentiments_by_mention)
 
+    db.commit()
+
+    # Neo4j writes happen only after the Postgres commit succeeds, so the graph
+    # never records mentions/edges that don't actually exist in the source of
+    # truth. upsert_mentions uses MERGE throughout, so re-running after a crash
+    # here is safe and won't duplicate nodes/edges.
     graph.upsert_mentions(politician.id, politician.name, stored_mentions)
     network_snapshot = graph.get_network_snapshot(politician.id)
 

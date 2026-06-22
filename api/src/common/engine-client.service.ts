@@ -8,6 +8,9 @@ export class EngineClientService {
   constructor() {
     this.client = axios.create({
       baseURL: process.env.ENGINE_URL ?? 'http://engine:8000',
+      headers: process.env.INTERNAL_API_TOKEN
+        ? { 'X-Internal-Token': process.env.INTERNAL_API_TOKEN }
+        : {},
     });
   }
 
