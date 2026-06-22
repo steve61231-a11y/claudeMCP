@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+node_modules/
+dist/
+mock-data/fixtures/
+*.egg-info/
+.venv/
