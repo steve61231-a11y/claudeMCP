@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "socialcrawl": {
+      "command": "npx",
+      "args": ["-y", "socialcrawl-mcp"],
+      "env": {
+        "SOCIALCRAWL_API_KEY": "${SOCIALCRAWL_API_KEY}"
+      }
+    }
+  }
+}
