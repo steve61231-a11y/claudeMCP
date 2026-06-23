@@ -12,14 +12,11 @@ SOCIALCRAWL_BRAND_MENTIONS_PATH = "/v1/prism/brand-mentions"
 class SocialCrawlConnector(IngestionConnector):
     """Real ingestion source backed by the SocialCrawl API (prism/brand-mentions).
 
-    Field names for individual mentions in the response are inferred from
-    SocialCrawl's published endpoint description (mention volume time-series,
-    sentiment split, top sources, recent mentions) rather than a confirmed
-    live response body — `www.socialcrawl.dev` was not reachable from this
-    sandbox's network egress allowlist at the time this was written. Access
-    is defensive (`.get()` with fallbacks) so a few mismatched field names
-    degrade rather than crash; re-verify against a real response once egress
-    is available and tighten the mapping if needed.
+    `recent_mentions` items are web-content-analysis hits (news/blog pages
+    mentioning the keyword), not native social posts: there's no
+    platform/author/engagement field, just url/domain, a snippet, a
+    `fetch_time` timestamp, and a per-item `sentiment`/`connotation` score
+    breakdown. The mapping below is based on a confirmed live response body.
     """
 
     def __init__(self, api_key: str | None = None):
@@ -51,21 +48,18 @@ class SocialCrawlConnector(IngestionConnector):
 
         mentions: list[IngestedMention] = []
         for item in recent_mentions:
-            posted_at_raw = item.get("posted_at") or item.get("published_at") or item.get("date")
+            posted_at_raw = item.get("date_published") or item.get("fetch_time") or item.get("posted_at")
             posted_at = self._parse_datetime(posted_at_raw) if posted_at_raw else window_end
 
-            engagement = item.get("engagement") or {
-                "likes": item.get("likes", 0),
-                "shares": item.get("shares", 0),
-                "comments": item.get("comments", 0),
-            }
+            content_info = (item.get("_raw") or {}).get("content_info") or {}
+            engagement = item.get("engagement") or (item.get("_raw") or {}).get("social_metrics") or {}
 
             mentions.append(
                 IngestedMention(
-                    platform=item.get("platform", "unknown"),
-                    source_type=item.get("source_type", "social_post"),
-                    author_handle=item.get("author") or item.get("author_handle") or item.get("username") or "unknown",
-                    text=item.get("text") or item.get("snippet") or item.get("content") or "",
+                    platform=item.get("platform") or item.get("domain") or "web",
+                    source_type=item.get("source_type") or self._infer_source_type(item.get("page_types")),
+                    author_handle=item.get("author") or content_info.get("author") or item.get("domain") or "unknown",
+                    text=item.get("text") or item.get("snippet") or content_info.get("snippet") or "",
                     posted_at=posted_at,
                     engagement=engagement,
                     raw_payload=item,
@@ -74,5 +68,19 @@ class SocialCrawlConnector(IngestionConnector):
         return mentions
 
     @staticmethod
+    def _infer_source_type(page_types: list[str] | None) -> str:
+        if not page_types:
+            return "web_page"
+        if "news" in page_types:
+            return "article"
+        if "blogs" in page_types:
+            return "blog_post"
+        return page_types[0]
+
+    @staticmethod
     def _parse_datetime(value: str) -> datetime:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            # SocialCrawl's `fetch_time` uses "YYYY-MM-DD HH:MM:SS +00:00" (space, no "T").
+            return datetime.strptime(value.split(" +")[0].split(" -")[0], "%Y-%m-%d %H:%M:%S")

@@ -10,14 +10,21 @@ CURATED_DIR = Path(__file__).resolve().parent.parent.parent / "mock-data" / "cur
 def get_ingestion_connector(politician_name: str | None = None) -> IngestionConnector:
     """Picks a connector without pipeline.py knowing which one it got:
 
-    1. Curated real-world fixture for this politician, if one exists
-       (`mock-data/curated/<slug>.json`) — used when the engine's own network
-       can't reach news/social APIs directly (e.g. this sandbox's egress
-       allowlist), but real content has been gathered out-of-band.
-    2. NewsApiConnector, if NEWSAPI_KEY is configured and newsapi.org is
+    1. SocialCrawlConnector, if SOCIALCRAWL_API_KEY is configured — live
+       web/social mention data, preferred over the other sources when
+       available.
+    2. Curated real-world fixture for this politician, if one exists
+       (`mock-data/curated/<slug>.json`) — used when no live API key is
+       configured but real content has been gathered out-of-band.
+    3. NewsApiConnector, if NEWSAPI_KEY is configured and newsapi.org is
        reachable from this deployment.
-    3. Mock fixtures otherwise.
+    4. Mock fixtures otherwise.
     """
+    if settings.socialcrawl_api_key:
+        from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
+
+        return SocialCrawlConnector()
+
     if politician_name:
         slug = politician_name.lower().replace(" ", "_")
         if (CURATED_DIR / f"{slug}.json").exists():
