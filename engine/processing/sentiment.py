@@ -24,6 +24,20 @@ def local_sentiment(text: str) -> dict:
     return {"sentiment": label, "confidence": confidence, "intensity": intensity}
 
 
+def local_sentiment_available() -> bool:
+    """Probes whether the local model can actually be loaded, without raising.
+
+    Deployments without network access to HuggingFace Hub (or that simply
+    haven't pre-cached the model) shouldn't crash the pipeline — they should
+    fall back to the LLM for every mention instead of just low-confidence ones.
+    """
+    try:
+        get_local_pipeline()
+        return True
+    except Exception:
+        return False
+
+
 CONTEXT_PROMPT = """Classify the political tone and intensity of this social media text about a politician.
 
 Text: "{text}"
@@ -47,7 +61,13 @@ def llm_sentiment_and_context(text: str) -> dict:
 def analyze_sentiment(text: str) -> dict:
     """Local model for the bulk; escalate low-confidence mentions and always
     use the LLM for the context_tag, since that's a nuance local models don't capture.
+    Falls back to LLM-only when the local model can't be loaded at all (e.g. no
+    network access to HuggingFace Hub in this deployment).
     """
+    if not local_sentiment_available():
+        llm_result = llm_sentiment_and_context(text)
+        return {**llm_result, "source": "llm"}
+
     local_result = local_sentiment(text)
     if local_result["confidence"] < settings.sentiment_confidence_threshold:
         llm_result = llm_sentiment_and_context(text)

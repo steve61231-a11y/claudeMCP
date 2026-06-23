@@ -5,7 +5,7 @@ psycopg2-binary==2.9.9
 pydantic==2.9.2
 pydantic-settings==2.5.2
 neo4j==5.24.0
-anthropic==0.36.0
+anthropic==0.111.0
 sentence-transformers==3.1.1
 hdbscan==0.8.38.post1
 scikit-learn==1.5.2

@@ -18,7 +18,17 @@ def get_embedder():
 
 
 def embed_texts(texts: list[str]) -> np.ndarray:
-    return get_embedder().encode(texts, show_progress_bar=False)
+    """Sentence-transformer embeddings, falling back to TF-IDF when the model
+    can't be loaded (e.g. no network access to HuggingFace Hub). TF-IDF is a
+    weaker semantic signal but keeps narrative clustering working instead of
+    crashing the pipeline.
+    """
+    try:
+        return get_embedder().encode(texts, show_progress_bar=False)
+    except Exception:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+
+        return TfidfVectorizer(max_features=512).fit_transform(texts).toarray()
 
 
 def cluster_mentions(texts: list[str]) -> list[int]:

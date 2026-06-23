@@ -1,0 +1,155 @@
+[
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Daily Nation",
+    "text": "Senator Edwin Sifuna, the ODM secretary-general, is gaining significant grassroots momentum, particularly among young Kenyans, with fans breaking into chants of his name during HSBC SVNS 2 matches at Nyayo National Stadium, a spontaneous show of support amid his standoff with the party leadership.",
+    "posted_at": "2026-01-18T10:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.tuko.co.ke/entertainment/celebrities/617958-edwin-sifuna-hsbc-svns-2-fans-chant-embattled-odm-secretary-generals-nyayo-stadium/"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "People Daily",
+    "text": "Oketch Salah, who describes himself as the late Raila Odinga's adopted son, claimed in Kisumu on Christmas Eve that Raila had grown doubtful of Edwin Sifuna's loyalty before his death and had predicted Sifuna would become a mole inside ODM serving outsiders' interests, undermining party leader Oburu Oginga who is aligned with President Ruto.",
+    "posted_at": "2025-12-24T18:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://peopledaily.digital/inside-politics/oketch-salah-raila-told-me-that-sifuna-is-someones-mole-in-odm"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "People Daily",
+    "text": "Lawyer Nelson Havi defended ODM Secretary-General Edwin Sifuna against accusations that he is a mole in the party, arguing that Sifuna plays far too significant a role to be dismissed that way: \"Edwin Sifuna is so significant an animal in ODM that he cannot be a mole. He is definitely an elephant in ODM.\"",
+    "posted_at": "2025-12-26T09:30:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://peopledaily.digital/inside-politics/nelson-havi-defends-sifuna-against-accusations-of-being-a-mole-in-odm"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Tuko.co.ke",
+    "text": "Kisumu woman representative Ruth Odinga, sister of the late Raila Odinga, dismissed Oketch Salah's claims that Raila had grown suspicious of Edwin Sifuna's loyalty, insisting that Raila was not the kind of leader who whispered suspicions behind closed doors and that Sifuna was Raila's son too.",
+    "posted_at": "2025-12-27T08:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.tuko.co.ke/politics/613716-ruth-odinga-trashes-oketch-salahs-claims-railas-suspicion-edwin-sifuna-lying/"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Daily Nation",
+    "text": "Sifuna declared that ODM is one of Raila Odinga's most enduring political legacies, saying: \"ODM is one of Baba's greatest legacies, and I will do everything in my power to keep it united, even in the face of open provocation,\" as open animosity grows between ODM chairperson Gladys Wanga and Sifuna over the party's future direction in the post-Raila era.",
+    "posted_at": "2026-02-02T12:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://nation.africa/kenya/news/politics/odm-battle-royale-how-sifuna-s-fate-will-be-decided-5412794"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "The Star",
+    "text": "ODM's National Executive Committee voted to remove Edwin Sifuna as the party's secretary-general, escalating the long-running internal battle over his outspoken criticism of the ODM-UDA cooperation agreement with President William Ruto's government.",
+    "posted_at": "2026-02-11T14:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.the-star.co.ke/news/2026-02-11-odm-kicks-out-sifuna-as-sg"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "The Star",
+    "text": "James Orengo insisted that Edwin Sifuna remains ODM secretary-general regardless of the NEC vote, telling reporters the move to remove him was procedurally improper and amounted to a coup against due process within the party.",
+    "posted_at": "2026-02-12T11:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.the-star.co.ke/news/2026-02-12-orengo-sifuna-is-still-odm-secretary-general"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Daily Nation",
+    "text": "Ida Odinga, widow of the late Raila Odinga, publicly questioned ODM's decision to remove Edwin Sifuna from the secretary-general position, urging the party to pursue dialogue over expulsion and warning against actions that could fracture the party her husband built.",
+    "posted_at": "2026-02-13T09:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://nation.africa/kenya/news/politics/the-case-against-edwin-sifuna-odm-trains-guns-on-him-anew-5503556"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Kenyans.co.ke",
+    "text": "The Political Parties Disputes Tribunal allowed ODM's disciplinary case against Edwin Sifuna to proceed, ruling that the party is cleared to revive disciplinary proceedings against its embattled secretary-general, while leaving the question of his removal from office unresolved.",
+    "posted_at": "2026-03-10T15:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.kenyans.co.ke/news/124433-tribunal-rules-odm-failed-follow-fair-hearing-rules-sifuna-case"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "People Daily",
+    "text": "Sifuna faulted President Ruto's administration for what he termed as \"open lies\" regarding the country's fuel pricing situation, following a sudden increase of roughly Ksh40 per litre barely two weeks after government reassurances that prices would remain stable.",
+    "posted_at": "2026-04-08T10:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://peopledaily.digital/inside-politics/sifuna-calls-out-ruto-for-giving-misleading-information-on-fuel-situation"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "The Africa Report",
+    "text": "Sifuna has emerged as one of the most vocal opponents of ODM's new relationship with Kenya Kwanza, insisting the party should remain firmly in opposition; he alleged that police travelled to Homa Bay after the cooperation deal was signed, picked up a young man from his home, and later killed him in a Nairobi police cell, accusing Ruto of intruding into ODM's internal affairs.",
+    "posted_at": "2026-04-22T13:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.theafricareport.com/388704/kenya-inside-rutos-silent-assault-on-the-opposition-and-sifunas-lone-stand/"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Daily Nation",
+    "text": "Edwin Sifuna's Linda Mwananchi movement is positioning itself as a third force ahead of the 2027 presidential race, challenging the dominant political formations and giving Sifuna a support base independent of ODM's internal politics.",
+    "posted_at": "2026-05-05T09:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://nation.africa/kenya/news/politics/edwin-sifuna-s-linda-mwananchi-the-making-of-a-third-force-in-2027-presidential-race-5368350"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "People Daily",
+    "text": "ODM formally served Secretary-General Edwin Sifuna with a show-cause notice citing acts of gross misconduct that could lead to his removal from office, restarting the disciplinary process the tribunal had earlier said breached due process.",
+    "posted_at": "2026-06-05T11:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://peopledaily.digital/inside-politics/edwin-sifuna-served-show-cause-notice-by-odm-party"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Kenyans.co.ke",
+    "text": "Nairobi Senator Edwin Sifuna was removed from the Senate Energy Committee, chaired by ODM party leader Oburu Oginga, in the latest standing-committee reshuffle, a move widely read as institutional retaliation against his continued criticism of the ODM-UDA cooperation deal.",
+    "posted_at": "2026-06-17T10:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.kenyans.co.ke/news/124395-sifuna-removed-energy-committee-latest-senate-reshuffle"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Daily Nation",
+    "text": "The Political Parties Disputes Tribunal ruled in favour of Nairobi Senator Edwin Sifuna, declaring his removal as ODM secretary-general unjust because the NEC breached due process and gave him no fair hearing, while still allowing the party to commence fresh disciplinary proceedings if they comply with the party constitution.",
+    "posted_at": "2026-06-18T16:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://nation.africa/kenya/news/tribunal-nullifies-sifuna-ouster-as-odm-sg-but-allows-disciplinary-5501290"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Tuko.co.ke",
+    "text": "ODM leader Oburu Oginga's faction is laying the groundwork for a fresh, procedurally clean attempt to push Edwin Sifuna out of the party, learning from the tribunal's earlier finding that the first removal attempt was unlawful only because of process, not substance.",
+    "posted_at": "2026-06-21T08:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.tuko.co.ke/politics/630197-kenyan-newspapers-june-21-oburu-ogingas-faction-lays-trap-sifuna-out/"}
+  },
+  {
+    "platform": "news",
+    "source_type": "article",
+    "author_handle": "Tuko.co.ke",
+    "text": "Senator Cherargei, a Kenya Kwanza-aligned lawmaker, called on ODM to eject Edwin Sifuna from the secretary-general post, describing him as a threat to the broad-based government arrangement between ODM and President Ruto's administration.",
+    "posted_at": "2026-06-21T14:00:00",
+    "engagement": {"likes": 0, "shares": 0, "comments": 0},
+    "raw_payload": {"url": "https://www.tuko.co.ke/politics/613457-senator-cherargei-calls-edwin-sifunas-removal-odm-sg-s-threat-broad-based-govt/"}
+  }
+]

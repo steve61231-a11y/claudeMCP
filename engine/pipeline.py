@@ -20,7 +20,7 @@ from engine.reports.generator import generate_report_payload
 
 
 def run_pipeline(db: Session, politician: Politician, period: str, window_start: datetime, window_end: datetime) -> IntelligenceReport:
-    raw_mentions = get_ingestion_connector().fetch(politician.name, politician.aliases, window_start, window_end)
+    raw_mentions = get_ingestion_connector(politician.name).fetch(politician.name, politician.aliases, window_start, window_end)
     cleaned = cleaning.clean_mentions(raw_mentions)
     cleaned = [m for m in cleaned if not m["is_spam"]]
 
