@@ -1,4 +1,6 @@
 import os
+import runpy
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -9,6 +11,15 @@ from engine.db.models import Base
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql+psycopg2://postgres:postgres@localhost:5432/political_intel_test"
 )
+
+MOCK_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "mock-data"
+
+
+def pytest_configure(config):
+    """mock-data/fixtures/ is gitignored (generated, not checked in), so
+    regenerate it from generate.py if it's missing on a fresh checkout."""
+    if not (MOCK_DATA_DIR / "fixtures").exists():
+        runpy.run_path(str(MOCK_DATA_DIR / "generate.py"), run_name="__main__")
 
 
 @pytest.fixture()
