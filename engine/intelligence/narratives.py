@@ -6,14 +6,21 @@ import numpy as np
 from engine import llm
 
 _embedder = None
+_embedder_unavailable = False
 
 
 def get_embedder():
-    global _embedder
+    global _embedder, _embedder_unavailable
+    if _embedder_unavailable:
+        raise RuntimeError("Sentence embedder previously failed to load")
     if _embedder is None:
         from sentence_transformers import SentenceTransformer
 
-        _embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        try:
+            _embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception:
+            _embedder_unavailable = True
+            raise
     return _embedder
 
 

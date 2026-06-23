@@ -1,4 +1,15 @@
+import os
+
 from pydantic_settings import BaseSettings
+
+# huggingface.co isn't on most deployment egress allowlists for this engine,
+# and huggingface_hub's connection retry/backoff (~30s) runs per file fetch
+# inside model loading, independent of our own fallback caching. Default to
+# offline mode so missing HF access fails in milliseconds, not minutes;
+# `os.environ.setdefault` still lets an operator override this explicitly
+# (e.g. HF_HUB_OFFLINE=0) where HF Hub access is actually configured.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 
 class Settings(BaseSettings):
