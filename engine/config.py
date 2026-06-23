@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     sentiment_confidence_threshold: float = 0.55
     internal_api_token: str = ""
     newsapi_key: str = ""
+    socialcrawl_api_key: str = ""
 
     class Config:
         env_file = ".env"
