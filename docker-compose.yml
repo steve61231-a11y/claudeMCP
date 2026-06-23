@@ -31,6 +31,7 @@ services:
       NEO4J_PASSWORD: password
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
     ports:
       - "8000:8000"
     depends_on:

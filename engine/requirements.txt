@@ -12,3 +12,4 @@ scikit-learn==1.5.2
 spacy==3.7.5
 numpy==1.26.4
 alembic==1.13.3
+requests==2.32.3
