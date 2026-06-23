@@ -2,16 +2,23 @@ from engine import llm
 from engine.config import settings
 
 _local_pipeline = None
+_local_pipeline_unavailable = False
 
 
 def get_local_pipeline():
-    global _local_pipeline
+    global _local_pipeline, _local_pipeline_unavailable
+    if _local_pipeline_unavailable:
+        raise RuntimeError("Local sentiment model previously failed to load")
     if _local_pipeline is None:
         from transformers import pipeline
 
-        _local_pipeline = pipeline(
-            "sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english"
-        )
+        try:
+            _local_pipeline = pipeline(
+                "sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english"
+            )
+        except Exception:
+            _local_pipeline_unavailable = True
+            raise
     return _local_pipeline
 
 
