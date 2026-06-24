@@ -230,3 +230,74 @@ def test_fetch_profile_activity_isolates_per_platform_failures(monkeypatch):
     assert len(mentions) == 1
     assert mentions[0]["platform"] == "linkedin"
     assert mentions[0]["source_type"] == "rival_activity"
+
+
+def test_fetch_discovery_pulls_comments_for_posts_with_ids(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "tiktok/search/hashtag" in url:
+            return FakeResponse({"success": True, "data": {}})
+        if "tiktok/search" in url:
+            return FakeResponse(
+                {
+                    "success": True,
+                    "data": {
+                        "videos": [
+                            {"id": "vid123", "text": "Sifuna on TikTok", "author": "@user1"}
+                        ]
+                    },
+                }
+            )
+        if "tiktok/post/comments" in url:
+            assert params["id"] == "vid123"
+            return FakeResponse(
+                {"success": True, "data": {"comments": [{"text": "So true!", "username": "fan1"}]}}
+            )
+        return FakeResponse({"success": True, "data": {}})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    mentions = connector._fetch_discovery(
+        "Edwin Sifuna", [], datetime(2026, 6, 1), datetime(2026, 6, 22)
+    )
+
+    comment_mentions = [m for m in mentions if m["source_type"] == "comment"]
+    assert len(comment_mentions) == 1
+    assert comment_mentions[0]["author_handle"] == "fan1"
+    assert comment_mentions[0]["platform"] == "tiktok"
+
+
+def test_discover_handles_returns_candidates_per_platform(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "tiktok/search/users" in url:
+            return FakeResponse(
+                {"success": True, "data": {"users": [{"username": "@edwinsifuna_official"}]}}
+            )
+        if "youtube/search" in url:
+            return FakeResponse(
+                {"success": True, "data": {"items": [{"channel_name": "Edwin Sifuna"}]}}
+            )
+        return FakeResponse({"success": True, "data": {}})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    candidates = connector.discover_handles("Edwin Sifuna")
+
+    assert candidates["tiktok"] == ["@edwinsifuna_official"]
+    assert candidates["youtube"] == ["Edwin Sifuna"]
+
+
+def test_discover_handles_isolates_platform_failures(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "tiktok/search/users" in url:
+            raise RuntimeError("rate limited")
+        return FakeResponse({"success": True, "data": {"items": [{"channel_name": "Edwin Sifuna"}]}})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    candidates = connector.discover_handles("Edwin Sifuna")
+
+    assert candidates["tiktok"] == []
+    assert candidates["youtube"] == ["Edwin Sifuna"]

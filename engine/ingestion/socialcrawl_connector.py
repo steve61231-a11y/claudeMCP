@@ -37,6 +37,14 @@ class SocialCrawlConnector(IngestionConnector):
         if not self.api_key:
             raise RuntimeError("SOCIALCRAWL_API_KEY is not configured")
 
+    # Platforms with a top-level comment endpoint reachable from a discovery
+    # search result (post/video id), used to pull grassroots reaction data
+    # for the most-engaged items found during discovery.
+    _COMMENT_ENDPOINTS = {
+        "tiktok": "/v1/tiktok/post/comments",
+        "youtube": "/v1/youtube/video/comments",
+    }
+
     def fetch(
         self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
     ) -> list[IngestedMention]:
@@ -44,6 +52,57 @@ class SocialCrawlConnector(IngestionConnector):
         mentions.extend(self._fetch_brand_mentions(politician_name, window_start, window_end))
         mentions.extend(self._fetch_discovery(politician_name, aliases, window_start, window_end))
         return mentions
+
+    def discover_handles(self, politician_name: str) -> dict[str, list[str]]:
+        """Best-effort handle discovery for politicians we don't yet have a
+        known profile/handle for. Returns platform -> candidate handles,
+        for the caller (or operator) to confirm before they're persisted to
+        `Politician.social_handles` and used with `fetch_profile_activity`.
+        """
+        candidates: dict[str, list[str]] = {}
+        try:
+            candidates["tiktok"] = self._discover_tiktok_users(politician_name)
+        except Exception:
+            candidates["tiktok"] = []
+        try:
+            candidates["youtube"] = self._discover_youtube_channels(politician_name)
+        except Exception:
+            candidates["youtube"] = []
+        return candidates
+
+    def _discover_tiktok_users(self, query: str) -> list[str]:
+        response = requests.get(
+            f"{SOCIALCRAWL_BASE_URL}/v1/tiktok/search/users",
+            params={"query": query},
+            headers={"x-api-key": self.api_key},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success", True):
+            return []
+        data = body.get("data", body)
+        users = data.get("results") or data.get("items") or data.get("users") or []
+        return [u.get("username") or u.get("handle") for u in users if isinstance(u, dict) and (u.get("username") or u.get("handle"))]
+
+    def _discover_youtube_channels(self, query: str) -> list[str]:
+        response = requests.get(
+            f"{SOCIALCRAWL_BASE_URL}/v1/youtube/search",
+            params={"query": query, "type": "channel"},
+            headers={"x-api-key": self.api_key},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success", True):
+            return []
+        data = body.get("data", body)
+        channels = data.get("results") or data.get("items") or data.get("videos") or []
+        return [
+            c.get("channel_id") or c.get("channel_url") or c.get("channel_name")
+            for c in channels
+            if isinstance(c, dict) and (c.get("channel_id") or c.get("channel_url") or c.get("channel_name"))
+        ]
 
     def fetch_profile_activity(
         self, handles: dict[str, str], window_start: datetime, window_end: datetime, source_type: str = "post"
@@ -130,11 +189,18 @@ class SocialCrawlConnector(IngestionConnector):
         ]
         for platform, path, default_source_type in discovery_calls:
             try:
-                mentions.extend(
-                    self._call_search_endpoint(platform, path, default_source_type, politician_name)
-                )
+                posts = self._call_search_endpoint(platform, path, default_source_type, politician_name)
             except Exception:
                 continue
+            mentions.extend(posts)
+            comment_endpoint = self._COMMENT_ENDPOINTS.get(platform)
+            if not comment_endpoint:
+                continue
+            for post in posts:
+                try:
+                    mentions.extend(self._fetch_comments_for_post(platform, comment_endpoint, post))
+                except Exception:
+                    continue
         return mentions
 
     def _call_search_endpoint(
@@ -159,6 +225,40 @@ class SocialCrawlConnector(IngestionConnector):
             if not isinstance(item, dict):
                 continue
             mentions.append(self._map_social_item(platform, default_source_type, item))
+        return mentions
+
+    def _fetch_comments_for_post(
+        self, platform: str, comment_endpoint: str, post: IngestedMention
+    ) -> list[IngestedMention]:
+        """Pulls grassroots reaction data for a discovered post — comments
+        are treated as core ingestion signal (not optional) since they
+        often carry the actual sentiment/narrative, distinct from the
+        post text itself.
+        """
+        post_payload = post.get("raw_payload") or {}
+        post_id = post_payload.get("id") or post_payload.get("video_id") or post_payload.get("post_id")
+        if not post_id:
+            return []
+
+        response = requests.get(
+            f"{SOCIALCRAWL_BASE_URL}{comment_endpoint}",
+            params={"id": post_id, "video_id": post_id, "post_id": post_id},
+            headers={"x-api-key": self.api_key},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success", True):
+            return []
+
+        data = body.get("data", body)
+        comments = data.get("results") or data.get("items") or data.get("comments") or []
+
+        mentions: list[IngestedMention] = []
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
+            mentions.append(self._map_social_item(platform, "comment", comment))
         return mentions
 
     def _fetch_profile_video_posts(
