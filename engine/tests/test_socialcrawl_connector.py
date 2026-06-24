@@ -78,3 +78,155 @@ def test_missing_api_key_raises(monkeypatch):
     monkeypatch.setattr("engine.ingestion.socialcrawl_connector.settings.socialcrawl_api_key", "")
     with pytest.raises(RuntimeError):
         SocialCrawlConnector(api_key="")
+
+
+def test_fetch_discovery_maps_native_social_results(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "tiktok/search" in url:
+            return FakeResponse(
+                {
+                    "success": True,
+                    "data": {
+                        "videos": [
+                            {
+                                "text": "Sifuna trends on TikTok",
+                                "author": "@kenyanvoices",
+                                "created_at": "2026-06-18T12:00:00Z",
+                                "engagement": {"likes": 500, "shares": 20},
+                            }
+                        ]
+                    },
+                }
+            )
+        if "linkedin/search/posts" in url:
+            return FakeResponse(
+                {
+                    "success": True,
+                    "data": {
+                        "posts": [
+                            {
+                                "text": "Senator Sifuna addresses the Senate.",
+                                "username": "james-orengo",
+                                "published_at": "2026-06-19T08:00:00Z",
+                            }
+                        ]
+                    },
+                }
+            )
+        return FakeResponse({"success": True, "data": {}})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    mentions = connector._fetch_discovery(
+        "Edwin Sifuna", ["Sifuna"], datetime(2026, 6, 1), datetime(2026, 6, 22)
+    )
+
+    platforms = {m["platform"] for m in mentions}
+    assert "tiktok" in platforms
+    assert "linkedin" in platforms
+    tiktok_mention = next(m for m in mentions if m["platform"] == "tiktok")
+    assert tiktok_mention["author_handle"] == "@kenyanvoices"
+    assert tiktok_mention["engagement"] == {"likes": 500, "shares": 20}
+
+
+def test_fetch_discovery_isolates_per_platform_failures(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "twitter/ai-search" in url:
+            raise RuntimeError("rate limited")
+        if "youtube/search" in url and "hashtag" not in url:
+            return FakeResponse(
+                {
+                    "success": True,
+                    "data": {
+                        "videos": [
+                            {
+                                "title": "Sifuna interview",
+                                "channel_name": "Citizen TV",
+                                "timestamp": "2026-06-17T09:00:00Z",
+                            }
+                        ]
+                    },
+                }
+            )
+        return FakeResponse({"success": False, "error": {"type": "INSUFFICIENT_CREDITS"}})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    mentions = connector._fetch_discovery(
+        "Edwin Sifuna", [], datetime(2026, 6, 1), datetime(2026, 6, 22)
+    )
+
+    assert len(mentions) == 1
+    assert mentions[0]["platform"] == "youtube"
+    assert mentions[0]["author_handle"] == "Citizen TV"
+
+
+def test_fetch_profile_activity_maps_handle_based_results(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "tiktok/profile/videos" in url:
+            return FakeResponse(
+                {
+                    "success": True,
+                    "data": {
+                        "videos": [
+                            {
+                                "text": "Official update from Sifuna.",
+                                "created_at": "2026-06-20T10:00:00Z",
+                                "engagement": {"likes": 1200},
+                            }
+                        ]
+                    },
+                }
+            )
+        return FakeResponse({"success": True, "data": {}})
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    mentions = connector.fetch_profile_activity(
+        {"tiktok": "@edwinsifuna_official"},
+        datetime(2026, 6, 1),
+        datetime(2026, 6, 22),
+        source_type="post",
+    )
+
+    assert len(mentions) == 1
+    assert mentions[0]["platform"] == "tiktok"
+    assert mentions[0]["author_handle"] == "@edwinsifuna_official"
+    assert mentions[0]["engagement"] == {"likes": 1200}
+
+
+def test_fetch_profile_activity_skips_missing_handles(monkeypatch):
+    monkeypatch.setattr("requests.get", lambda *a, **k: FakeResponse({"success": True, "data": {}}))
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    mentions = connector.fetch_profile_activity(
+        {"tiktok": "", "facebook": None}, datetime(2026, 6, 1), datetime(2026, 6, 22)
+    )
+
+    assert mentions == []
+
+
+def test_fetch_profile_activity_isolates_per_platform_failures(monkeypatch):
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if "youtube/channel/videos" in url:
+            raise RuntimeError("network error")
+        return FakeResponse(
+            {"success": True, "data": {"posts": [{"text": "Rival post", "username": "rival_handle"}]}}
+        )
+
+    monkeypatch.setattr("requests.get", fake_get)
+
+    connector = SocialCrawlConnector(api_key="sc_test-key")
+    mentions = connector.fetch_profile_activity(
+        {"youtube": "rivalchannel", "linkedin": "rival-co"},
+        datetime(2026, 6, 1),
+        datetime(2026, 6, 22),
+        source_type="rival_activity",
+    )
+
+    assert len(mentions) == 1
+    assert mentions[0]["platform"] == "linkedin"
+    assert mentions[0]["source_type"] == "rival_activity"

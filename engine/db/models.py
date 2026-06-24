@@ -28,6 +28,7 @@ class Politician(Base):
     name = Column(String, nullable=False)
     aliases = Column(ARRAY(String), default=list)
     keywords = Column(ARRAY(String), default=list)
+    social_handles = Column(JSONB, default=dict)  # {"tiktok": "...", "youtube": "...", ...}
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
