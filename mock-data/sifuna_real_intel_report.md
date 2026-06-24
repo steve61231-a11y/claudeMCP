@@ -1,63 +1,64 @@
-# Intelligence Report — Hon. Edwin Sifuna (Nairobi Senator / ODM Secretary-General)
-Window: rolling, as of 2026-06-22 | Sources: public news media, X/Twitter posts surfaced via search, Facebook public posts
+# Intelligence Report — Hon. Edwin Sifuna (Nairobi Senator / ODM Secretary-General, contested)
+Window: rolling, as of 2026-06-24 | Sources: public news media, X/Twitter posts surfaced via search, Facebook public posts
+Supersedes: prior version dated 2026-06-22
 
 ## Methodology note (read first)
-This is a real-data pilot, not a demo run of the mocked pipeline. Two hard constraints in this environment ruled out running the built engine as-is:
-- No `ANTHROPIC_API_KEY` is configured here, so the engine's LLM steps (indirect-mention detection, context tagging, narrative labeling) can't call the real Claude API.
-- HuggingFace Hub is unreachable from this sandbox, so the local sentiment/embedding models can't be downloaded either.
+Same constraints as the prior pass: no `ANTHROPIC_API_KEY` is configured here, so the engine's LLM steps can't run, and HuggingFace Hub is unreachable so local sentiment/embedding models can't be downloaded. The SocialCrawl MCP connection is also returning "Invalid API key" on the balance check, so live native-social ingestion (now wired into the codebase as of this week) still can't be exercised end-to-end. This report is therefore again built by hand from live web search of real news coverage, done directly rather than mocked. Once `SOCIALCRAWL_API_KEY` is valid, the next refresh should run through `engine.pipeline` instead of this manual process.
 
-Rather than fake it with mocks again, I went around the engine entirely for this pass: I used live web search to pull real news coverage, real X posts, and real public reactions about Sifuna, and did the sentiment/narrative/influence analysis myself directly on that real text — which is exactly the kind of judgment call the engine's LLM step is designed to make. This proves the *analytical* value before investing in scrapers. Wiring real ingestion connectors (so this runs unattended) is a follow-on step, not done here.
-
----
+## What changed since the 2026-06-22 report
+The situation escalated from "reversed-but-unresolved" to a **second full ouster cycle** within 48 hours:
+- **June 18, 2026**: Political Parties Disputes Tribunal (PPDT) ruled ODM breached due process in the *first* removal attempt — Sifuna was not given notice his conduct would be discussed — and overturned it. The tribunal explicitly left the door open for ODM to refile a procedurally clean disciplinary case.
+- **June 22, 2026**: ODM did exactly that. Interim SG Catherine Omanyo announced the NEC unanimously adopted a fresh Internal Dispute Resolution Mechanism (IDRM) committee's recommendation and **removed Sifuna as Secretary-General a second time**.
+- **June 23, 2026**: Sifuna and the Linda Mwananchi faction rejected the second ouster as a repeat of "the same flawed and unconstitutional process," and confirmed a new court/tribunal challenge is being filed.
+- ODM's defense (via NEC member Amollo): this time Sifuna *was* given a chance to defend himself before the committee, framing the redo as procedurally cured.
+- Separately, Linda Mwananchi (Sifuna's cross-party reform/cooperation-deal-opposition platform with Orengo and Babu Owino) has a **three-day nationwide protest run scheduled for June 24–26, 2026** — i.e., starting today — turning this from a pure intra-ODM personnel dispute into a live street-mobilization event coinciding with the second ouster.
 
 ## Executive Summary
-Edwin Sifuna is in the middle of the most consequential fight of his political career: an attempted ouster from the ODM Secretary-General role, reversed by a tribunal but not resolved. The story has stopped being about any single issue and has become a referendum on **who controls ODM's identity after Raila Odinga's death** — Sifuna positions himself as the keeper of "Baba's legacy" and opposition independence; the Wanga/Oburu Oginga wing positions him as a destabilizing obstacle to the ODM-Ruto cooperation deal. He is winning procedurally (tribunal ruled in his favor) and street-level (youth chanting his name at Nyayo Stadium) but losing institutionally (stripped of his Senate Energy Committee seat, disciplinary case revived). This is a live, escalating reputational and positioning battle — not a steady-state sentiment baseline — which is the highest-value kind of intelligence a comms team can act on.
+Edwin Sifuna is now in his second consecutive ouster cycle as ODM Secretary-General within roughly four months (first ouster February 11; reversed by tribunal June 18; re-ousted June 22). The pattern itself has become the story: ODM leadership keeps removing him, a tribunal keeps finding procedural defects, and Sifuna keeps returning to court rather than conceding. This is no longer a single contested personnel decision — it's a recurring institutional fight whose repetition is starting to read, in coverage, as either (a) a genuinely irreconcilable faction unable to win cleanly, or (b) a target who will not accept any outcome short of total vindication, depending on which side's framing you credit. The timing collision with Linda Mwananchi's June 24–26 nationwide protests means the next 72 hours will likely produce the loudest, most visible test yet of whether his grassroots base converts into organized pressure on the party leadership.
 
 ## Sentiment Breakdown
-- **Net sentiment is polarized, not uniformly negative or positive** — it splits cleanly along factional lines rather than the general public.
-- **Pro-Sifuna sentiment**: framed around loyalty to Raila's legacy, anti-establishment defiance, due-process vindication (tribunal win), and youth/grassroots energy (Nyayo Stadium chants). Allies James Orengo, Babu Owino, Nelson Havi, and Ida Odinga have made public statements in his defense — this is a *positive elite-endorsement signal*, not just crowd sentiment.
-- **Anti-Sifuna sentiment**: concentrated among ODM-Kenya Kwanza cooperation backers (Oburu Oginga, Cherargei, Oketch Salah) and framed around accusations of disloyalty, "mole" rhetoric, and being a "political liability." The "mole" narrative is a deliberate character attack, not policy disagreement — a reputational risk pattern worth flagging.
-- **Net read**: Sifuna's sentiment is *bimodal and intensifying* — he is simultaneously more loved and more attacked than six months ago. A single "% positive / % negative" score would actively mislead a campaign team here; the real signal is the widening gap between his base and his internal-party detractors.
+- **Still bimodal, now sharper.** The second ouster has not softened either side — if anything, ODM's "we gave him a fair hearing this time" framing (Amollo) is a direct rebuttal aimed at neutralizing the due-process narrative that worked for Sifuna last time, suggesting the institutional side has gotten more disciplined/legally careful, not less determined.
+- **Pro-Sifuna**: Linda Mwananchi statement frames the second removal as "the same February illegality" repeated — i.e., bad-faith repetition rather than a fresh, legitimate process. This is a stronger rhetorical position than after the first ouster (the tribunal already proved one bad-faith attempt) but only holds if the second process is actually similarly flawed; ODM's rebuttal that he was now given a hearing is a real risk to this framing.
+- **Anti-Sifuna**: ODM's institutional position has hardened from informal "mole" rhetoric (which carried whiff of factional grudge) toward a procedurally-documented disciplinary record (IDRM review → NEC vote), which is harder to dismiss as a pure power grab even if the underlying motive is unchanged.
+- **Net read**: the fight has moved from "narrative battle" toward "documentation battle" — both sides are now building paper trails (tribunal rulings, IDRM reports, NEC minutes) rather than just dueling press statements. That's a higher-stakes, slower-resolving conflict than the June 22 snapshot suggested.
 
 ## Recurring Narratives (ranked by apparent volume/persistence)
-1. **"Guardian of Raila's legacy" vs. "Mole/saboteur"** — the dominant frame. Two competing identity narratives are being fought over the same set of facts.
-2. **ODM-UDA "cooperation agreement" legitimacy** — Sifuna is the lead dissenting voice; this is his signature policy position and the proximate cause of nearly every disciplinary action against him.
-3. **Due process / institutional fairness** — the tribunal ruling that ODM's NEC breached due process removing him is being used (by allies) as proof he's being persecuted unlawfully, which converts a party squabble into a rule-of-law story with broader resonance.
-4. **Succession vacuum post-Raila** — open Wanga-vs-Sifuna tension is being read by media as a proxy war for who actually inherits ODM, elevating every Sifuna story's stakes well beyond his formal title.
-5. **Cost-of-living criticism (fuel pricing)** — a secondary, more conventional opposition-politician narrative; lower intensity than the internal ODM fight but keeps him visible as a Ruto critic independent of the party drama.
-6. **Police brutality allegation tied to the cooperation deal** — Sifuna linked a Homa Bay killing to post-agreement police conduct; this is a high-risk, high-reward narrative (serious if substantiated, easily weaponized against him if not).
+1. **The "repeat ouster" pattern itself** — new and now dominant. Coverage increasingly treats the recurrence (not the individual ouster) as the story: ODM has now tried to remove Sifuna twice in four months, with the same core complaint each time.
+2. **Due process vs. "procedurally cured" claim** — Sifuna's central defense (no fair hearing) was validated once by the tribunal; ODM is now explicitly claiming to have fixed that defect this round. Whether independent observers buy the "cured" framing will likely determine which way the next tribunal ruling goes.
+3. **ODM-UDA cooperation agreement legitimacy** — unchanged as the proximate cause; Sifuna remains the highest-profile internal dissenting voice against the deal.
+4. **Linda Mwananchi as a parallel power base** — elevated this cycle by the June 24–26 protest schedule. The platform (Sifuna + Orengo + Babu Owino + Osotsi) is no longer just a defense network for Sifuna individually; it's organizing independent nationwide mobilization, which changes the stakes of removing him — ODM isn't just disciplining an SG, it's confronting a faction with its own mobilizing capacity.
+5. **Succession vacuum post-Raila** — still live but now secondary to the repeat-ouster procedural story.
+6. **Cost-of-living / fuel pricing criticism** — lower-intensity, holds Sifuna's profile as a Ruto critic independent of the internal ODM fight.
 
 ## Influence Drivers / Network Insights
-- **Defenders (amplifiers)**: James Orengo, Babu Owino, Nelson Havi (legal commentary, high-reach), Ida Odinga, Ruth Odinga. Notably this includes both political heavyweights (Orengo) and a legal/media-savvy voice (Havi) whose framing ("elephant, not a mole") is quotable and spreading.
-- **Attackers (counter-amplifiers)**: Oburu Oginga (ODM party leader, institutional weight), Oketch Salah (claims insider knowledge of Raila's private views — highest-damage-potential single source), Senator Cherargei (Kenya Kwanza-aligned, frames Sifuna as a threat to the broad-based government).
-- **Swing/credibility node**: Ida Odinga and Ruth Odinga's interventions matter disproportionately because they can authenticate or debunk claims about what Raila "really thought" of Sifuna — whoever the Odinga family sides with publicly likely determines how the "mole" narrative resolves.
-- **Grassroots signal**: unscripted public chanting at a sporting event (Nyayo Stadium) is a meaningfully different and harder-to-fake signal than online engagement — worth weighting more heavily than social media volume alone.
+- **Linda Mwananchi core**: James Orengo (Siaya Governor), Babu Owino (Embakasi East MP), Godfrey Osotsi (Vihiga Senator) — this is now a standing political platform with its own protest calendar, not just an ad-hoc defense coalition. Worth noting reporting also flags a quiet "Orengo-Sifuna supremacy" undercurrent within the same faction — the alliance is not perfectly unified internally.
+- **ODM institutional side**: Interim SG Catherine Omanyo (face of the second ouster announcement), NEC member Amollo (public defender of the process's fairness this round), Oburu Oginga (party leader, chaired the original February ouster).
+- **Adversarial framing risk for ODM**: Amollo's "we gave him a chance" statement is a direct, falsifiable claim — if the IDRM hearing record contradicts it, ODM's institutional credibility on process (already damaged once) takes a second hit; if it holds up, it meaningfully weakens Sifuna's strongest prior argument.
+- **Grassroots/mobilization signal**: the June 24-26 nationwide protests are a harder, more measurable signal than the Nyayo Stadium chanting noted previously — turnout numbers and police response over the next three days will be a much stronger indicator of real public backing than social sentiment alone.
 
 ## Reputation Risks
-- The "mole" accusation is the single biggest risk: it's an attack on loyalty/character rather than policy, made by someone claiming to channel Raila's private judgment — hard to disprove and emotionally potent with ODM's base.
-- Disciplinary proceedings are not over (tribunal ruled on process, not on the underlying merits) — there's a real possibility of a second, procedurally clean removal attempt.
-- The police-brutality allegation, if it doesn't hold up, is reputationally riskier than the political fight itself — unsubstantiated serious allegations against police/government can boomerang.
-- Being stripped of the Senate Energy Committee seat signals institutional isolation that could compound if more committee/leadership roles are stripped.
+- **Pattern fatigue**: a second ouster cycle risks the public/media narrative shifting from "Sifuna is being unfairly targeted" to "this is just recurring ODM dysfunction," which dilutes sympathy for either side and could make Sifuna look like a permanent fixture of party chaos rather than a clean victim.
+- **The "procedurally cured" defense is the single biggest near-term threat** to Sifuna's position — if ODM can credibly show he got a hearing this time, his strongest available argument from round one is gone, and he's reduced to disputing findings/merits rather than process, a much harder case to win in court or in public opinion.
+- **Protest-timing risk**: launching/continuing nationwide protests at the exact moment of a fresh disciplinary action invites a "using street pressure to escape internal party discipline" framing from opponents — a card Kenya Kwanza-aligned and cooperation-deal-supporting voices will likely play.
+- Carried forward: the unsubstantiated police-brutality allegation tied to the cooperation deal remains a live reputational exposure if it doesn't hold up to scrutiny.
 
 ## Opportunities
-- The due-process win is a ready-made "vindication" message — currently being underused beyond legal commentary; could be the basis of a public messaging push ("they tried to remove me unlawfully and got caught").
-- Youth/grassroots enthusiasm (Nyayo Stadium) suggests an opening to build a base independent of ODM internal politics — could be cultivated into a standalone political identity if the ODM relationship continues to deteriorate.
-- Positioning as Raila's legacy-keeper resonates strongly with a still-grieving ODM base; doubling down on continuity-of-Raila's-values messaging (vs. relitigating the cooperation deal) may be the highest-leverage narrative to own.
+- **Speed of the second tribunal challenge matters**: if Sifuna's team can get a fast ruling (as they did within days for the first one), a quick second vindication would convert "they tried it again and lost again" into a powerful, simple message — far stronger than the original due-process win alone.
+- **June 24-26 protests as a controlled demonstration of strength**: if turnout is large and peaceful, it's a concrete, hard-to-dispute signal of base support that can be used in both court-adjacent public messaging and intra-ODM bargaining — but only if it stays disciplined and doesn't hand opponents a "chaos/instability" narrative instead.
+- Continuity-of-Raila's-legacy positioning remains available and untouched by this week's events — still the highest-resonance frame with the ODM base if the procedural fight starts to feel exhausting to the public.
 
 ## Emerging Trends to Watch
-- Whether Ida Odinga / Ruth Odinga make any further public statement — this will likely be the deciding signal in the "mole" narrative.
-- The next ODM NEC/disciplinary move — likely within weeks given the tribunal explicitly left the door open for a fairer process.
-- Whether the youth/grassroots support converts into organized backing (rallies, social campaigns) or stays anecdotal.
-- Spillover from the fuel-price/cost-of-living criticism merging with the anti-cooperation-deal narrative into a single "Sifuna vs. Ruto" frame, independent of ODM's internal fight.
+- **Outcome of the second tribunal/court filing** — the single most decisive near-term event; watch specifically whether the ruling addresses ODM's "this time we gave him a hearing" claim directly.
+- **Turnout and tone of the June 24-26 Linda Mwananchi protests** — already underway as of this report's date; first-day coverage should be checked immediately for scale and any unrest framing.
+- Whether ODM moves to fill the SG seat on an acting basis before the legal challenge resolves — would signal institutional confidence in the second ouster holding.
+- Any statement from Ida Odinga/Ruth Odinga on this specific second-ouster round — their continued silence or a fresh intervention remains the swing signal for how the "who really speaks for Raila's legacy" narrative resolves.
+- Whether Kenya Kwanza-aligned or cooperation-deal-supporting voices explicitly tie the protests to "Sifuna evading party discipline" — would mark a narrative escalation beyond anything seen in the prior report.
 
 ---
 
 ## Does this clear the bar of "basic sentiment analysis"?
-Yes, materially:
-- It identifies **two competing identity narratives** fighting over the same facts, not just a positive/negative score.
-- It maps a **real influence network** (who's amplifying, who's attacking, who's the swing voice) with named actors and their apparent motives.
-- It flags **specific, actionable reputation risks** (the mole narrative, the unsubstantiated police allegation) distinct from general negative sentiment.
-- It surfaces a **concrete messaging opportunity** (the due-process vindication) that a comms team could act on this week.
-- It calls out where a single sentiment number would be *actively misleading* (bimodal sentiment split along factional lines) — which is exactly the kind of nuance a campaign manager pays for.
-
-What it does *not* yet do, and would need real ingestion to do well: quantify volume/velocity over time, give per-platform breakdowns, or catch smaller/less-covered voices that never make national news (the engine's whole reason for existing). This report proves the analysis is valuable; it doesn't yet prove it at the scale and freshness real connectors would provide.
+Yes, and more clearly than the prior version:
+- It identifies the **shift in conflict structure** itself (narrative battle → documentation/procedural battle) as the most important development, not just a refreshed positive/negative tally.
+- It flags a **specific, falsifiable claim in dispute** (was Sifuna given a fair hearing the second time) as the actual hinge point of the story — actionable for anyone deciding which side's framing to credit.
+- It connects a **scheduling collision** (protests starting the same week as the second ouster) to a concrete reputational risk (the "evading discipline via street pressure" counter-narrative) that wasn't present in the prior report.
+- It gives a same-day actionable item — checking June 24-26 protest turnout/tone — rather than only retrospective analysis.
