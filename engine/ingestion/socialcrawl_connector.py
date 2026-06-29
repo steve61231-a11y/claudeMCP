@@ -332,19 +332,18 @@ class SocialCrawlConnector(IngestionConnector):
             SocialCrawlConnector._parse_datetime(posted_at_raw) if posted_at_raw else datetime.utcnow()
         )
 
-        engagement = item.get("engagement") or item.get("stats") or item.get("metrics") or {}
+        engagement = (
+            item.get("engagement") or item.get("stats") or item.get("metrics") or item.get("activity") or {}
+        )
+
+        author = item.get("author") or item.get("author_handle") or item.get("username") or item.get("channel_name")
+        if isinstance(author, dict):
+            author = author.get("username") or author.get("handle") or author.get("name") or author.get("url")
 
         return IngestedMention(
             platform=platform,
             source_type=item.get("source_type") or default_source_type,
-            author_handle=(
-                item.get("author")
-                or item.get("author_handle")
-                or item.get("username")
-                or item.get("channel_name")
-                or author_fallback
-                or "unknown"
-            ),
+            author_handle=author or author_fallback or "unknown",
             text=item.get("text") or item.get("caption") or item.get("title") or item.get("description") or "",
             posted_at=posted_at,
             engagement=engagement,
