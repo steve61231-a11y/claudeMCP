@@ -10,24 +10,46 @@ let sentimentChartInstance = null;
 let volumeChartInstance = null;
 let networkInstance = null;
 
-searchForm.addEventListener("submit", (e) => {
+const API_BASE = window.PULSE_API_BASE || "http://localhost:8000";
+
+searchForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const query = searchInput.value.trim();
   if (!query) return;
 
-  const report = findReport(query);
-  if (report) {
-    renderReport(report);
-    showReportScreen();
-    return;
-  }
+  setLoading(true, `Running the live pipeline for "${query}"…`);
 
-  // No live data wired up for this name yet — fall back to the demo dataset
-  // rather than dead-ending the user.
-  searchHint.textContent = `No live report for "${query}" yet — showing the demo report for Edwin Sifuna instead.`;
-  renderReport(REPORTS["edwin sifuna"]);
-  showReportScreen();
+  try {
+    const res = await fetch(`${API_BASE}/api/report`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: query }),
+    });
+    const body = await res.json();
+    if (res.ok && body.ok && body.report) {
+      renderReport(body.report);
+      showReportScreen();
+      setLoading(false);
+      return;
+    }
+    throw new Error(body.error || "Live pipeline returned no data");
+  } catch (err) {
+    // Backend not reachable, out of API credits, or no data for this name —
+    // never dead-end the demo, fall back to the bundled dataset.
+    const fallback = findReport(query) || REPORTS["edwin sifuna"];
+    searchHint.textContent = `Live pipeline unavailable (${err.message}) — showing the demo report for ${fallback.name} instead.`;
+    renderReport(fallback);
+    showReportScreen();
+    setLoading(false);
+  }
 });
+
+function setLoading(isLoading, message) {
+  const btn = searchForm.querySelector("button");
+  btn.disabled = isLoading;
+  btn.textContent = isLoading ? "Generating…" : "Generate report";
+  if (message) searchHint.textContent = message;
+}
 
 backBtn.addEventListener("click", () => {
   reportScreen.classList.add("hidden");
@@ -140,7 +162,7 @@ function renderInfluence(list) {
     <div class="influence-item">
       <span class="rank">#${i.rank}</span>
       <span class="score">${i.score}</span>
-      <span class="who">${i.who} <span class="muted small">(${i.platform})</span></span>
+      <span class="who">${i.who}${i.platform ? ` <span class="muted small">(${i.platform})</span>` : ""}</span>
       <span class="note">${i.note}</span>
       <span class="sentiment-num ${i.sentiment >= 0 ? "pos" : "neg"}">${i.sentiment > 0 ? "+" : ""}${i.sentiment}</span>
     </div>
