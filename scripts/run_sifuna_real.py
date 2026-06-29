@@ -47,14 +47,36 @@ from engine.pipeline import run_pipeline  # noqa: E402  (import after monkeypatc
 
 db = SessionLocal()
 try:
+    sifuna_aliases = [
+        "Sifuna",
+        "Sen. Sifuna",
+        "Senator Sifuna",
+        "Edwin Sifuna",
+        "Edwin Ochieng Sifuna",
+        "Edwin Ochieng",
+        "Hon. Sifuna",
+        "Honorable Sifuna",
+        "Hon Sifuna",
+        "ODM SG Sifuna",
+        "ODM Secretary General Sifuna",
+        "Sifuna ODM",
+        "Senator for Nairobi Sifuna",
+        "Nairobi Senator Sifuna",
+    ]
+    sifuna_keywords = ["ODM", "Nairobi Senator", "secretary-general", "Secretary General"]
+
     politician = db.query(Politician).filter_by(name="Edwin Sifuna").first()
     if not politician:
         politician = Politician(
             name="Edwin Sifuna",
-            aliases=["Sifuna", "Sen. Sifuna", "Edwin Ochieng Sifuna"],
-            keywords=["ODM", "Nairobi Senator", "secretary-general"],
+            aliases=sifuna_aliases,
+            keywords=sifuna_keywords,
         )
         db.add(politician)
+        db.commit()
+    elif politician.aliases != sifuna_aliases or politician.keywords != sifuna_keywords:
+        politician.aliases = sifuna_aliases
+        politician.keywords = sifuna_keywords
         db.commit()
 
     report = run_pipeline(
