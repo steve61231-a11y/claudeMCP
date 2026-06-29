@@ -5,10 +5,12 @@ This is intentionally permissive (CORS wide open, no auth) — it's meant for a
 live walkthrough in a sandbox, not production. Tighten before any real deploy.
 """
 
+import threading
 import traceback
+import uuid
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -206,20 +208,44 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
     }
 
 
-@app.post("/api/report")
-def generate_report(req: ReportRequest):
+# Report generation (LLM calls, entity-linking, sentiment) easily exceeds the
+# request timeout of a free-tier hosting platform's load balancer, which kills
+# the connection mid-flight and surfaces as a generic "Failed to fetch" in the
+# browser. Run it in a background thread and have the frontend poll instead
+# of holding one long-lived request open.
+_jobs: dict[str, dict] = {}
+
+
+def _run_report_job(job_id: str, name: str) -> None:
     db = SessionLocal()
     try:
-        politician = _ensure_politician(db, req.name.strip())
+        politician = _ensure_politician(db, name)
         window_end = datetime.utcnow()
         window_start = window_end - timedelta(days=210)
         report = run_pipeline(db, politician, period="live-demo", window_start=window_start, window_end=window_end)
-        return {"ok": True, "report": _build_frontend_payload(politician, report)}
+        _jobs[job_id] = {"status": "done", "ok": True, "report": _build_frontend_payload(politician, report)}
     except Exception as exc:  # noqa: BLE001 - demo endpoint must never hard-fail the UI
         traceback.print_exc()
-        return {"ok": False, "error": str(exc)}
+        _jobs[job_id] = {"status": "done", "ok": False, "error": str(exc)}
     finally:
         db.close()
+
+
+@app.post("/api/report")
+def generate_report(req: ReportRequest):
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {"status": "running"}
+    thread = threading.Thread(target=_run_report_job, args=(job_id, req.name.strip()), daemon=True)
+    thread.start()
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/api/report/{job_id}")
+def get_report(job_id: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="unknown job_id")
+    return job
 
 
 @app.get("/api/health")
