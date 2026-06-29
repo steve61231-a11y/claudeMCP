@@ -34,12 +34,17 @@ searchForm.addEventListener("submit", async (e) => {
     }
     throw new Error(body.error || "Live pipeline returned no data");
   } catch (err) {
-    // Backend not reachable, out of API credits, or no data for this name —
-    // never dead-end the demo, fall back to the bundled dataset.
-    const fallback = findReport(query) || REPORTS["edwin sifuna"];
-    searchHint.textContent = `Live pipeline unavailable (${err.message}) — showing the demo report for ${fallback.name} instead.`;
-    renderReport(fallback);
-    showReportScreen();
+    // Only substitute the bundled dataset when the search is actually about
+    // one of its subjects (e.g. "Edwin Sifuna") — silently swapping in Sifuna's
+    // report for an unrelated name would be misleading, not a safe fallback.
+    const fallback = findReport(query);
+    if (fallback) {
+      searchHint.textContent = `Live pipeline unavailable (${err.message}) — showing the demo report for ${fallback.name} instead.`;
+      renderReport(fallback);
+      showReportScreen();
+    } else {
+      searchHint.textContent = `Couldn't generate a live report for "${query}" (${err.message}). Try again in a moment, or search "Edwin Sifuna" for a demo report.`;
+    }
     setLoading(false);
   }
 });

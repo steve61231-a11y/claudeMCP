@@ -1,4 +1,5 @@
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import numpy as np
@@ -82,10 +83,12 @@ def build_narratives(mentions: list[dict]) -> list[dict]:
             continue
         clusters[label].append(mention)
 
-    results = []
-    for cluster_id, cluster_mentions_ in clusters.items():
-        meta = label_cluster([m["text"] for m in cluster_mentions_])
+    cluster_items = list(clusters.items())
+    with ThreadPoolExecutor(max_workers=max(1, len(cluster_items))) as pool:
+        metas = list(pool.map(lambda kv: label_cluster([m["text"] for m in kv[1]]), cluster_items))
 
+    results = []
+    for (cluster_id, cluster_mentions_), meta in zip(cluster_items, metas):
         engagement_total = sum(
             m["engagement"].get("likes", 0) + m["engagement"].get("shares", 0) * 2 + m["engagement"].get("comments", 0)
             for m in cluster_mentions_

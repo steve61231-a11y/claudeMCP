@@ -200,9 +200,9 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
             }
             for n in payload["narrative_breakdown"]
         ],
-        "risks": [],
-        "opportunities": [],
-        "trends": [],
+        "risks": payload.get("risks", []),
+        "opportunities": payload.get("opportunities", []),
+        "trends": payload.get("trends", []),
     }
 
 

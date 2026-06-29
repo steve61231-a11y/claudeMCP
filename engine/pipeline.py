@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,19 @@ from engine.ingestion import get_ingestion_connector
 from engine.intelligence import graph, influence, narratives as narrative_module
 from engine.processing import cleaning, entities, sentiment
 from engine.reports.generator import generate_report_payload
+from engine.reports.sections import enrich_report_payload
+
+_PER_MENTION_WORKERS = 10
+
+
+def _link_and_score(item: dict, politician: Politician) -> tuple[dict, dict, dict] | None:
+    """Runs the two LLM-backed steps (entity-link, sentiment) for one mention.
+    Pure computation, no DB access, so many of these can run concurrently."""
+    link = entities.detect_entity_link(item["text"], politician.name, politician.aliases, politician.keywords)
+    if not link:
+        return None
+    sentiment_result = sentiment.analyze_sentiment(item["text"])
+    return item, link, sentiment_result
 
 
 def run_pipeline(db: Session, politician: Politician, period: str, window_start: datetime, window_end: datetime) -> IntelligenceReport:
@@ -30,12 +44,14 @@ def run_pipeline(db: Session, politician: Politician, period: str, window_start:
         db.add(politician_entity)
         db.flush()
 
-    stored_mentions: list[dict] = []
-    for item in cleaned:
-        link = entities.detect_entity_link(item["text"], politician.name, politician.aliases, politician.keywords)
-        if not link:
-            continue
+    # The expensive part of this loop is two sequential LLM round-trips per
+    # mention (entity-link, sentiment) — run them concurrently across mentions
+    # rather than one mention at a time, then do the DB writes sequentially.
+    with ThreadPoolExecutor(max_workers=_PER_MENTION_WORKERS) as pool:
+        linked = [r for r in pool.map(lambda item: _link_and_score(item, politician), cleaned) if r is not None]
 
+    stored_mentions: list[dict] = []
+    for item, link, sentiment_result in linked:
         mention = RawMention(
             politician_id=politician.id,
             platform=item["platform"],
@@ -60,7 +76,6 @@ def run_pipeline(db: Session, politician: Politician, period: str, window_start:
             )
         )
 
-        sentiment_result = sentiment.analyze_sentiment(item["text"])
         db.add(
             MentionSentiment(
                 mention_id=mention.id,
@@ -129,6 +144,7 @@ def run_pipeline(db: Session, politician: Politician, period: str, window_start:
         influence_ranking,
         network_snapshot,
     )
+    payload = enrich_report_payload(politician.name, window_start, window_end, payload)
 
     report = IntelligenceReport(
         politician_id=politician.id,
