@@ -236,7 +236,8 @@ class SocialCrawlConnector(IngestionConnector):
         post text itself.
         """
         post_payload = post.get("raw_payload") or {}
-        post_id = post_payload.get("id") or post_payload.get("video_id") or post_payload.get("post_id")
+        post_fields = post_payload.get("post") if isinstance(post_payload.get("post"), dict) else post_payload
+        post_id = post_fields.get("id") or post_fields.get("video_id") or post_fields.get("post_id")
         if not post_id:
             return []
 
@@ -322,29 +323,53 @@ class SocialCrawlConnector(IngestionConnector):
     def _map_social_item(
         platform: str, default_source_type: str, item: dict, author_fallback: str | None = None
     ) -> IngestedMention:
+        # Some search surfaces (TikTok/YouTube as of the latest SocialCrawl
+        # schema) wrap the actual post under a `post` envelope alongside a
+        # `computed` block (engagement_rate, estimated_reach, etc.) instead
+        # of returning post fields at the top level. Unwrap it so field
+        # lookups below work for either shape; raw_payload keeps the full
+        # original item (including `computed`) for traceability.
+        fields = item.get("post") if isinstance(item.get("post"), dict) else item
+        content = fields.get("content") if isinstance(fields.get("content"), dict) else {}
+
         posted_at_raw = (
-            item.get("created_at")
-            or item.get("posted_at")
-            or item.get("published_at")
-            or item.get("timestamp")
+            fields.get("created_at")
+            or fields.get("posted_at")
+            or fields.get("published_at")
+            or fields.get("timestamp")
         )
         posted_at = (
             SocialCrawlConnector._parse_datetime(posted_at_raw) if posted_at_raw else datetime.utcnow()
         )
 
         engagement = (
-            item.get("engagement") or item.get("stats") or item.get("metrics") or item.get("activity") or {}
+            fields.get("engagement") or fields.get("stats") or fields.get("metrics") or fields.get("activity") or {}
         )
+        # SocialCrawl's TikTok/YouTube schema explicitly nulls unset metrics
+        # (e.g. {"likes": null}) rather than omitting the key, which breaks
+        # downstream `.get(key, 0)` defaults. Strip nulls so missing-metric
+        # handling stays consistent across platforms.
+        engagement = {k: v for k, v in engagement.items() if v is not None}
 
-        author = item.get("author") or item.get("author_handle") or item.get("username") or item.get("channel_name")
+        author = fields.get("author") or fields.get("author_handle") or fields.get("username") or fields.get("channel_name")
         if isinstance(author, dict):
             author = author.get("username") or author.get("handle") or author.get("name") or author.get("url")
 
+        text = (
+            fields.get("text")
+            or fields.get("caption")
+            or fields.get("title")
+            or fields.get("description")
+            or content.get("text")
+            or content.get("caption")
+            or ""
+        )
+
         return IngestedMention(
             platform=platform,
-            source_type=item.get("source_type") or default_source_type,
+            source_type=fields.get("source_type") or default_source_type,
             author_handle=author or author_fallback or "unknown",
-            text=item.get("text") or item.get("caption") or item.get("title") or item.get("description") or "",
+            text=text,
             posted_at=posted_at,
             engagement=engagement,
             raw_payload=item,
