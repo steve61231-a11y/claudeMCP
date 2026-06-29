@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pulse — Political Intelligence Reports</title>
+<link rel="stylesheet" href="style.css" />
+<script src="vendor/chart.umd.js"></script>
+<script src="vendor/vis-network.min.js"></script>
+</head>
+<body>
+
+<div class="bg-blobs">
+  <div class="blob blob-1"></div>
+  <div class="blob blob-2"></div>
+  <div class="blob blob-3"></div>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    <span>Pulse</span>
+  </div>
+  <div class="topbar-sub">Political intelligence, generated</div>
+</header>
+
+<!-- Search screen -->
+<section id="search-screen" class="screen">
+  <div class="glass search-card">
+    <h1>Generate an intelligence report</h1>
+    <p class="muted">Enter a politician's name to pull their sentiment, volume, influence and network breakdown.</p>
+    <form id="search-form">
+      <input id="search-input" type="text" placeholder="e.g. Edwin Sifuna" autocomplete="off" />
+      <button type="submit">Generate report</button>
+    </form>
+    <div id="search-hint" class="muted small">Try “Edwin Sifuna” for a live demo report.</div>
+  </div>
+</section>
+
+<!-- Report screen -->
+<section id="report-screen" class="screen hidden">
+  <div class="report-shell">
+
+    <div class="report-header glass">
+      <div>
+        <button id="back-btn" class="ghost-btn">&larr; New search</button>
+        <h1 id="r-name">—</h1>
+        <div class="muted" id="r-title">—</div>
+        <div class="muted small" id="r-window">—</div>
+      </div>
+      <button id="download-btn" class="primary-btn">Download report</button>
+    </div>
+
+    <div class="glass card">
+      <h2>Executive summary</h2>
+      <p id="r-summary"></p>
+    </div>
+
+    <div class="grid-2">
+      <div class="glass card">
+        <h2>Sentiment</h2>
+        <div class="sentiment-row">
+          <canvas id="sentiment-chart" width="180" height="180"></canvas>
+          <div class="sentiment-legend" id="sentiment-legend"></div>
+        </div>
+      </div>
+
+      <div class="glass card">
+        <h2>Volume</h2>
+        <div class="metric-row" id="volume-metrics"></div>
+        <canvas id="volume-chart" height="160"></canvas>
+      </div>
+    </div>
+
+    <div class="glass card">
+      <h2>Top mentions</h2>
+      <div id="top-mentions" class="mention-list"></div>
+    </div>
+
+    <div class="glass card">
+      <h2>Influence drivers</h2>
+      <div id="influence-list" class="influence-list"></div>
+    </div>
+
+    <div class="glass card">
+      <h2>Network map</h2>
+      <p class="muted small">Node size = connection strength. Dashed lines = unconfirmed claims.</p>
+      <div id="network-graph"></div>
+      <div id="network-legend" class="network-legend"></div>
+    </div>
+
+    <div class="grid-3">
+      <div class="glass card">
+        <h2>Recurring narratives</h2>
+        <div id="narratives-list"></div>
+      </div>
+      <div class="glass card">
+        <h2>Reputation risks</h2>
+        <ul id="risks-list" class="bullet-list"></ul>
+      </div>
+      <div class="glass card">
+        <h2>Opportunities</h2>
+        <ul id="opportunities-list" class="bullet-list"></ul>
+      </div>
+    </div>
+
+    <div class="glass card">
+      <h2>Emerging trends to watch</h2>
+      <ul id="trends-list" class="bullet-list"></ul>
+    </div>
+
+  </div>
+</section>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
