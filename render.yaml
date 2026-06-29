@@ -1,0 +1,26 @@
+databases:
+  - name: pulse-postgres
+    plan: free
+    databaseName: political_intel
+    user: pulse
+
+services:
+  - type: web
+    name: pulse-engine
+    runtime: docker
+    plan: free
+    dockerfilePath: ./engine/Dockerfile
+    dockerContext: .
+    dockerCommand: sh -c "cd engine && alembic upgrade head && cd .. && uvicorn engine.api_server:app --host 0.0.0.0 --port 8000"
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pulse-postgres
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SOCIALCRAWL_API_KEY
+        sync: false
+      - key: NEWSAPI_KEY
+        sync: false
