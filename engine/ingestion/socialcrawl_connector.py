@@ -1,9 +1,8 @@
 from datetime import datetime
 
-import requests
-
 from engine.config import settings
 from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion import http
 
 SOCIALCRAWL_BASE_URL = "https://www.socialcrawl.dev"
 SOCIALCRAWL_BRAND_MENTIONS_PATH = "/v1/prism/brand-mentions"
@@ -71,7 +70,7 @@ class SocialCrawlConnector(IngestionConnector):
         return candidates
 
     def _discover_tiktok_users(self, query: str) -> list[str]:
-        response = requests.get(
+        response = http.get(
             f"{SOCIALCRAWL_BASE_URL}/v1/tiktok/search/users",
             params={"query": query},
             headers={"x-api-key": self.api_key},
@@ -86,7 +85,7 @@ class SocialCrawlConnector(IngestionConnector):
         return [u.get("username") or u.get("handle") for u in users if isinstance(u, dict) and (u.get("username") or u.get("handle"))]
 
     def _discover_youtube_channels(self, query: str) -> list[str]:
-        response = requests.get(
+        response = http.get(
             f"{SOCIALCRAWL_BASE_URL}/v1/youtube/search",
             params={"query": query, "type": "channel"},
             headers={"x-api-key": self.api_key},
@@ -131,7 +130,7 @@ class SocialCrawlConnector(IngestionConnector):
     def _fetch_brand_mentions(
         self, politician_name: str, window_start: datetime, window_end: datetime
     ) -> list[IngestedMention]:
-        response = requests.get(
+        response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{SOCIALCRAWL_BRAND_MENTIONS_PATH}",
             params={
                 "keyword": politician_name,
@@ -206,7 +205,7 @@ class SocialCrawlConnector(IngestionConnector):
     def _call_search_endpoint(
         self, platform: str, path: str, default_source_type: str, query: str
     ) -> list[IngestedMention]:
-        response = requests.get(
+        response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{path}",
             params={"query": query},
             headers={"x-api-key": self.api_key},
@@ -240,7 +239,7 @@ class SocialCrawlConnector(IngestionConnector):
         if not post_id:
             return []
 
-        response = requests.get(
+        response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{comment_endpoint}",
             params={"id": post_id, "video_id": post_id, "post_id": post_id},
             headers={"x-api-key": self.api_key},
@@ -297,7 +296,7 @@ class SocialCrawlConnector(IngestionConnector):
     def _call_profile_endpoint(
         self, platform: str, path: str, source_type: str, handle: str
     ) -> list[IngestedMention]:
-        response = requests.get(
+        response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{path}",
             params={"handle": handle, "url": handle},
             headers={"x-api-key": self.api_key},

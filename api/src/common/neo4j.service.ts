@@ -6,9 +6,16 @@ export class Neo4jService implements OnModuleDestroy {
   readonly driver: Driver;
 
   constructor() {
+    let password = process.env.NEO4J_PASSWORD;
+    if (!password) {
+      if ((process.env.APP_ENV ?? 'local-dev') !== 'local-dev') {
+        throw new Error("NEO4J_PASSWORD must be set explicitly when APP_ENV is not 'local-dev'");
+      }
+      password = 'password';
+    }
     this.driver = neo4j.driver(
       process.env.NEO4J_URI ?? 'bolt://neo4j:7687',
-      neo4j.auth.basic(process.env.NEO4J_USER ?? 'neo4j', process.env.NEO4J_PASSWORD ?? 'password'),
+      neo4j.auth.basic(process.env.NEO4J_USER ?? 'neo4j', password),
     );
   }
 

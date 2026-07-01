@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import declarative_base, relationship
@@ -34,6 +35,11 @@ class Politician(Base):
 
 class RawMention(Base):
     __tablename__ = "raw_mentions"
+    __table_args__ = (
+        UniqueConstraint(
+            "politician_id", "platform", "content_hash", name="uq_raw_mentions_politician_platform_hash"
+        ),
+    )
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     politician_id = Column(UUID(as_uuid=False), ForeignKey("politicians.id"), nullable=False)

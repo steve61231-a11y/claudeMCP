@@ -24,6 +24,16 @@ def run_pipeline(db: Session, politician: Politician, period: str, window_start:
     cleaned = cleaning.clean_mentions(raw_mentions)
     cleaned = [m for m in cleaned if not m["is_spam"]]
 
+    # Cross-run dedup: overlapping windows must not re-insert mentions already
+    # stored for this politician (backed by uq_raw_mentions_politician_platform_hash).
+    batch_hashes = [m["content_hash"] for m in cleaned]
+    existing = set(
+        db.query(RawMention.platform, RawMention.content_hash)
+        .filter(RawMention.politician_id == politician.id, RawMention.content_hash.in_(batch_hashes))
+        .all()
+    )
+    cleaned = [m for m in cleaned if (m["platform"], m["content_hash"]) not in existing]
+
     politician_entity = db.query(Entity).filter_by(name=politician.name, type="politician").first()
     if not politician_entity:
         politician_entity = Entity(name=politician.name, type="politician")

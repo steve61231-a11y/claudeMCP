@@ -50,18 +50,17 @@ def cluster_mentions(texts: list[str]) -> list[int]:
     return clusterer.fit_predict(embeddings).tolist()
 
 
-LABEL_PROMPT = """You are summarizing a cluster of social-media posts about a politician into a short narrative theme.
+LABEL_PROMPT = """You are summarizing a cluster of social-media posts about a politician into a short narrative theme. Posts may be in English, Swahili, or Sheng; write the label/description in English.
 
-Sample posts:
-{samples}
-
-Respond with ONLY a JSON object: {{"label": "2-4 word theme", "description": "1 sentence description"}}
-"""
+The required JSON shape is: {"label": "2-4 word theme", "description": "1 sentence description"}"""
 
 
 def label_cluster(sample_texts: list[str]) -> dict:
     samples = "\n".join(f"- {t}" for t in sample_texts[:8])
-    return llm.call_json(LABEL_PROMPT.format(samples=samples), max_tokens=200)
+    try:
+        return llm.call_json_untrusted(LABEL_PROMPT, samples, expected_keys={"label"}, max_tokens=200)
+    except ValueError:
+        return {}
 
 
 def build_narratives(mentions: list[dict]) -> list[dict]:

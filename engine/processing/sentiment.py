@@ -45,18 +45,18 @@ def local_sentiment_available() -> bool:
         return False
 
 
-CONTEXT_PROMPT = """Classify the political tone and intensity of this social media text about a politician.
+CONTEXT_PROMPT = """Classify the political tone and intensity of this social media text about a politician. The text may be in English, Swahili, or Sheng — classify it in whatever language it is written.
 
-Text: "{text}"
-
-Respond with ONLY a JSON object:
-{{"sentiment": "positive"|"neutral"|"negative", "intensity": 1-5, "context_tag": "support"|"attack"|"concern"|"praise"}}
-"""
+The required JSON shape is:
+{"sentiment": "positive"|"neutral"|"negative", "intensity": 1-5, "context_tag": "support"|"attack"|"concern"|"praise"}"""
 
 
 def llm_sentiment_and_context(text: str) -> dict:
     """LLM pass for context tagging, and for any mention the local model is unsure about."""
-    result = llm.call_json(CONTEXT_PROMPT.format(text=text), max_tokens=200)
+    try:
+        result = llm.call_json_untrusted(CONTEXT_PROMPT, text, expected_keys={"sentiment", "intensity"}, max_tokens=200)
+    except ValueError:
+        result = {}
     return {
         "sentiment": result.get("sentiment", "neutral"),
         "intensity": int(result.get("intensity", 3)),

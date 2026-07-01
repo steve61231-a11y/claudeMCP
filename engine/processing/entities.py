@@ -34,24 +34,25 @@ def keyword_hint(text: str, keywords: list[str]) -> bool:
     return any(re.search(rf"\b{re.escape(k.lower())}\b", lowered) for k in keywords)
 
 
-INDIRECT_PROMPT = """You are detecting indirect/implied references to a specific politician in social media text.
+INDIRECT_PROMPT = """You are detecting indirect/implied references to a specific politician in social media text. The text may be in English, Swahili, or Sheng.
 
 Politician: {name}
 Known aliases: {aliases}
 Known keywords (title/region/party): {keywords}
 
-Text: "{text}"
-
-Does this text refer to the politician above, even without using their name directly (e.g. by title + region, like "the governor from Nakuru")?
-Respond with ONLY a JSON object: {{"matched": true|false, "confidence": 0.0-1.0, "reason": "short reason"}}
-"""
+Does the text refer to the politician above, even without using their name directly (e.g. by title + region, like "the governor from Nakuru")?
+The required JSON shape is: {{"matched": true|false, "confidence": 0.0-1.0, "reason": "short reason"}}"""
 
 
 def detect_indirect_mention(text: str, politician_name: str, aliases: list[str], keywords: list[str]) -> dict:
-    prompt = INDIRECT_PROMPT.format(
-        name=politician_name, aliases=", ".join(aliases) or "none", keywords=", ".join(keywords) or "none", text=text
+    instructions = INDIRECT_PROMPT.format(
+        name=politician_name, aliases=", ".join(aliases) or "none", keywords=", ".join(keywords) or "none"
     )
-    result = llm.call_json(prompt, max_tokens=256)
+    try:
+        result = llm.call_json_untrusted(instructions, text, expected_keys={"matched"}, max_tokens=256)
+    except ValueError:
+        # A malformed/injected reply must never link a mention.
+        return {"matched": False, "match_type": "indirect_llm", "confidence": 0.0}
     return {
         "matched": bool(result.get("matched")),
         "match_type": "indirect_llm",

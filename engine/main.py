@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy.orm import Session
 
@@ -12,21 +14,22 @@ app = FastAPI(title="Political Intelligence Engine")
 
 
 def require_internal_token(x_internal_token: str | None = Header(default=None)):
-    """Shared-secret check between `api` and `engine`. Skipped if no token is
-    configured, so local quickstart still works without extra setup — but
-    INTERNAL_API_TOKEN should always be set outside local dev.
+    """Shared-secret check between `api` and `engine`.
+
+    Fails closed: an unset token only passes in explicit local-dev, so a
+    misconfigured deployment can never silently run unauthenticated.
     """
-    if settings.internal_api_token and x_internal_token != settings.internal_api_token:
+    if not settings.internal_api_token:
+        if settings.is_local_dev:
+            return
+        raise HTTPException(status_code=503, detail="engine auth is not configured")
+    if not x_internal_token or not hmac.compare_digest(x_internal_token, settings.internal_api_token):
         raise HTTPException(status_code=401, detail="invalid or missing internal token")
 
 
 @app.on_event("startup")
 def on_startup():
-    if not settings.anthropic_api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. The engine requires it for entity/sentiment/"
-            "narrative analysis — set it in .env before starting."
-        )
+    settings.validate_for_startup()
     # Schema is managed by Alembic migrations (engine/alembic/) — run
     # `alembic upgrade head` before starting the engine, rather than relying
     # on create_all, so schema changes have a real upgrade path.

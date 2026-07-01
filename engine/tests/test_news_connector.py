@@ -25,7 +25,7 @@ def test_fetch_maps_articles_to_mentions(monkeypatch):
         "source": {"name": "Daily Nation"},
     }
     monkeypatch.setattr(
-        "requests.get",
+        "engine.ingestion.http.get",
         lambda *a, **k: FakeResponse({"articles": [article], "totalResults": 1}),
     )
 
@@ -52,7 +52,7 @@ def test_fetch_paginates_until_total_results_reached(monkeypatch):
         calls.append(kwargs["params"]["page"])
         return FakeResponse(pages[len(calls) - 1])
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = NewsApiConnector(api_key="test-key")
     mentions = connector.fetch("Jane Doe", [], datetime(2026, 6, 1), datetime(2026, 6, 22))

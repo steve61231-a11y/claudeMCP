@@ -1,9 +1,8 @@
 from datetime import datetime
 
-import requests
-
 from engine.config import settings
 from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion import http
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
@@ -31,7 +30,7 @@ class NewsApiConnector(IngestionConnector):
         mentions: list[IngestedMention] = []
         page = 1
         while True:
-            response = requests.get(
+            response = http.get(
                 NEWSAPI_URL,
                 params={
                     "q": query,

@@ -11,7 +11,10 @@ from engine.db.models import Base
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Tests (and other programmatic callers) can point migrations at a different
+# database via config.attributes without touching process-wide settings.
+_url_override = config.attributes.get("sqlalchemy_url")
+config.set_main_option("sqlalchemy.url", _url_override or settings.resolved_database_url())
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
