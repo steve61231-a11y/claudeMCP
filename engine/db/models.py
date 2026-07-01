@@ -70,10 +70,15 @@ class RawMention(Base):
 
 class Entity(Base):
     __tablename__ = "entities"
+    __table_args__ = (UniqueConstraint("canonical_key", name="uq_entities_canonical_key"),)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     name = Column(String, nullable=False)
-    type = Column(String, nullable=False)  # politician|influencer|media|party|location|event
+    type = Column(String, nullable=False)  # politician|person|influencer|media|party|location|event
+    # "type:normalized name" — dedupes the same person/org across runs.
+    canonical_key = Column(String, nullable=True)
+    role = Column(String, nullable=True)  # journalist|politician|party official|creator|...
+    affiliation = Column(String, nullable=True)  # media house / party / organisation
 
 
 class MentionEntity(Base):

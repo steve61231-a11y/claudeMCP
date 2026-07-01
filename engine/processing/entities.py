@@ -79,11 +79,55 @@ def detect_entity_link(text: str, politician_name: str, aliases: list[str], keyw
 
 
 def extract_standard_entities(text: str) -> list[dict]:
-    """Generic NER pass for media/location/org entities, independent of the politician match."""
+    """Generic NER pass for person/org/location entities, independent of the politician match."""
     doc = get_nlp()(text)
     entities = []
     for ent in doc.ents:
         if ent.label_ in {"PERSON", "ORG", "GPE", "LOC"}:
-            type_map = {"PERSON": "influencer", "ORG": "media", "GPE": "location", "LOC": "location"}
+            type_map = {"PERSON": "person", "ORG": "media", "GPE": "location", "LOC": "location"}
             entities.append({"name": ent.text, "type": type_map[ent.label_]})
     return entities
+
+
+PEOPLE_PROMPT = """You are mapping the people mentioned alongside a Kenyan politician in scraped media/social text. The text may be in English, Swahili, or Sheng.
+
+Politician being tracked (exclude them from the output): {name}
+
+Identify every OTHER named individual in the text — fellow politicians, journalists, party officials, activists, content creators. For each, give their role and affiliation if the text (or well-known Kenyan public context) supports it; otherwise use null. Do not invent people who are not named in the text.
+
+The required JSON shape is:
+{{"people": [{{"name": "Full Name", "role": "journalist|politician|party official|activist|creator|other or null", "affiliation": "organisation/media house/party or null"}}]}}"""
+
+
+def extract_people(text: str, politician_name: str) -> list[dict]:
+    """Named individuals co-mentioned with the politician, with role/affiliation.
+
+    spaCy NER gates the (paid) LLM call: no PERSON candidates, no LLM. The LLM
+    then adds role/affiliation and filters NER noise. Returns [] on any failure
+    — person extraction must never break the analysis run.
+    """
+    candidates = [e for e in extract_standard_entities(text) if e["type"] == "person"]
+    if not candidates:
+        return []
+    try:
+        result = llm.call_json_untrusted(
+            PEOPLE_PROMPT.format(name=politician_name), text, expected_keys={"people"}, max_tokens=512
+        )
+    except Exception:
+        return []
+    people = []
+    politician_lower = politician_name.lower()
+    for person in result.get("people") or []:
+        if not isinstance(person, dict):
+            continue
+        name = str(person.get("name") or "").strip()
+        if not name or name.lower() in politician_lower or politician_lower in name.lower():
+            continue
+        people.append(
+            {
+                "name": name,
+                "role": (str(person["role"]).strip() or None) if person.get("role") else None,
+                "affiliation": (str(person["affiliation"]).strip() or None) if person.get("affiliation") else None,
+            }
+        )
+    return people

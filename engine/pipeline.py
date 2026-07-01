@@ -57,11 +57,7 @@ def run_analysis(
     for mentions not yet checked, so re-analysis never re-pays the LLM),
     transcripts for top linked videos, sentiment, narratives, influence,
     graph and report."""
-    politician_entity = db.query(Entity).filter_by(name=politician.name, type="politician").first()
-    if not politician_entity:
-        politician_entity = Entity(name=politician.name, type="politician")
-        db.add(politician_entity)
-        db.flush()
+    politician_entity = _upsert_entity(db, "politician", politician.name)
 
     window_filter = (
         RawMention.politician_id == politician.id,
@@ -70,20 +66,40 @@ def run_analysis(
         RawMention.is_spam == 0,
     )
 
+    people_counts: dict[str, dict] = {}
     for mention in db.query(RawMention).filter(*window_filter, RawMention.link_checked == 0).all():
         mention.link_checked = 1
         link = entities.detect_entity_link(
             mention.text, politician.name, politician.aliases or [], politician.keywords or []
         )
-        if link:
+        if not link:
+            continue
+        db.add(
+            MentionEntity(
+                mention_id=mention.id,
+                entity_id=politician_entity.id,
+                confidence=link["confidence"],
+                match_type=link["match_type"],
+            )
+        )
+        # People co-mentioned with the politician — runs once per mention
+        # (guarded by link_checked) and only on linked mentions.
+        for person in entities.extract_people(mention.text, politician.name):
+            person_entity = _upsert_entity(
+                db, "person", person["name"], role=person.get("role"), affiliation=person.get("affiliation")
+            )
             db.add(
                 MentionEntity(
-                    mention_id=mention.id,
-                    entity_id=politician_entity.id,
-                    confidence=link["confidence"],
-                    match_type=link["match_type"],
+                    mention_id=mention.id, entity_id=person_entity.id, confidence=0.8, match_type="ner"
                 )
             )
+            record = people_counts.setdefault(
+                person_entity.canonical_key,
+                {"canonical_key": person_entity.canonical_key, "name": person_entity.name, "count": 0},
+            )
+            record["count"] += 1
+            record["role"] = person_entity.role
+            record["affiliation"] = person_entity.affiliation
     db.flush()
 
     if settings.socialcrawl_api_key and settings.transcripts_per_run > 0:
@@ -156,6 +172,10 @@ def run_analysis(
 
     influence_ranking = influence.score_influence(stored_mentions, sentiments_by_mention)
 
+    influencers = _classify_influencers(db, linked_mentions)
+    for inf in influencers:
+        _upsert_entity(db, "influencer", inf["handle"], role="creator", affiliation=inf["platform"])
+
     db.commit()
 
     # Neo4j writes happen only after the Postgres commit succeeds, so the graph
@@ -163,6 +183,8 @@ def run_analysis(
     # truth. upsert_mentions uses MERGE throughout, so re-running after a crash
     # here is safe and won't duplicate nodes/edges.
     graph.upsert_mentions(politician.id, politician.name, stored_mentions)
+    graph.upsert_people(politician.id, list(people_counts.values()))
+    graph.upsert_influencers(politician.id, influencers)
     network_snapshot = graph.get_network_snapshot(politician.id)
 
     payload = generate_report_payload(
@@ -193,6 +215,59 @@ def run_analysis(
     db.add(report)
     db.commit()
     return report
+
+
+def _canonical_key(entity_type: str, name: str) -> str:
+    return f"{entity_type}:{name.strip().lower()}"
+
+
+def _upsert_entity(
+    db: Session, entity_type: str, name: str, role: str | None = None, affiliation: str | None = None
+) -> Entity:
+    key = _canonical_key(entity_type, name)
+    entity = db.query(Entity).filter_by(canonical_key=key).first()
+    if not entity:
+        entity = Entity(name=name.strip(), type=entity_type, canonical_key=key, role=role, affiliation=affiliation)
+        db.add(entity)
+        db.flush()
+        return entity
+    # Fill gaps without overwriting operator-verified values.
+    entity.role = entity.role or role
+    entity.affiliation = entity.affiliation or affiliation
+    return entity
+
+
+def _classify_influencers(db: Session, linked_mentions: list[RawMention]) -> list[dict]:
+    """Authors of linked mentions with ≥ threshold followers — the client's
+    definition of an influencer worth mapping, political creator or not."""
+    from engine.db.models import AuthorProfile
+
+    if not linked_mentions:
+        return []
+    posts_by_author: dict[tuple[str, str], int] = {}
+    for mention in linked_mentions:
+        key = (mention.platform, mention.author_handle)
+        posts_by_author[key] = posts_by_author.get(key, 0) + 1
+
+    handles = [h for (_, h) in posts_by_author]
+    profiles = (
+        db.query(AuthorProfile)
+        .filter(
+            AuthorProfile.handle.in_(handles),
+            AuthorProfile.follower_count >= settings.influencer_follower_threshold,
+        )
+        .all()
+    )
+    return [
+        {
+            "platform": p.platform,
+            "handle": p.handle,
+            "followers": p.follower_count,
+            "posts": posts_by_author.get((p.platform, p.handle), 1),
+        }
+        for p in profiles
+        if (p.platform, p.handle) in posts_by_author
+    ]
 
 
 def _fetch_transcripts_for_top_videos(
