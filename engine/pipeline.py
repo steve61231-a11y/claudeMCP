@@ -138,10 +138,13 @@ def run_analysis(
         {
             "id": m.id,
             "platform": m.platform,
+            "source_type": m.source_type,
             "author_handle": m.author_handle,
             "text": m.text,
             "posted_at": m.posted_at,
             "engagement": m.engagement_json or {},
+            "language": m.language,
+            "source_url": m.source_url,
         }
         for m in linked_mentions
     ]
