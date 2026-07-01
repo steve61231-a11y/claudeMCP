@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     internal_api_token: str = ""
     newsapi_key: str = ""
     socialcrawl_api_key: str = ""
+    # Premium (10cr) video transcripts fetched per run, for the most-engaged
+    # videos already linked to the politician. 0 disables transcripts.
+    transcripts_per_run: int = 15
+    # Minimum follower count for an author to be classified as an influencer.
+    influencer_follower_threshold: int = 1000
 
     class Config:
         env_file = ".env"

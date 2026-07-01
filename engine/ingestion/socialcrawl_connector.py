@@ -7,6 +7,43 @@ from engine.ingestion import http
 SOCIALCRAWL_BASE_URL = "https://www.socialcrawl.dev"
 SOCIALCRAWL_BRAND_MENTIONS_PATH = "/v1/prism/brand-mentions"
 
+# Keyword/hashtag search endpoints planned per query variant by the ingestion
+# orchestrator. query_kind picks which variant list feeds the endpoint.
+SEARCH_ENDPOINTS: list[tuple[str, str, str, str]] = [
+    # (platform, path, default_source_type, query_kind: text|hashtag)
+    ("tiktok", "/v1/tiktok/search", "video", "text"),
+    ("tiktok", "/v1/tiktok/search/hashtag", "video", "hashtag"),
+    ("youtube", "/v1/youtube/search", "video", "text"),
+    ("youtube", "/v1/youtube/search/hashtag", "video", "hashtag"),
+    ("instagram", "/v1/instagram/search/hashtag", "post", "hashtag"),
+    ("instagram", "/v1/instagram/search/reels", "video", "text"),
+    ("linkedin", "/v1/linkedin/search/posts", "post", "text"),
+    ("twitter", "/v1/twitter/ai-search", "post", "text"),
+    ("threads", "/v1/threads/search", "post", "text"),
+    ("reddit", "/v1/reddit/search", "post", "text"),
+    ("google_news", "/v1/google_news/search", "article", "text"),
+    ("google", "/v1/google/search", "web_page", "text"),
+]
+
+TRANSCRIPT_ENDPOINTS = {
+    "tiktok": "/v1/tiktok/post/transcript",
+    "youtube": "/v1/youtube/video/transcript",
+}
+
+# Client-side per-request credit estimates for budget guardrails (matches the
+# published pricing tiers: searches/comments 1cr, transcripts 10cr,
+# brand-mentions composite 20cr).
+ENDPOINT_CREDIT_COST = {
+    SOCIALCRAWL_BRAND_MENTIONS_PATH: 20.0,
+    "/v1/tiktok/post/transcript": 10.0,
+    "/v1/youtube/video/transcript": 10.0,
+}
+DEFAULT_CREDIT_COST = 1.0
+
+
+def credit_cost(path: str) -> float:
+    return ENDPOINT_CREDIT_COST.get(path, DEFAULT_CREDIT_COST)
+
 
 class SocialCrawlConnector(IngestionConnector):
     """Real ingestion source backed by the SocialCrawl API.
@@ -51,6 +88,134 @@ class SocialCrawlConnector(IngestionConnector):
         mentions.extend(self._fetch_brand_mentions(politician_name, window_start, window_end))
         mentions.extend(self._fetch_discovery(politician_name, aliases, window_start, window_end))
         return mentions
+
+    def search_page(
+        self,
+        platform: str,
+        path: str,
+        query: str,
+        page: int,
+        window_start: datetime,
+        window_end: datetime,
+        default_source_type: str = "post",
+        idempotency_key: str | None = None,
+    ) -> tuple[list[IngestedMention], bool]:
+        """One page of a keyword/hashtag search. Returns (mentions, has_more).
+
+        Date params are passed to every endpoint (ignored where unsupported);
+        results outside the window are also filtered client-side since most
+        social search endpoints don't honor date ranges. has_more is a
+        server-driven signal where available, else "the page was non-empty".
+        """
+        params = {
+            "query": query,
+            "page": str(page),
+            "date_from": window_start.date().isoformat(),
+            "date_to": window_end.date().isoformat(),
+        }
+        headers = {"x-api-key": self.api_key}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        response = http.get(f"{SOCIALCRAWL_BASE_URL}{path}", params=params, headers=headers, timeout=30)
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success", True):
+            error = body.get("error", {})
+            raise RuntimeError(f"SocialCrawl error ({error.get('type')}): {error.get('message')}")
+
+        data = body.get("data", body)
+        items = data.get("results") or data.get("items") or data.get("posts") or data.get("videos") or []
+        mentions = [
+            self._map_social_item(platform, default_source_type, item)
+            for item in items
+            if isinstance(item, dict)
+        ]
+        has_more = bool(items) and bool(data.get("has_more", True)) and not data.get("is_last_page", False)
+        return mentions, has_more
+
+    def comments_page(
+        self, platform: str, post_id: str, page: int = 1, idempotency_key: str | None = None
+    ) -> tuple[list[IngestedMention], bool]:
+        """One page of comments for a discovered post (tiktok/youtube)."""
+        endpoint = self._COMMENT_ENDPOINTS.get(platform)
+        if not endpoint:
+            return [], False
+        headers = {"x-api-key": self.api_key}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        response = http.get(
+            f"{SOCIALCRAWL_BASE_URL}{endpoint}",
+            params={"id": post_id, "video_id": post_id, "post_id": post_id, "page": str(page)},
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success", True):
+            return [], False
+        data = body.get("data", body)
+        comments = data.get("results") or data.get("items") or data.get("comments") or []
+        mentions = [
+            self._map_social_item(platform, "comment", c) for c in comments if isinstance(c, dict)
+        ]
+        has_more = bool(comments) and bool(data.get("has_more", True))
+        return mentions, has_more
+
+    def fetch_transcript(self, platform: str, post_id: str) -> str | None:
+        """Video transcript for a linked, high-engagement video (premium-priced)."""
+        endpoint = TRANSCRIPT_ENDPOINTS.get(platform)
+        if not endpoint:
+            return None
+        response = http.get(
+            f"{SOCIALCRAWL_BASE_URL}{endpoint}",
+            params={"id": post_id, "video_id": post_id, "post_id": post_id},
+            headers={"x-api-key": self.api_key},
+            timeout=60,
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("success", True):
+            return None
+        data = body.get("data", body)
+        transcript = data.get("transcript") or data.get("text")
+        if isinstance(transcript, list):
+            transcript = " ".join(
+                seg.get("text", "") if isinstance(seg, dict) else str(seg) for seg in transcript
+            )
+        return transcript or None
+
+    @staticmethod
+    def extract_author_profile(platform: str, item: dict) -> dict | None:
+        """Best-effort author metadata from a raw search/comment item, used to
+        maintain author_profiles (follower counts drive influencer detection)."""
+        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+        handle = (
+            (author.get("username") or author.get("handle") or author.get("name"))
+            if author
+            else (item.get("author_handle") or item.get("username") or item.get("channel_name"))
+        ) or (item.get("author") if isinstance(item.get("author"), str) else None)
+        if not handle:
+            return None
+        followers = None
+        for source in (author, item, item.get("stats") or {}, item.get("author_stats") or {}):
+            if not isinstance(source, dict):
+                continue
+            for key in ("follower_count", "followers", "subscriber_count", "subscribers", "fans"):
+                if source.get(key) is not None:
+                    try:
+                        followers = int(source[key])
+                    except (TypeError, ValueError):
+                        continue
+                    break
+            if followers is not None:
+                break
+        return {
+            "platform": platform,
+            "handle": str(handle),
+            "display_name": (author.get("nickname") or author.get("display_name")) if author else None,
+            "follower_count": followers,
+            "profile_url": (author.get("url") or author.get("profile_url")) if author else None,
+        }
 
     def discover_handles(self, politician_name: str) -> dict[str, list[str]]:
         """Best-effort handle discovery for politicians we don't yet have a

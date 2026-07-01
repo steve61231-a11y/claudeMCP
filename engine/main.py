@@ -42,7 +42,15 @@ def on_shutdown():
 
 @app.post("/politicians", response_model=PoliticianOut, dependencies=[Depends(require_internal_token)])
 def create_politician(payload: PoliticianCreate, db: Session = Depends(get_session)):
-    politician = Politician(name=payload.name, aliases=payload.aliases, keywords=payload.keywords)
+    politician = Politician(
+        name=payload.name,
+        aliases=payload.aliases,
+        keywords=payload.keywords,
+        titles=payload.titles,
+        swahili_terms=payload.swahili_terms,
+        tracked_hashtags=payload.tracked_hashtags,
+        social_handles=payload.social_handles,
+    )
     db.add(politician)
     db.commit()
     db.refresh(politician)
@@ -63,7 +71,9 @@ def trigger_run(politician_id: str, payload: RunRequest, db: Session = Depends(g
     if not politician:
         raise HTTPException(status_code=404, detail="politician not found")
 
-    report = run_pipeline(db, politician, payload.period, payload.window_start, payload.window_end)
+    report = run_pipeline(
+        db, politician, payload.period, payload.window_start, payload.window_end, payload.credit_budget
+    )
     return RunResult(report_id=report.id, payload=report.payload)
 
 

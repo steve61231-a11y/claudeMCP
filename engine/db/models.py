@@ -30,6 +30,9 @@ class Politician(Base):
     aliases = Column(ARRAY(String), default=list)
     keywords = Column(ARRAY(String), default=list)
     social_handles = Column(JSONB, default=dict)  # {"tiktok": "...", "youtube": "...", ...}
+    titles = Column(ARRAY(String), default=list)  # "CS", "Waziri wa Fedha" — combined with surname in queries
+    swahili_terms = Column(ARRAY(String), default=list)  # operator-approved Swahili/Sheng query terms
+    tracked_hashtags = Column(ARRAY(String), default=list)  # without leading '#'
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -52,6 +55,16 @@ class RawMention(Base):
     raw_payload = Column(JSONB, default=dict)
     content_hash = Column(String, index=True)
     is_spam = Column(Integer, default=0)
+    # Provenance: which run/endpoint produced this row, and where it lives online.
+    run_id = Column(UUID(as_uuid=False), ForeignKey("ingestion_runs.id"), nullable=True)
+    source_endpoint = Column(String, nullable=True)
+    source_url = Column(String, nullable=True)
+    fetched_at = Column(DateTime, nullable=True)
+    language = Column(String, nullable=True)  # "en" | "sw" | "und"
+    author_platform_id = Column(String, nullable=True)
+    # 1 once entity linking has been attempted, so re-analysis never re-pays
+    # the LLM for mentions that already failed to link.
+    link_checked = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -112,6 +125,58 @@ class NarrativeMetric(Base):
     window_end = Column(DateTime, nullable=False)
     strength_score = Column(Float, default=0.0)
     growth_rate = Column(Float, default=0.0)
+
+
+class IngestionRun(Base):
+    __tablename__ = "ingestion_runs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    politician_id = Column(UUID(as_uuid=False), ForeignKey("politicians.id"), nullable=False)
+    window_start = Column(DateTime, nullable=False)
+    window_end = Column(DateTime, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending|running|completed|failed
+    credit_budget = Column(Float, default=0.0)  # 0 = unlimited
+    credits_spent = Column(Float, default=0.0)
+    stats = Column(JSONB, default=dict)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class IngestionTask(Base):
+    """One (connector, platform, endpoint, query) fetch slice — the unit of
+    parallelism and resumability. page_cursor persists across crashes so a
+    restarted run continues where it stopped instead of re-paying for pages."""
+
+    __tablename__ = "ingestion_tasks"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    run_id = Column(UUID(as_uuid=False), ForeignKey("ingestion_runs.id"), nullable=False, index=True)
+    connector = Column(String, nullable=False)  # socialcrawl|newsapi|curated|mock
+    platform = Column(String, nullable=False)
+    endpoint = Column(String, nullable=False)
+    query = Column(String, nullable=False, default="")
+    params = Column(JSONB, default=dict)
+    page_cursor = Column(Integer, default=1)
+    status = Column(String, nullable=False, default="pending")  # pending|running|done|failed|skipped_budget
+    credits_spent = Column(Float, default=0.0)
+    result_count = Column(Integer, default=0)
+    error = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AuthorProfile(Base):
+    __tablename__ = "author_profiles"
+    __table_args__ = (UniqueConstraint("platform", "handle", name="uq_author_profiles_platform_handle"),)
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    platform = Column(String, nullable=False)
+    handle = Column(String, nullable=False)
+    display_name = Column(String, nullable=True)
+    follower_count = Column(Integer, nullable=True)
+    profile_url = Column(String, nullable=True)
+    last_refreshed = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class IntelligenceReport(Base):
