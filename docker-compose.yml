@@ -32,6 +32,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
       NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      SOCIALCRAWL_API_KEY: ${SOCIALCRAWL_API_KEY:-}
+      APP_ENV: ${APP_ENV:-local-dev}
     ports:
       - "8000:8000"
     depends_on:
@@ -49,6 +51,8 @@ services:
       NEO4J_PASSWORD: password
       ENGINE_URL: http://engine:8000
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-}
+      APP_ENV: ${APP_ENV:-local-dev}
     ports:
       - "3000:3000"
     depends_on:

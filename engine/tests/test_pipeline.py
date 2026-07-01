@@ -20,7 +20,7 @@ REPORT_SECTIONS = [
 
 
 def fake_call_json(prompt: str, max_tokens: int = 1024):
-    if "Does this text refer to the politician" in prompt:
+    if "refer to the politician above" in prompt:
         matched = "Governor" in prompt and "Nakuru" in prompt
         return {"matched": matched, "confidence": 0.85 if matched else 0.1}
     if "Classify the political tone" in prompt:
@@ -122,3 +122,18 @@ def test_pipeline_writes_graph_only_after_postgres_commit(db_session, monkeypatc
     mention_count = db_session.query(RawMention).count()
     assert mention_count > 0
     assert report.id is not None
+
+
+def test_pipeline_rerun_does_not_duplicate_mentions(db_session, monkeypatch):
+    """Cross-run dedup: re-running the same window must not re-insert
+    mentions already stored for the politician."""
+    patch_pipeline_dependencies(monkeypatch)
+    politician = make_politician(db_session)
+    window = (datetime(2026, 6, 1), datetime(2026, 6, 22, 23, 59, 59))
+
+    run_pipeline(db_session, politician, "weekly", *window)
+    first_count = db_session.query(RawMention).count()
+    assert first_count > 0
+
+    run_pipeline(db_session, politician, "weekly", *window)
+    assert db_session.query(RawMention).count() == first_count

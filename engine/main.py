@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy.orm import Session
 
@@ -12,21 +14,22 @@ app = FastAPI(title="Political Intelligence Engine")
 
 
 def require_internal_token(x_internal_token: str | None = Header(default=None)):
-    """Shared-secret check between `api` and `engine`. Skipped if no token is
-    configured, so local quickstart still works without extra setup — but
-    INTERNAL_API_TOKEN should always be set outside local dev.
+    """Shared-secret check between `api` and `engine`.
+
+    Fails closed: an unset token only passes in explicit local-dev, so a
+    misconfigured deployment can never silently run unauthenticated.
     """
-    if settings.internal_api_token and x_internal_token != settings.internal_api_token:
+    if not settings.internal_api_token:
+        if settings.is_local_dev:
+            return
+        raise HTTPException(status_code=503, detail="engine auth is not configured")
+    if not x_internal_token or not hmac.compare_digest(x_internal_token, settings.internal_api_token):
         raise HTTPException(status_code=401, detail="invalid or missing internal token")
 
 
 @app.on_event("startup")
 def on_startup():
-    if not settings.anthropic_api_key:
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY is not set. The engine requires it for entity/sentiment/"
-            "narrative analysis — set it in .env before starting."
-        )
+    settings.validate_for_startup()
     # Schema is managed by Alembic migrations (engine/alembic/) — run
     # `alembic upgrade head` before starting the engine, rather than relying
     # on create_all, so schema changes have a real upgrade path.
@@ -39,7 +42,15 @@ def on_shutdown():
 
 @app.post("/politicians", response_model=PoliticianOut, dependencies=[Depends(require_internal_token)])
 def create_politician(payload: PoliticianCreate, db: Session = Depends(get_session)):
-    politician = Politician(name=payload.name, aliases=payload.aliases, keywords=payload.keywords)
+    politician = Politician(
+        name=payload.name,
+        aliases=payload.aliases,
+        keywords=payload.keywords,
+        titles=payload.titles,
+        swahili_terms=payload.swahili_terms,
+        tracked_hashtags=payload.tracked_hashtags,
+        social_handles=payload.social_handles,
+    )
     db.add(politician)
     db.commit()
     db.refresh(politician)
@@ -60,7 +71,9 @@ def trigger_run(politician_id: str, payload: RunRequest, db: Session = Depends(g
     if not politician:
         raise HTTPException(status_code=404, detail="politician not found")
 
-    report = run_pipeline(db, politician, payload.period, payload.window_start, payload.window_end)
+    report = run_pipeline(
+        db, politician, payload.period, payload.window_start, payload.window_end, payload.credit_budget
+    )
     return RunResult(report_id=report.id, payload=report.payload)
 
 

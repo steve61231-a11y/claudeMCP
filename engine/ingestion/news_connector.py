@@ -1,9 +1,8 @@
 from datetime import datetime
 
-import requests
-
 from engine.config import settings
 from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion import http
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
@@ -31,39 +30,49 @@ class NewsApiConnector(IngestionConnector):
         mentions: list[IngestedMention] = []
         page = 1
         while True:
-            response = requests.get(
-                NEWSAPI_URL,
-                params={
-                    "q": query,
-                    "from": window_start.date().isoformat(),
-                    "to": window_end.date().isoformat(),
-                    "language": "en",
-                    "sortBy": "publishedAt",
-                    "pageSize": 100,
-                    "page": page,
-                },
-                headers={"X-Api-Key": self.api_key},
-                timeout=15,
-            )
-            response.raise_for_status()
-            body = response.json()
-            articles = body.get("articles", [])
-            for article in articles:
-                posted_at = datetime.fromisoformat(article["publishedAt"].replace("Z", "+00:00")).replace(tzinfo=None)
-                text = " ".join(filter(None, [article.get("title"), article.get("description"), article.get("content")]))
-                mentions.append(
-                    IngestedMention(
-                        platform="news",
-                        source_type="article",
-                        author_handle=(article.get("source") or {}).get("name", "unknown"),
-                        text=text,
-                        posted_at=posted_at,
-                        engagement={},
-                        raw_payload=article,
-                    )
-                )
-            total_results = body.get("totalResults", 0)
-            if page * 100 >= total_results or not articles:
+            page_mentions, has_more = self.search_page(query, page, window_start, window_end)
+            mentions.extend(page_mentions)
+            if not has_more:
                 break
             page += 1
         return mentions
+
+    def search_page(
+        self, query: str, page: int, window_start: datetime, window_end: datetime
+    ) -> tuple[list[IngestedMention], bool]:
+        """One page of NewsAPI results; returns (mentions, has_more)."""
+        response = http.get(
+            NEWSAPI_URL,
+            params={
+                "q": query,
+                "from": window_start.date().isoformat(),
+                "to": window_end.date().isoformat(),
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": 100,
+                "page": page,
+            },
+            headers={"X-Api-Key": self.api_key},
+            timeout=15,
+        )
+        response.raise_for_status()
+        body = response.json()
+        articles = body.get("articles", [])
+        mentions: list[IngestedMention] = []
+        for article in articles:
+            posted_at = datetime.fromisoformat(article["publishedAt"].replace("Z", "+00:00")).replace(tzinfo=None)
+            text = " ".join(filter(None, [article.get("title"), article.get("description"), article.get("content")]))
+            mentions.append(
+                IngestedMention(
+                    platform="news",
+                    source_type="article",
+                    author_handle=(article.get("source") or {}).get("name", "unknown"),
+                    text=text,
+                    posted_at=posted_at,
+                    engagement={},
+                    raw_payload=article,
+                )
+            )
+        total_results = body.get("totalResults", 0)
+        has_more = bool(articles) and page * 100 < total_results
+        return mentions, has_more

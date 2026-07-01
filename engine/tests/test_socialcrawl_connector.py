@@ -27,7 +27,7 @@ def test_fetch_maps_recent_mentions_to_mentions(monkeypatch):
         "_raw": {"content_info": {"author": "Tell Media", "social_metrics": None}},
     }
     monkeypatch.setattr(
-        "requests.get",
+        "engine.ingestion.http.get",
         lambda *a, **k: FakeResponse({"success": True, "data": {"recent_mentions": [mention]}}),
     )
 
@@ -46,7 +46,7 @@ def test_fetch_maps_recent_mentions_to_mentions(monkeypatch):
 
 def test_fetch_handles_error_envelope(monkeypatch):
     monkeypatch.setattr(
-        "requests.get",
+        "engine.ingestion.http.get",
         lambda *a, **k: FakeResponse(
             {"success": False, "error": {"type": "INVALID_API_KEY", "message": "Bad key"}}
         ),
@@ -60,7 +60,7 @@ def test_fetch_handles_error_envelope(monkeypatch):
 def test_fetch_handles_missing_optional_fields(monkeypatch):
     mention = {"text": "A mention with minimal fields.", "date_published": "2026-06-15T00:00:00Z"}
     monkeypatch.setattr(
-        "requests.get",
+        "engine.ingestion.http.get",
         lambda *a, **k: FakeResponse({"success": True, "data": {"recent_mentions": [mention]}}),
     )
 
@@ -115,7 +115,7 @@ def test_fetch_discovery_maps_native_social_results(monkeypatch):
             )
         return FakeResponse({"success": True, "data": {}})
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     mentions = connector._fetch_discovery(
@@ -151,7 +151,7 @@ def test_fetch_discovery_isolates_per_platform_failures(monkeypatch):
             )
         return FakeResponse({"success": False, "error": {"type": "INSUFFICIENT_CREDITS"}})
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     mentions = connector._fetch_discovery(
@@ -182,7 +182,7 @@ def test_fetch_profile_activity_maps_handle_based_results(monkeypatch):
             )
         return FakeResponse({"success": True, "data": {}})
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     mentions = connector.fetch_profile_activity(
@@ -199,7 +199,7 @@ def test_fetch_profile_activity_maps_handle_based_results(monkeypatch):
 
 
 def test_fetch_profile_activity_skips_missing_handles(monkeypatch):
-    monkeypatch.setattr("requests.get", lambda *a, **k: FakeResponse({"success": True, "data": {}}))
+    monkeypatch.setattr("engine.ingestion.http.get", lambda *a, **k: FakeResponse({"success": True, "data": {}}))
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     mentions = connector.fetch_profile_activity(
@@ -217,7 +217,7 @@ def test_fetch_profile_activity_isolates_per_platform_failures(monkeypatch):
             {"success": True, "data": {"posts": [{"text": "Rival post", "username": "rival_handle"}]}}
         )
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     mentions = connector.fetch_profile_activity(
@@ -254,7 +254,7 @@ def test_fetch_discovery_pulls_comments_for_posts_with_ids(monkeypatch):
             )
         return FakeResponse({"success": True, "data": {}})
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     mentions = connector._fetch_discovery(
@@ -279,7 +279,7 @@ def test_discover_handles_returns_candidates_per_platform(monkeypatch):
             )
         return FakeResponse({"success": True, "data": {}})
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     candidates = connector.discover_handles("Edwin Sifuna")
@@ -294,7 +294,7 @@ def test_discover_handles_isolates_platform_failures(monkeypatch):
             raise RuntimeError("rate limited")
         return FakeResponse({"success": True, "data": {"items": [{"channel_name": "Edwin Sifuna"}]}})
 
-    monkeypatch.setattr("requests.get", fake_get)
+    monkeypatch.setattr("engine.ingestion.http.get", fake_get)
 
     connector = SocialCrawlConnector(api_key="sc_test-key")
     candidates = connector.discover_handles("Edwin Sifuna")
