@@ -445,6 +445,60 @@ def get_report(job_id: str, x_api_key: str | None = Header(default=None)):
     return job
 
 
+def _latest_report_core(db, name: str) -> dict | None:
+    from engine.db.models import IntelligenceReport
+
+    politician = db.query(Politician).filter_by(name=name.strip()).first()
+    if not politician:
+        return None
+    report = (
+        db.query(IntelligenceReport)
+        .filter_by(politician_id=politician.id)
+        .order_by(IntelligenceReport.generated_at.desc())
+        .first()
+    )
+    if not report:
+        return None
+    p = report.payload or {}
+    return {
+        "name": politician.name,
+        "generated_at": str(report.generated_at),
+        "sentiment": p.get("sentiment_breakdown", {}),
+        "volume": {
+            "total": (p.get("volume_trends") or {}).get("total_mentions"),
+            "by_platform": (p.get("volume_trends") or {}).get("by_platform", {}),
+        },
+        "narratives": [
+            {"label": n["label"], "strength": n["strength_score"], "mentions": n["mention_count"]}
+            for n in (p.get("narrative_breakdown") or [])[:8]
+        ],
+        "top_influencers": [i.get("author_handle") for i in (p.get("influence_summary") or [])[:10]],
+        "executive_summary": p.get("executive_summary", ""),
+    }
+
+
+@app.get("/api/compare")
+def compare(a: str, b: str, x_api_key: str | None = Header(default=None)):
+    """Side-by-side comparison of the latest stored reports for two names —
+    rivals on one screen. Reads stored data only; never triggers pipelines."""
+    _require_api_key(x_api_key)
+    db = SessionLocal()
+    try:
+        left = _latest_report_core(db, a)
+        right = _latest_report_core(db, b)
+    finally:
+        db.close()
+    if not left or not right:
+        missing = a if not left else b
+        raise HTTPException(status_code=404, detail=f"no stored report for '{missing}' — generate one first")
+    shared = sorted(
+        {n["label"] for n in left["narratives"]} & {n["label"] for n in right["narratives"]}
+    )
+    shared_influencers = sorted(set(left["top_influencers"]) & set(right["top_influencers"]))
+    return {"ok": True, "a": left, "b": right,
+            "shared_narratives": shared, "shared_influencers": shared_influencers}
+
+
 @app.get("/api/alerts")
 def get_alerts(name: str, limit: int = 30, x_api_key: str | None = Header(default=None)):
     """Early-warning feed for a tracked politician, newest first."""
