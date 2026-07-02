@@ -43,15 +43,21 @@ Respond with ONLY the JSON object described above."""
 
 
 def call_json_untrusted(
-    instructions: str, untrusted_text: str, expected_keys: set[str], max_tokens: int = 1024
+    instructions: str,
+    untrusted_text: str,
+    expected_keys: set[str],
+    max_tokens: int = 1024,
+    max_untrusted_chars: int = UNTRUSTED_TEXT_MAX_CHARS,
 ) -> dict:
     """call_json for prompts that embed scraped (attacker-controllable) text.
 
     Delimits and truncates the untrusted text, instructs the model to treat it
     as data only, and validates the parsed response contains the expected keys
     so an injected reply that changes the output shape is rejected.
+    `max_untrusted_chars` lets corpus-level analysts pass larger batches than
+    the per-mention default.
     """
-    untrusted = untrusted_text[:UNTRUSTED_TEXT_MAX_CHARS].replace("<untrusted_content>", "").replace(
+    untrusted = untrusted_text[:max_untrusted_chars].replace("<untrusted_content>", "").replace(
         "</untrusted_content>", ""
     )
     result = call_json(

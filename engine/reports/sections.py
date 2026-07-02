@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from engine import llm
+from engine.reports import analysts
 
 
 def _context_blob(
@@ -130,11 +131,19 @@ def enrich_report_payload(
     window_start: datetime,
     window_end: datetime,
     payload: dict,
+    mentions: list[dict] | None = None,
+    narratives: list[dict] | None = None,
 ) -> dict:
-    """Runs the four section-writer calls above concurrently and merges their
-    output into `payload`. Each section fails independently — one LLM hiccup
-    falls back to the existing rule-based value (or an empty list) instead of
-    taking down the whole report.
+    """Runs every section writer concurrently and merges the output into
+    `payload`. Each section fails independently — one LLM hiccup falls back to
+    the existing rule-based value (or an empty value) instead of taking down
+    the whole report.
+
+    When `mentions` (full-text corpus dicts, incl. comments) and `narratives`
+    (with mention_ids) are provided, the corpus-reading analyst sections are
+    generated too: public_voice, platform_pulse, timeline, influencer_stances,
+    narrative_deep_dives, and the executive_brief synthesizer. Without them
+    (older callers/tests), only the aggregate-based sections run.
     """
     context = _context_blob(
         politician_name,
@@ -147,21 +156,97 @@ def enrich_report_payload(
     )
 
     jobs = {
-        "executive_summary": (generate_executive_summary, payload["executive_summary"]),
-        "risks": (generate_risks, []),
-        "opportunities": (generate_opportunities, []),
-        "trends": (generate_trends, []),
+        "executive_summary": (lambda: generate_executive_summary(context), payload["executive_summary"]),
+        "risks": (lambda: generate_risks(context), []),
+        "opportunities": (lambda: generate_opportunities(context), []),
+        "trends": (lambda: generate_trends(context), []),
     }
+
+    if mentions:
+        by_day = payload["volume_trends"].get("by_day", {})
+        influence = payload["influence_summary"]
+        mentions_by_id = {str(m.get("id")): m for m in mentions}
+        jobs.update(
+            {
+                "public_voice": (
+                    lambda: analysts.analyze_public_voice(politician_name, mentions),
+                    {},
+                ),
+                "platform_pulse": (
+                    lambda: analysts.analyze_platform_pulse(politician_name, mentions),
+                    [],
+                ),
+                "timeline": (
+                    lambda: analysts.analyze_timeline(politician_name, mentions, by_day),
+                    [],
+                ),
+                "influencer_stances": (
+                    lambda: analysts.analyze_influencer_stances(politician_name, mentions, influence),
+                    [],
+                ),
+            }
+        )
+        if narratives:
+            jobs["narrative_deep_dives"] = (
+                lambda: analysts.analyze_narrative_deep_dives(politician_name, narratives, mentions_by_id),
+                [],
+            )
 
     def run(key):
         fn, fallback = jobs[key]
         try:
-            return key, fn(context)
+            return key, fn()
         except Exception:
             return key, fallback
 
-    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
         for key, value in pool.map(run, jobs):
             payload[key] = value
 
+    if mentions:
+        # Synthesizer reads every analyst's output ("the major AI that
+        # analyzes all of that"), then the grounding verifier strips any
+        # unsupported biographical/status claims from the free-prose sections.
+        analyst_outputs = {
+            k: payload.get(k)
+            for k in (
+                "public_voice",
+                "platform_pulse",
+                "timeline",
+                "influencer_stances",
+                "narrative_deep_dives",
+                "sentiment_breakdown",
+            )
+        }
+        try:
+            payload["executive_brief"] = analysts.synthesize_executive_brief(politician_name, analyst_outputs)
+        except Exception:
+            payload["executive_brief"] = payload.get("executive_summary", "")
+
+        source_quotes = _collect_quotes(payload)
+        prose = {
+            "executive_brief": payload.get("executive_brief", ""),
+            "executive_summary": payload.get("executive_summary", ""),
+        }
+        cleaned = analysts.verify_grounding(prose, source_quotes)
+        payload.update(cleaned)
+
     return payload
+
+
+def _collect_quotes(payload: dict) -> list[str]:
+    quotes: list[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "text" in node and "ref" in node:
+                quotes.append(f"@{node.get('author')} ({node.get('platform')}): {node['text']}")
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    for key in ("public_voice", "platform_pulse", "timeline", "influencer_stances", "narrative_deep_dives"):
+        walk(payload.get(key))
+    return quotes

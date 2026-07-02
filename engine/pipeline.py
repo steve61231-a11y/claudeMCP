@@ -80,6 +80,13 @@ def run_analysis(
         link = entities.detect_entity_link(
             mention.text, politician.name, politician.aliases or [], politician.keywords or []
         )
+        if not link and mention.source_type == "comment":
+            # A comment under a post about the politician is relevant even
+            # when the comment text never names them — that's most grassroots
+            # reaction. The orchestrator tags comments with their parent post.
+            parent = (mention.raw_payload or {}).get("_parent_post")
+            if parent:
+                link = {"matched": True, "match_type": "comment_on_linked_post", "confidence": 0.7}
         if not link:
             return None, []
         return link, entities.extract_people(mention.text, politician.name)
@@ -224,7 +231,14 @@ def run_analysis(
         influence_ranking,
         network_snapshot,
     )
-    payload = enrich_report_payload(politician.name, window_start, window_end, payload)
+    payload = enrich_report_payload(
+        politician.name,
+        window_start,
+        window_end,
+        payload,
+        mentions=stored_mentions,
+        narratives=built_narratives,
+    )
     if ingestion_run is not None:
         payload["data_provenance"] = {
             "ingestion_run_id": ingestion_run.id,

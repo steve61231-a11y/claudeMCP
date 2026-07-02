@@ -50,6 +50,10 @@ def generate_report_payload(
             "by_source_type": dict(volume_by_source_type),
             "by_language": dict(volume_by_language),
             "total_mentions": len(mentions),
+            # Recency-first callouts: a live monitoring product leads with
+            # what's happening now, not the historical window total.
+            "last_7_days": sum(1 for m in mentions if (window_end - m["posted_at"]).days < 7),
+            "last_30_days": sum(1 for m in mentions if (window_end - m["posted_at"]).days < 30),
         },
         "influence_summary": influence_ranking,
         "narrative_breakdown": [

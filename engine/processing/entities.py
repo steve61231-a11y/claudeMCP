@@ -112,7 +112,7 @@ PEOPLE_PROMPT = """You are mapping the people mentioned alongside a Kenyan polit
 
 Politician being tracked (exclude them from the output): {name}
 
-Identify every OTHER named individual in the text — fellow politicians, journalists, party officials, activists, content creators. For each, give their role and affiliation if the text (or well-known Kenyan public context) supports it; otherwise use null. Do not invent people who are not named in the text.
+Identify every OTHER named individual in the text — fellow politicians, journalists, party officials, activists, content creators. For each, give their role and affiliation ONLY if the provided text itself states or clearly implies it; otherwise use null. Do NOT fill in role, affiliation, office, or status from your own knowledge of public figures — your knowledge may be out of date (people die, lose office, switch parties). Never assert whether a person is alive, dead, or currently holds any position unless the text says so. Do not invent people who are not named in the text.
 
 The required JSON shape is:
 {{"people": [{{"name": "Full Name", "role": "journalist|politician|party official|activist|creator|other or null", "affiliation": "organisation/media house/party or null"}}]}}"""

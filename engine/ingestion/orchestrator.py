@@ -24,7 +24,7 @@ from engine.processing import cleaning
 CURATED_DIR = Path(__file__).resolve().parent.parent.parent / "mock-data" / "curated"
 
 MAX_PAGES_PER_TASK = 5
-COMMENT_TOP_N_POSTS = 10
+COMMENT_TOP_N_POSTS = 25
 DEFAULT_MAX_WORKERS = 8
 
 
@@ -274,19 +274,30 @@ def _execute_socialcrawl_task(session: Session, run: IngestionRun, task: Ingesti
 
     # Grassroots reactions: comments for the most-engaged discovered posts.
     if task.platform in sc.SocialCrawlConnector._COMMENT_ENDPOINTS and task.status == "running":
+        _, key_kind = sc.SocialCrawlConnector._COMMENT_ENDPOINTS[task.platform]
         top_posts = sorted(discovered_posts, key=_engagement_score, reverse=True)[:COMMENT_TOP_N_POSTS]
         for post in top_posts:
             current = session.query(IngestionRun.credits_spent).filter_by(id=run.id).scalar() or 0.0
             if _budget_exhausted(run, current + sc.DEFAULT_CREDIT_COST):
                 break
             payload = post.get("raw_payload") or {}
-            post_id = payload.get("id") or payload.get("video_id") or payload.get("post_id")
-            if not post_id:
+            fields = payload.get("post") if isinstance(payload.get("post"), dict) else payload
+            parent_url = _source_url(fields) or _source_url(payload)
+            parent_id = fields.get("id") or fields.get("video_id") or fields.get("post_id")
+            post_key = parent_url if key_kind == "url" else parent_id
+            if not post_key:
                 continue
             try:
-                comments, _ = connector.comments_page(task.platform, str(post_id), idempotency_key=f"{task.id}:c:{post_id}")
+                comments, _ = connector.comments_page(task.platform, str(post_key), idempotency_key=f"{task.id}:c:{post_key}")
             except Exception:
                 continue
+            # Tag each comment with its parent post so analysis can treat
+            # "comment on a post about the politician" as relevant even when
+            # the comment text itself never names them.
+            for comment in comments:
+                raw = comment.get("raw_payload")
+                if isinstance(raw, dict):
+                    raw.setdefault("_parent_post", {"id": parent_id, "url": parent_url, "author": post.get("author_handle")})
             _spend_credits(session, run.id, sc.DEFAULT_CREDIT_COST)
             task.credits_spent += sc.DEFAULT_CREDIT_COST
             task.result_count += _store_mentions(session, run, task, politician, comments)

@@ -74,11 +74,16 @@ class SocialCrawlConnector(IngestionConnector):
             raise RuntimeError("SOCIALCRAWL_API_KEY is not configured")
 
     # Platforms with a top-level comment endpoint reachable from a discovery
-    # search result (post/video id), used to pull grassroots reaction data
-    # for the most-engaged items found during discovery.
+    # search result, used to pull grassroots reaction data for the
+    # most-engaged items found during discovery. `key` is which identifier the
+    # endpoint takes: tiktok/youtube resolve by post/video id, while
+    # instagram/facebook/reddit require the full post URL (per SocialCrawl docs).
     _COMMENT_ENDPOINTS = {
-        "tiktok": "/v1/tiktok/post/comments",
-        "youtube": "/v1/youtube/video/comments",
+        "tiktok": ("/v1/tiktok/post/comments", "id"),
+        "youtube": ("/v1/youtube/video/comments", "id"),
+        "instagram": ("/v1/instagram/post/comments", "url"),
+        "facebook": ("/v1/facebook/post/comments", "url"),
+        "reddit": ("/v1/reddit/post/comments", "url"),
     }
 
     def fetch(
@@ -156,16 +161,23 @@ class SocialCrawlConnector(IngestionConnector):
     def comments_page(
         self, platform: str, post_id: str, page: int = 1, idempotency_key: str | None = None
     ) -> tuple[list[IngestedMention], bool]:
-        """One page of comments for a discovered post (tiktok/youtube)."""
-        endpoint = self._COMMENT_ENDPOINTS.get(platform)
-        if not endpoint:
+        """One page of comments for a discovered post. `post_id` is the
+        platform post/video id for tiktok/youtube, or the full post URL for
+        instagram/facebook/reddit."""
+        entry = self._COMMENT_ENDPOINTS.get(platform)
+        if not entry:
             return [], False
+        endpoint, key_kind = entry
         headers = {"x-api-key": self.api_key}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
+        if key_kind == "url":
+            params = {"url": post_id, "page": str(page)}
+        else:
+            params = {"id": post_id, "video_id": post_id, "post_id": post_id, "page": str(page)}
         response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{endpoint}",
-            params={"id": post_id, "video_id": post_id, "post_id": post_id, "page": str(page)},
+            params=params,
             headers=headers,
             timeout=30,
         )
