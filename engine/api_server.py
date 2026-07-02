@@ -176,10 +176,12 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         return score, label
 
     scored_mentions = []
+    seen_urls: set[str] = set()
     for mention, sent in rows:
         url = _extract_url(mention.raw_payload)
-        if not url:
+        if not url or url in seen_urls:
             continue
+        seen_urls.add(url)
         score, label = engagement_metric(mention)
         scored_mentions.append(
             {
@@ -214,13 +216,57 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
 
     network_nodes = [{"id": "subject", "label": politician.name, "group": "core", "value": 30}]
     network_edges = []
-    for item in payload["influence_summary"][:8]:
-        node_id = item["author_handle"].replace(" ", "_")
-        group = "rival" if item["sentiment_contribution"] < 0 else "ally"
-        network_nodes.append(
-            {"id": node_id, "label": item["author_handle"], "group": group, "value": max(6, item["volume"] * 3)}
-        )
-        network_edges.append({"from": "subject", "to": node_id, "label": "mentions"})
+    insights = payload.get("network_insights") or {}
+    top_people = insights.get("top_people") or []
+    if top_people:
+        # People-first map: named individuals co-mentioned with the subject
+        # (with role/affiliation), influencers by reach, and real
+        # person-to-person co-mention edges — not media-handle spokes.
+        added: dict[str, str] = {}
+        for person in top_people[:14]:
+            node_id = person["name"].replace(" ", "_")
+            added[person["name"]] = node_id
+            group = "politician" if (person.get("role") or "") == "politician" else "person"
+            label = person["name"] + (f" ({person['affiliation']})" if person.get("affiliation") else "")
+            network_nodes.append(
+                {"id": node_id, "label": label, "group": group, "value": max(6, person["co_mentions"] * 2)}
+            )
+            network_edges.append({"from": "subject", "to": node_id, "label": "co-mentioned"})
+        for inf in (insights.get("top_influencers") or [])[:8]:
+            node_id = f"inf_{inf['handle']}".replace(" ", "_")
+            network_nodes.append(
+                {
+                    "id": node_id,
+                    "label": f"{inf['handle']} ({inf.get('followers') or 0:,} followers)",
+                    "group": "influencer",
+                    "value": 10,
+                }
+            )
+            network_edges.append({"from": node_id, "to": "subject", "label": "creates content about"})
+        for edge in (insights.get("people_edges") or [])[:30]:
+            if edge["from"] in added and edge["to"] in added:
+                network_edges.append(
+                    {"from": added[edge["from"]], "to": added[edge["to"]], "label": "appears together"}
+                )
+        legend = [
+            {"group": "core", "label": "Subject", "color": "#7dd3fc"},
+            {"group": "politician", "label": "Politician", "color": "#fbbf24"},
+            {"group": "person", "label": "Public figure", "color": "#c4b5fd"},
+            {"group": "influencer", "label": "Influencer (1k+ followers)", "color": "#86efac"},
+        ]
+    else:
+        for item in payload["influence_summary"][:8]:
+            node_id = item["author_handle"].replace(" ", "_")
+            group = "rival" if item["sentiment_contribution"] < 0 else "ally"
+            network_nodes.append(
+                {"id": node_id, "label": item["author_handle"], "group": group, "value": max(6, item["volume"] * 3)}
+            )
+            network_edges.append({"from": "subject", "to": node_id, "label": "mentions"})
+        legend = [
+            {"group": "core", "label": "Subject", "color": "#7dd3fc"},
+            {"group": "ally", "label": "Positive/neutral driver", "color": "#86efac"},
+            {"group": "rival", "label": "Negative driver", "color": "#fb7185"},
+        ]
 
     return {
         "name": politician.name,
@@ -249,11 +295,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "network": {
             "nodes": network_nodes,
             "edges": network_edges,
-            "legend": [
-                {"group": "core", "label": "Subject", "color": "#7dd3fc"},
-                {"group": "ally", "label": "Positive/neutral driver", "color": "#86efac"},
-                {"group": "rival", "label": "Negative driver", "color": "#fb7185"},
-            ],
+            "legend": legend,
         },
         "narratives": [
             {
