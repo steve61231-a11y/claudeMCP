@@ -248,6 +248,15 @@ def run_analysis(
         }
         payload["data_coverage"] = _coverage_summary(ingestion_run.stats or {})
 
+    # Report-over-report change tracking (computed before this report is
+    # stored, so "previous" is genuinely the prior report).
+    from engine.reports.deltas import compute_deltas, sentiment_history
+
+    deltas = compute_deltas(db, politician, payload)
+    if deltas:
+        payload["since_last_report"] = deltas
+    payload["sentiment_history"] = sentiment_history(db, politician)
+
     report = IntelligenceReport(
         politician_id=politician.id,
         period=period,

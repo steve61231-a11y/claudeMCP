@@ -357,6 +357,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
             "last30Days": volume.get("last_30_days", 0),
         },
         "dataCoverage": payload.get("data_coverage", {}),
+        "sinceLastReport": payload.get("since_last_report"),
+        "sentimentHistory": payload.get("sentiment_history", []),
     }
 
 
