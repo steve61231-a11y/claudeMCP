@@ -372,7 +372,21 @@ def _run_report_job(job_id: str, name: str) -> None:
         politician = _ensure_politician(db, name)
         window_end = datetime.utcnow()
         window_start = window_end - timedelta(days=210)
-        report = run_pipeline(db, politician, period="live-demo", window_start=window_start, window_end=window_end)
+        # Surface progress to the polling frontend: a full first-time run is
+        # minutes long (fan-out scraping, then LLM analysis), and a silent
+        # spinner reads as broken.
+        _jobs[job_id]["stage"] = f"Scanning social platforms and news for “{name}”…"
+        from engine.pipeline import run_analysis, run_ingestion
+
+        ingestion_run = run_ingestion(db, politician, window_start, window_end, credit_budget=300.0)
+        stats = (ingestion_run.stats or {}) if ingestion_run else {}
+        found = stats.get("mentions_total")
+        _jobs[job_id]["stage"] = (
+            f"Analyzing {found} collected mentions (sentiment, narratives, voices, network)…"
+            if found
+            else "Analyzing collected mentions (sentiment, narratives, voices, network)…"
+        )
+        report = run_analysis(db, politician, "live-demo", window_start, window_end, ingestion_run=ingestion_run)
         _jobs[job_id] = {
             "status": "done",
             "ok": True,
