@@ -246,6 +246,7 @@ def run_analysis(
             "credits_spent": ingestion_run.credits_spent,
             **(ingestion_run.stats or {}),
         }
+        payload["data_coverage"] = _coverage_summary(ingestion_run.stats or {})
 
     report = IntelligenceReport(
         politician_id=politician.id,
@@ -257,6 +258,37 @@ def run_analysis(
     db.add(report)
     db.commit()
     return report
+
+
+def _coverage_summary(stats: dict) -> dict:
+    """Human-readable data-coverage disclosure for the report: which sources
+    delivered, which failed and why. A thin report must say why it is thin."""
+    health = stats.get("source_health") or {}
+    ok, degraded, down = [], [], []
+    notes = []
+    for source, h in sorted(health.items()):
+        if h.get("succeeded", 0) == h.get("attempted", 0) and h.get("attempted", 0) > 0:
+            ok.append(source)
+        elif h.get("succeeded", 0) > 0:
+            degraded.append(source)
+        else:
+            down.append(source)
+        failures = h.get("failures") or {}
+        if failures.get("out_of_credits"):
+            notes.append(f"{source}: data provider credits exhausted — top up to restore coverage")
+        elif failures.get("endpoint_unavailable"):
+            notes.append(f"{source}: provider endpoint unavailable this run")
+        elif failures.get("upstream_error"):
+            notes.append(f"{source}: partial — upstream errors during collection")
+    balance = stats.get("credit_balance_after")
+    return {
+        "sources_ok": ok,
+        "sources_degraded": degraded,
+        "sources_down": down,
+        "notes": sorted(set(notes)),
+        "credit_balance": balance,
+        "complete": not down and not degraded,
+    }
 
 
 def _canonical_key(entity_type: str, name: str) -> str:

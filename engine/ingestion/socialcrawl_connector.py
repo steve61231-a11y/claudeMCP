@@ -94,6 +94,24 @@ class SocialCrawlConnector(IngestionConnector):
         mentions.extend(self._fetch_discovery(politician_name, aliases, window_start, window_end))
         return mentions
 
+    def check_balance(self) -> float | None:
+        """Remaining credit balance (0cr meta endpoint). None if unreachable —
+        callers treat unknown as 'proceed but flag it', never as zero."""
+        try:
+            response = http.get(
+                f"{SOCIALCRAWL_BASE_URL}/v1/credits/balance",
+                headers={"x-api-key": self.api_key},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json().get("data", response.json())
+            for key in ("balance", "credits", "remaining"):
+                if key in data:
+                    return float(data[key])
+        except Exception:
+            pass
+        return None
+
     @staticmethod
     def _search_params(path: str, query: str, page: int, window_start: datetime, window_end: datetime) -> dict:
         """Endpoint-specific query params — verified against SocialCrawl docs.

@@ -136,7 +136,12 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     statuses = [t.status for t in db.query(IngestionTask).filter_by(run_id=run_id).all()]
     run.status = "completed" if all(s in ("done", "skipped_budget") for s in statuses) else "failed"
     run.finished_at = datetime.utcnow()
-    run.stats = _run_stats(db, run)
+    stats = _run_stats(db, run)
+    if settings.socialcrawl_api_key:
+        from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
+
+        stats["credit_balance_after"] = SocialCrawlConnector().check_balance()
+    run.stats = stats
     db.commit()
     return run
 
@@ -154,7 +159,35 @@ def _run_stats(db: Session, run: IngestionRun) -> dict:
         "mentions_by_platform": by_platform,
         "mentions_total": sum(by_platform.values()),
         "credits_spent": run.credits_spent,
+        "source_health": _source_health(db, run),
     }
+
+
+def _source_health(db: Session, run: IngestionRun) -> dict:
+    """Per-source outcome classification, so a thin report is never silent
+    about WHY it is thin (out of credits vs endpoint gone vs upstream down)."""
+    health: dict[str, dict] = {}
+    for task in db.query(IngestionTask).filter_by(run_id=run.id).all():
+        key = task.platform or task.connector
+        entry = health.setdefault(key, {"attempted": 0, "succeeded": 0, "results": 0, "failures": {}})
+        entry["attempted"] += 1
+        if task.status == "done":
+            entry["succeeded"] += 1
+            entry["results"] += task.result_count or 0
+        elif task.status == "failed":
+            err = task.error or ""
+            if "402" in err:
+                kind = "out_of_credits"
+            elif "404" in err:
+                kind = "endpoint_unavailable"
+            elif any(code in err for code in ("500", "502", "503", "504")):
+                kind = "upstream_error"
+            else:
+                kind = "other"
+            entry["failures"][kind] = entry["failures"].get(kind, 0) + 1
+        elif task.status == "skipped_budget":
+            entry["failures"]["budget_cap"] = entry["failures"].get("budget_cap", 0) + 1
+    return health
 
 
 def _execute_task_safe(session_factory, task_id: str) -> None:

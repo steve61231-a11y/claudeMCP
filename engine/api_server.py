@@ -348,6 +348,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
             "last7Days": volume.get("last_7_days", 0),
             "last30Days": volume.get("last_30_days", 0),
         },
+        "dataCoverage": payload.get("data_coverage", {}),
     }
 
 
@@ -436,4 +437,30 @@ def get_report(job_id: str, x_api_key: str | None = Header(default=None)):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True}
+    """Liveness + data-supply state: the operator's one-glance view of
+    whether the scraping supply chain is healthy before a demo."""
+    supply: dict = {}
+    if settings.socialcrawl_api_key:
+        try:
+            from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
+
+            supply["socialcrawl_credit_balance"] = SocialCrawlConnector().check_balance()
+        except Exception:
+            supply["socialcrawl_credit_balance"] = None
+    db = SessionLocal()
+    try:
+        from engine.db.models import IngestionRun
+
+        last_run = db.query(IngestionRun).order_by(IngestionRun.started_at.desc()).first()
+        if last_run:
+            supply["last_ingestion"] = {
+                "status": last_run.status,
+                "started_at": str(last_run.started_at),
+                "mentions_total": (last_run.stats or {}).get("mentions_total"),
+                "source_health": (last_run.stats or {}).get("source_health"),
+            }
+    except Exception:
+        pass
+    finally:
+        db.close()
+    return {"ok": True, "data_supply": supply}
