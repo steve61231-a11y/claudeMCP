@@ -125,15 +125,15 @@ def extract_people(text: str, politician_name: str) -> list[dict]:
     then adds role/affiliation and filters NER noise. Returns [] on any failure
     — person extraction must never break the analysis run.
     """
-    nlp = get_nlp()
-    if "ner" in nlp.pipe_names:
-        if not any(e["type"] == "person" for e in extract_standard_entities(text)):
+    if not any(e["type"] == "person" for e in extract_standard_entities(text)):
+        if "ner" in get_nlp().pipe_names:
             return []
-    elif not _capitalized_name_hint(text, politician_name):
-        # Blank spaCy model (en_core_web_sm unavailable): fall back to a
-        # cheap capitalized-name-pair heuristic so people extraction doesn't
-        # silently drop to zero — it would otherwise empty the people network.
-        return []
+        if not _capitalized_name_hint(text, politician_name):
+            # Blank spaCy model (en_core_web_sm unavailable): fall back to a
+            # cheap capitalized-name-pair heuristic so people extraction
+            # doesn't silently drop to zero — it would otherwise empty the
+            # people network.
+            return []
     try:
         result = llm.call_json_untrusted(
             PEOPLE_PROMPT.format(name=politician_name), text, expected_keys={"people"}, max_tokens=512
