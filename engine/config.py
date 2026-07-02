@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     transcripts_per_run: int = 15
     # Minimum follower count for an author to be classified as an influencer.
     influencer_follower_threshold: int = 1000
+    # Demo API (engine/api_server.py) hardening. When pulse_api_key is set,
+    # /api/report requires a matching X-API-Key header. allowed_origins is a
+    # comma-separated CORS allowlist; empty keeps the permissive dev default.
+    pulse_api_key: str = ""
+    allowed_origins: str = ""
+    report_rate_limit_per_hour: int = 20
 
     class Config:
         env_file = ".env"

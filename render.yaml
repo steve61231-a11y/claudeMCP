@@ -23,3 +23,7 @@ services:
         sync: false
       - key: NEWSAPI_KEY
         sync: false
+      - key: PULSE_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
