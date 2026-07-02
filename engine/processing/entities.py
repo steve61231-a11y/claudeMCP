@@ -89,6 +89,25 @@ def extract_standard_entities(text: str) -> list[dict]:
     return entities
 
 
+_NAME_PAIR_RE = None
+
+
+def _capitalized_name_hint(text: str, politician_name: str) -> bool:
+    """True if the text contains a Capitalized First Last pair that isn't the
+    tracked politician — the no-NER stand-in for a PERSON candidate."""
+    global _NAME_PAIR_RE
+    import re
+
+    if _NAME_PAIR_RE is None:
+        _NAME_PAIR_RE = re.compile(r"\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b")
+    politician_words = {w.lower() for w in politician_name.split()}
+    for m in _NAME_PAIR_RE.finditer(text):
+        words = {m.group(1).lower(), m.group(2).lower()}
+        if not (words & politician_words):
+            return True
+    return False
+
+
 PEOPLE_PROMPT = """You are mapping the people mentioned alongside a Kenyan politician in scraped media/social text. The text may be in English, Swahili, or Sheng.
 
 Politician being tracked (exclude them from the output): {name}
@@ -106,8 +125,14 @@ def extract_people(text: str, politician_name: str) -> list[dict]:
     then adds role/affiliation and filters NER noise. Returns [] on any failure
     — person extraction must never break the analysis run.
     """
-    candidates = [e for e in extract_standard_entities(text) if e["type"] == "person"]
-    if not candidates:
+    nlp = get_nlp()
+    if "ner" in nlp.pipe_names:
+        if not any(e["type"] == "person" for e in extract_standard_entities(text)):
+            return []
+    elif not _capitalized_name_hint(text, politician_name):
+        # Blank spaCy model (en_core_web_sm unavailable): fall back to a
+        # cheap capitalized-name-pair heuristic so people extraction doesn't
+        # silently drop to zero — it would otherwise empty the people network.
         return []
     try:
         result = llm.call_json_untrusted(

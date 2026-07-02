@@ -205,7 +205,14 @@ def run_analysis(
     graph.upsert_mentions(politician.id, politician.name, stored_mentions)
     graph.upsert_people(politician.id, list(people_counts.values()))
     graph.upsert_influencers(politician.id, influencers)
-    network_snapshot = graph.get_network_snapshot(politician.id)
+    # Postgres is the source of truth for the network view — Neo4j is not
+    # provisioned in the Render deployment (and is stubbed in tests/demo), so
+    # a Neo4j-only snapshot silently renders an empty map in production.
+    # Neo4j results, when present, only fill in anything Postgres lacks.
+    network_snapshot = {
+        **graph.get_network_snapshot(politician.id),
+        **_network_snapshot_from_db(db, politician, politician_entity),
+    }
 
     payload = generate_report_payload(
         politician.name,
@@ -256,6 +263,91 @@ def _upsert_entity(
     entity.role = entity.role or role
     entity.affiliation = entity.affiliation or affiliation
     return entity
+
+
+def _network_snapshot_from_db(db: Session, politician: Politician, politician_entity: Entity) -> dict:
+    """People-first network snapshot computed from Postgres, matching
+    graph.get_network_snapshot's shape and adding person↔person co-mention
+    edges (two people named together in the same mention)."""
+    from sqlalchemy import func
+
+    from engine.db.models import AuthorProfile
+
+    mention_ids = (
+        db.query(MentionEntity.mention_id)
+        .join(RawMention, RawMention.id == MentionEntity.mention_id)
+        .filter(MentionEntity.entity_id == politician_entity.id, RawMention.politician_id == politician.id)
+        .subquery()
+    )
+
+    top_users = [
+        {"handle": handle, "mentions": int(count)}
+        for handle, count in (
+            db.query(RawMention.author_handle, func.count(RawMention.id))
+            .filter(RawMention.id.in_(mention_ids.select()))
+            .group_by(RawMention.author_handle)
+            .order_by(func.count(RawMention.id).desc())
+            .limit(25)
+            .all()
+        )
+    ]
+
+    person_rows = (
+        db.query(Entity, func.count(MentionEntity.id))
+        .join(MentionEntity, MentionEntity.entity_id == Entity.id)
+        .filter(Entity.type == "person", MentionEntity.mention_id.in_(mention_ids.select()))
+        .group_by(Entity.id)
+        .order_by(func.count(MentionEntity.id).desc())
+        .limit(30)
+        .all()
+    )
+    top_people = [
+        {"name": e.name, "role": e.role, "affiliation": e.affiliation, "co_mentions": int(count)}
+        for e, count in person_rows
+    ]
+
+    # person↔person edges: both named in the same mention text.
+    me1, me2 = MentionEntity.__table__.alias("me1"), MentionEntity.__table__.alias("me2")
+    e1, e2 = Entity.__table__.alias("e1"), Entity.__table__.alias("e2")
+    pair_rows = db.execute(
+        me1.join(me2, (me1.c.mention_id == me2.c.mention_id) & (me1.c.entity_id < me2.c.entity_id))
+        .join(e1, e1.c.id == me1.c.entity_id)
+        .join(e2, e2.c.id == me2.c.entity_id)
+        .select()
+        .with_only_columns(e1.c.name, e2.c.name, func.count().label("weight"))
+        .where(
+            e1.c.type == "person",
+            e2.c.type == "person",
+            me1.c.mention_id.in_(mention_ids.select()),
+        )
+        .group_by(e1.c.name, e2.c.name)
+        .order_by(func.count().desc())
+        .limit(60)
+    ).all()
+    people_edges = [{"from": a, "to": b, "weight": int(w)} for a, b, w in pair_rows]
+
+    influencer_handles = {u["handle"] for u in top_users}
+    influencers = [
+        {"handle": p.handle, "platform": p.platform, "followers": p.follower_count, "posts": None}
+        for p in (
+            db.query(AuthorProfile)
+            .filter(
+                AuthorProfile.handle.in_(influencer_handles),
+                AuthorProfile.follower_count >= settings.influencer_follower_threshold,
+            )
+            .order_by(AuthorProfile.follower_count.desc())
+            .limit(30)
+            .all()
+        )
+    ]
+
+    return {
+        "politician_id": politician.id,
+        "top_users": top_users,
+        "top_people": top_people,
+        "top_influencers": influencers,
+        "people_edges": people_edges,
+    }
 
 
 def _classify_influencers(db: Session, linked_mentions: list[RawMention]) -> list[dict]:
