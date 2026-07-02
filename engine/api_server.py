@@ -477,6 +477,34 @@ def _latest_report_core(db, name: str) -> dict | None:
     }
 
 
+class SimulateRequest(BaseModel):
+    name: str
+    draft_text: str
+
+
+@app.post("/api/simulate")
+def simulate(req: SimulateRequest, request: Request, x_api_key: str | None = Header(default=None)):
+    """Predict reception of a draft message from documented past reactions."""
+    _require_api_key(x_api_key)
+    _check_rate_limit(request.client.host if request.client else "unknown")
+    from engine.intelligence.simulator import simulate_message
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter_by(name=req.name.strip()).first()
+        if not politician:
+            raise HTTPException(status_code=404, detail="unknown politician — generate a report first")
+        result = simulate_message(db, politician, req.draft_text.strip())
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="simulation failed — see server logs")
+    finally:
+        db.close()
+    return {"ok": True, "simulation": result}
+
+
 @app.get("/api/compare")
 def compare(a: str, b: str, x_api_key: str | None = Header(default=None)):
     """Side-by-side comparison of the latest stored reports for two names —
