@@ -89,6 +89,28 @@ class SocialCrawlConnector(IngestionConnector):
         mentions.extend(self._fetch_discovery(politician_name, aliases, window_start, window_end))
         return mentions
 
+    @staticmethod
+    def _search_params(path: str, query: str, page: int, window_start: datetime, window_end: datetime) -> dict:
+        """Endpoint-specific query params — verified against SocialCrawl docs.
+
+        Hashtag endpoints require `hashtag` (400 on `query`); google_news
+        requires `keyword` with a depth/time_range model and no pagination.
+        Everything else takes `query` + best-effort date/page params (ignored
+        where unsupported; window filtering also happens client-side).
+        """
+        if path.endswith("/search/hashtag"):
+            return {"hashtag": query.lstrip("#").replace(" ", "")}
+        if path == "/v1/google_news/search":
+            days = (window_end - window_start).days
+            time_range = "year" if days > 31 else "month" if days > 7 else "week"
+            return {"keyword": query, "depth": "100", "time_range": time_range}
+        return {
+            "query": query,
+            "page": str(page),
+            "date_from": window_start.date().isoformat(),
+            "date_to": window_end.date().isoformat(),
+        }
+
     def search_page(
         self,
         platform: str,
@@ -107,12 +129,7 @@ class SocialCrawlConnector(IngestionConnector):
         social search endpoints don't honor date ranges. has_more is a
         server-driven signal where available, else "the page was non-empty".
         """
-        params = {
-            "query": query,
-            "page": str(page),
-            "date_from": window_start.date().isoformat(),
-            "date_to": window_end.date().isoformat(),
-        }
+        params = self._search_params(path, query, page, window_start, window_end)
         headers = {"x-api-key": self.api_key}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
@@ -131,6 +148,9 @@ class SocialCrawlConnector(IngestionConnector):
             if isinstance(item, dict)
         ]
         has_more = bool(items) and bool(data.get("has_more", True)) and not data.get("is_last_page", False)
+        # Endpoints without a page param would just re-serve page 1 forever.
+        if path.endswith("/search/hashtag") or path == "/v1/google_news/search":
+            has_more = False
         return mentions, has_more
 
     def comments_page(
@@ -550,7 +570,14 @@ class SocialCrawlConnector(IngestionConnector):
         return page_types[0]
 
     @staticmethod
-    def _parse_datetime(value: str) -> datetime:
+    def _parse_datetime(value: str | int | float) -> datetime:
+        # TikTok/Reddit return unix epochs (create_time/created_utc), seconds
+        # or milliseconds, sometimes as numeric strings.
+        if isinstance(value, (int, float)) or (isinstance(value, str) and value.isdigit()):
+            epoch = float(value)
+            if epoch > 1e12:  # milliseconds
+                epoch /= 1000.0
+            return datetime.utcfromtimestamp(epoch)
         try:
             return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
         except ValueError:

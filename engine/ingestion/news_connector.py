@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from engine.config import settings
 from engine.ingestion.base import IngestedMention, IngestionConnector
@@ -41,6 +41,9 @@ class NewsApiConnector(IngestionConnector):
         self, query: str, page: int, window_start: datetime, window_end: datetime
     ) -> tuple[list[IngestedMention], bool]:
         """One page of NewsAPI results; returns (mentions, has_more)."""
+        # NewsAPI's free tier only searches ~30 days back and returns
+        # 426 Upgrade Required for older `from` dates — clamp instead of fail.
+        window_start = max(window_start, window_end - timedelta(days=28))
         response = http.get(
             NEWSAPI_URL,
             params={
