@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     pulse_api_key: str = ""
     allowed_origins: str = ""
     report_rate_limit_per_hour: int = 20
+    # Recurring background ingestion for every tracked politician, so mention
+    # history accumulates between report requests instead of each report only
+    # seeing what one fetch returns. 0 disables (default: off, since each
+    # sweep spends SocialCrawl credits).
+    ingestion_refresh_hours: float = 0.0
+    # Per-sweep, per-politician SocialCrawl credit cap for scheduled runs.
+    scheduled_credit_budget: float = 200.0
 
     class Config:
         env_file = ".env"

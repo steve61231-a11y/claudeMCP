@@ -47,9 +47,38 @@ graph_module.get_network_snapshot = lambda politician_id, limit=50: {
     "top_users": [],
 }
 
-from engine.pipeline import run_pipeline  # noqa: E402  (import after monkeypatch)
+from engine.pipeline import run_ingestion, run_pipeline  # noqa: E402  (import after monkeypatch)
 
 app = FastAPI(title="Pulse live demo API")
+
+
+def _scheduled_ingestion_loop() -> None:
+    """Recurring ingestion sweep: fetch fresh mentions for every tracked
+    politician so the stored corpus grows over time. Analysis stays
+    request-time (it's incremental via RawMention.link_checked, so report
+    requests only pay LLM costs for mentions added since the last report)."""
+    interval = settings.ingestion_refresh_hours * 3600
+    while True:
+        time.sleep(interval)
+        db = SessionLocal()
+        try:
+            for politician in db.query(Politician).all():
+                try:
+                    window_end = datetime.utcnow()
+                    window_start = window_end - timedelta(days=7)
+                    run_ingestion(db, politician, window_start, window_end,
+                                  credit_budget=settings.scheduled_credit_budget)
+                except Exception:  # noqa: BLE001 — one politician failing must not stop the sweep
+                    traceback.print_exc()
+                    db.rollback()
+        finally:
+            db.close()
+
+
+@app.on_event("startup")
+def _start_scheduler() -> None:
+    if settings.ingestion_refresh_hours > 0:
+        threading.Thread(target=_scheduled_ingestion_loop, daemon=True).start()
 
 _cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()] or ["*"]
 

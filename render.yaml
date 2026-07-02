@@ -27,3 +27,7 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      - key: INGESTION_REFRESH_HOURS
+        value: "6"
+      - key: SCHEDULED_CREDIT_BUDGET
+        value: "200"
