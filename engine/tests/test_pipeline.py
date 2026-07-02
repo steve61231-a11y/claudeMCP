@@ -62,6 +62,13 @@ class FakeDriver:
 
 
 def patch_pipeline_dependencies(monkeypatch):
+    # Force the mock ingestion source: without this the orchestrator makes
+    # REAL SocialCrawl/NewsAPI calls, so the suite's outcome would depend on
+    # network state and remaining API credits.
+    from engine.config import settings as config_settings
+
+    monkeypatch.setattr(config_settings, "socialcrawl_api_key", "")
+    monkeypatch.setattr(config_settings, "newsapi_key", "")
     monkeypatch.setattr(llm, "call_json", fake_call_json)
     monkeypatch.setattr(sentiment_module, "local_sentiment", fake_local_sentiment)
     monkeypatch.setattr(narratives_module, "embed_texts", fake_embed_texts)

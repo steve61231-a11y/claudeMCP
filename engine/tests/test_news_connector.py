@@ -61,6 +61,9 @@ def test_fetch_paginates_until_total_results_reached(monkeypatch):
     assert len(mentions) == 2
 
 
-def test_missing_api_key_raises():
+def test_missing_api_key_raises(monkeypatch):
+    # An empty explicit key falls back to settings — clear that too, so the
+    # test doesn't depend on whether a real NEWSAPI_KEY exists in .env.
+    monkeypatch.setattr("engine.ingestion.news_connector.settings.newsapi_key", "")
     with pytest.raises(RuntimeError):
         NewsApiConnector(api_key="")

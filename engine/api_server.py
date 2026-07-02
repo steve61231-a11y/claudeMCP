@@ -477,6 +477,46 @@ def _latest_report_core(db, name: str) -> dict | None:
     }
 
 
+class TiplineRequest(BaseModel):
+    name: str
+    text: str
+    source_hint: str = ""
+
+
+@app.post("/api/tipline")
+def tipline(req: TiplineRequest, request: Request, x_api_key: str | None = Header(default=None)):
+    """Human-sourced intake: field teams forward what they're seeing (e.g.
+    WhatsApp-forwarded messages) and it flows through the same analysis
+    pipeline as scraped data, tagged with its provenance."""
+    _require_api_key(x_api_key)
+    _check_rate_limit(request.client.host if request.client else "unknown")
+    text = req.text.strip()
+    if not text or len(text) > 4000:
+        raise HTTPException(status_code=422, detail="text must be 1-4000 characters")
+    from engine.processing.cleaning import content_hash
+
+    db = SessionLocal()
+    try:
+        politician = _ensure_politician(db, req.name.strip())
+        mention = RawMention(
+            politician_id=politician.id,
+            platform="tipline",
+            source_type="submitted",
+            author_handle=(req.source_hint.strip() or "field-submission")[:80],
+            text=text,
+            posted_at=datetime.utcnow(),
+            engagement_json={},
+            raw_payload={"source_hint": req.source_hint, "submitted_via": "tipline"},
+            content_hash=content_hash("tipline", text),
+            is_spam=0,
+        )
+        db.add(mention)
+        db.commit()
+        return {"ok": True, "stored": True}
+    finally:
+        db.close()
+
+
 class SimulateRequest(BaseModel):
     name: str
     draft_text: str
