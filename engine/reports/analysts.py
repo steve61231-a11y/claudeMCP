@@ -240,6 +240,42 @@ Required JSON shape:
 {{"deep_dive": {{"how_it_unfolded": "...", "who_is_driving_it": ["@handle"], "supporter_framing": "...", "critic_framing": "...", "quotes": [{{"ref": "abcd1234", "text": "..."}}]}}}}"""
 
 
+def narrative_genealogy(members: list[dict]) -> dict:
+    """Patient-zero tracing from timestamps alone (no LLM): where a storyline
+    first appeared, how it jumped between platforms, and when it peaked."""
+    dated = sorted(
+        (m for m in members if isinstance(m.get("posted_at"), datetime)),
+        key=lambda m: m["posted_at"],
+    )
+    if not dated:
+        return {}
+    first = dated[0]
+    spread_path = []
+    seen_platforms: set[str] = set()
+    for m in dated:
+        platform = m.get("platform") or "?"
+        if platform not in seen_platforms:
+            seen_platforms.add(platform)
+            spread_path.append({"platform": platform, "date": m["posted_at"].date().isoformat()})
+    by_day: dict[str, int] = {}
+    for m in dated:
+        key = m["posted_at"].date().isoformat()
+        by_day[key] = by_day.get(key, 0) + 1
+    peak_day = max(by_day.items(), key=lambda kv: kv[1])
+    return {
+        "first_seen": {
+            "date": first["posted_at"].date().isoformat(),
+            "author": first.get("author_handle"),
+            "platform": first.get("platform"),
+            "url": first.get("source_url"),
+            "text": (first.get("text") or "")[:200],
+        },
+        "spread_path": spread_path,
+        "peak": {"date": peak_day[0], "mentions": peak_day[1]},
+        "platforms_reached": len(seen_platforms),
+    }
+
+
 def analyze_narrative_deep_dives(
     name: str, narratives: list[dict], mentions_by_id: dict[str, dict], top_n: int = 5
 ) -> list[dict]:
@@ -266,6 +302,7 @@ def analyze_narrative_deep_dives(
         dive["label"] = n["label"]
         dive["mention_count"] = len(n.get("mention_ids", []))
         dive["quotes"] = _validate_quotes(dive.get("quotes"), refs)
+        dive["origin"] = narrative_genealogy(members)
         dives.append(dive)
     return dives
 
