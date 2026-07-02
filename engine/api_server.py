@@ -563,6 +563,83 @@ def get_alerts(name: str, limit: int = 30, x_api_key: str | None = Header(defaul
         db.close()
 
 
+@app.get("/api/livefeed")
+def livefeed(name: str, limit: int = 40, x_api_key: str | None = Header(default=None)):
+    """War-room feed: recent mentions, hourly volume curve, live narrative
+    strengths. Cheap DB reads only — safe to poll every ~15s."""
+    _require_api_key(x_api_key)
+    from engine.db.models import Narrative, NarrativeMetric
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter_by(name=name.strip()).first()
+        if not politician:
+            raise HTTPException(status_code=404, detail="unknown politician")
+        rows = (
+            db.query(RawMention, MentionSentiment)
+            .outerjoin(MentionSentiment, MentionSentiment.mention_id == RawMention.id)
+            .filter(RawMention.politician_id == politician.id, RawMention.is_spam == 0)
+            .order_by(RawMention.posted_at.desc())
+            .limit(min(limit, 100))
+            .all()
+        )
+        ticker = [
+            {
+                "text": (m.text or "")[:180],
+                "author": m.author_handle,
+                "platform": m.platform,
+                "source_type": m.source_type,
+                "sentiment": s.sentiment if s else None,
+                "posted_at": str(m.posted_at),
+                "url": m.source_url,
+            }
+            for m, s in rows
+        ]
+        cutoff = datetime.utcnow() - timedelta(hours=48)
+        recent = (
+            db.query(RawMention.posted_at)
+            .filter(RawMention.politician_id == politician.id, RawMention.posted_at >= cutoff)
+            .all()
+        )
+        hourly: dict[str, int] = {}
+        for (ts,) in recent:
+            key = ts.strftime("%Y-%m-%dT%H:00")
+            hourly[key] = hourly.get(key, 0) + 1
+        storms = [
+            {"label": n.label, "strength": metric.strength_score, "growth": metric.growth_rate}
+            for n, metric in (
+                db.query(Narrative, NarrativeMetric)
+                .join(NarrativeMetric, NarrativeMetric.narrative_id == Narrative.id)
+                .filter(Narrative.politician_id == politician.id)
+                .order_by(NarrativeMetric.strength_score.desc())
+                .limit(10)
+                .all()
+            )
+        ]
+        return {"ok": True, "ticker": ticker, "hourly_volume": dict(sorted(hourly.items())), "storms": storms}
+    finally:
+        db.close()
+
+
+_baraza_cache: dict = {"at": 0.0, "data": None}
+
+
+@app.get("/api/baraza")
+def baraza():
+    """PUBLIC weekly leaderboard — intentionally unauthenticated and cached."""
+    now = time.time()
+    if _baraza_cache["data"] is None or now - _baraza_cache["at"] > 3600:
+        from engine.reports.baraza import build_baraza_index
+
+        db = SessionLocal()
+        try:
+            _baraza_cache["data"] = build_baraza_index(db)
+            _baraza_cache["at"] = now
+        finally:
+            db.close()
+    return {"ok": True, "index": _baraza_cache["data"]}
+
+
 @app.get("/api/health")
 def health():
     """Liveness + data-supply state: the operator's one-glance view of
