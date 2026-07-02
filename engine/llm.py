@@ -15,12 +15,18 @@ def get_client() -> Anthropic:
 
 
 def call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
-    """Calls Claude and parses a JSON object/array from the response text."""
+    """Calls Claude and parses a JSON object/array from the response text.
+
+    If the response was cut off at max_tokens (truncated JSON), retries once
+    with double the budget rather than failing the whole section.
+    """
     response = get_client().messages.create(
         model=settings.anthropic_model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
+    if response.stop_reason == "max_tokens" and max_tokens < 8000:
+        return call_json(prompt, max_tokens=min(8000, max_tokens * 2))
     text = response.content[0].text
     start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
     end = max(text.rfind("}"), text.rfind("]"))

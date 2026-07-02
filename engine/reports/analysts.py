@@ -27,7 +27,7 @@ GROUNDING_RULES = """CRITICAL GROUNDING RULES:
   include that item's ref id.
 - If the sources don't support a claim, leave it out."""
 
-ANALYST_MAX_TOKENS = 1500
+ANALYST_MAX_TOKENS = 2500
 CORPUS_CHARS_PER_CALL = 30000
 
 
@@ -117,7 +117,7 @@ def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
         PUBLIC_VOICE_PROMPT.format(name=name, grounding=GROUNDING_RULES),
         _corpus_blob(mentions),
         expected_keys={"public_voice"},
-        max_tokens=2000,
+        max_tokens=4000,
         max_untrusted_chars=CORPUS_CHARS_PER_CALL,
     )
     voice = result["public_voice"]
