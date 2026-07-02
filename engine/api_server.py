@@ -62,12 +62,20 @@ def _scheduled_ingestion_loop() -> None:
         time.sleep(interval)
         db = SessionLocal()
         try:
+            # Pre-warm: names likely to be searched (cabinet, governors…)
+            # are tracked automatically so they have data before anyone asks.
+            for raw_name in settings.prewarm_names.split(","):
+                if raw_name.strip():
+                    _ensure_politician(db, raw_name.strip())
             for politician in db.query(Politician).all():
                 try:
                     window_end = datetime.utcnow()
                     window_start = window_end - timedelta(days=7)
                     run_ingestion(db, politician, window_start, window_end,
                                   credit_budget=settings.scheduled_credit_budget)
+                    from engine.intelligence.alerts import detect_alerts
+
+                    detect_alerts(db, politician)
                 except Exception:  # noqa: BLE001 — one politician failing must not stop the sweep
                     traceback.print_exc()
                     db.rollback()
@@ -433,6 +441,42 @@ def get_report(job_id: str, x_api_key: str | None = Header(default=None)):
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job_id")
     return job
+
+
+@app.get("/api/alerts")
+def get_alerts(name: str, limit: int = 30, x_api_key: str | None = Header(default=None)):
+    """Early-warning feed for a tracked politician, newest first."""
+    _require_api_key(x_api_key)
+    from engine.db.models import Alert
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter_by(name=name.strip()).first()
+        if not politician:
+            return {"ok": True, "alerts": []}
+        rows = (
+            db.query(Alert)
+            .filter(Alert.politician_id == politician.id)
+            .order_by(Alert.created_at.desc())
+            .limit(min(limit, 100))
+            .all()
+        )
+        return {
+            "ok": True,
+            "alerts": [
+                {
+                    "severity": a.severity,
+                    "kind": a.kind,
+                    "headline": a.headline,
+                    "detail": a.detail,
+                    "evidence": a.evidence or [],
+                    "created_at": str(a.created_at),
+                }
+                for a in rows
+            ],
+        }
+    finally:
+        db.close()
 
 
 @app.get("/api/health")

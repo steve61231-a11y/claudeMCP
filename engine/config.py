@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     ingestion_refresh_hours: float = 0.0
     # Per-sweep, per-politician SocialCrawl credit cap for scheduled runs.
     scheduled_credit_budget: float = 200.0
+    # Optional JSON webhook for early-warning alerts (Slack/Make/WhatsApp bridge).
+    alert_webhook_url: str = ""
+    # Comma-separated names to track automatically in scheduled sweeps, so
+    # likely demo/search targets accumulate data before anyone asks.
+    prewarm_names: str = ""
 
     class Config:
         env_file = ".env"

@@ -194,3 +194,20 @@ class IntelligenceReport(Base):
     window_end = Column(DateTime, nullable=False)
     payload = Column(JSONB, nullable=False)
     generated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Alert(Base):
+    """Early-warning event: something changed in a politician's conversation
+    that their team should know about before they thought to ask."""
+
+    __tablename__ = "alerts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    politician_id = Column(UUID(as_uuid=False), ForeignKey("politicians.id"), nullable=False, index=True)
+    severity = Column(String, nullable=False)  # info|warning|critical
+    kind = Column(String, nullable=False)  # narrative_surge|negative_spike|viral_post|new_amplifier
+    headline = Column(String, nullable=False)
+    detail = Column(String, nullable=True)
+    evidence = Column(JSONB, default=list)  # [{mention_id, url, text, author, platform}]
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    delivered = Column(Integer, default=0)  # webhook delivery flag
