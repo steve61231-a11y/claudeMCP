@@ -215,13 +215,25 @@ def build_people_graph(db: Session, politician: Politician, now: datetime | None
             }
         )
 
+    # Dense corpora can produce thousands of pair edges — cap by weight so the
+    # payload and the physics simulation stay bounded (structural edges to the
+    # subject are never dropped).
+    structural = [e for e in edges if e["source"] == "subject" or e["target"] == "subject"]
+    pair_edges = [e for e in edges if e not in structural]
+    pair_edges.sort(key=lambda e: e["weight"], reverse=True)
+    edges = structural + pair_edges[:400]
+
     # --- LLM layer: typed relationships + grounded profiles ---
     # Include subject↔person pairs so "top rival/defender OF THE SUBJECT" is
-    # grounded in classified edges, not inferred sideways.
+    # grounded in classified edges, not inferred sideways. The whole layer is
+    # best-effort: any failure degrades to an untyped graph, never an error.
     subject_pairs = [(("subject", name), ms[:4]) for name, ms in ranked_people[:12]]
-    relationship_edges = _classify_pairs(
-        politician.name, subject_pairs + pair_list[:PAIRS_TO_CLASSIFY], person_mentions
-    )
+    try:
+        relationship_edges = _classify_pairs(
+            politician.name, subject_pairs + pair_list[:PAIRS_TO_CLASSIFY], person_mentions
+        )
+    except Exception:
+        relationship_edges = []
     edge_index = {(e["source"], e["target"]): e for e in edges}
     for rel in relationship_edges:
         key = (rel["a"], rel["b"])
@@ -230,7 +242,10 @@ def build_people_graph(db: Session, politician: Politician, now: datetime | None
             edge["relationship"] = rel["relationship"]
             edge["evidence"] = rel["evidence"]
 
-    profiles_by_name = _profile_people(politician.name, ranked_people[:50], person_mentions)
+    try:
+        profiles_by_name = _profile_people(politician.name, ranked_people[:50], person_mentions)
+    except Exception:
+        profiles_by_name = {}
     for node in nodes:
         prof = profiles_by_name.get(node["id"])
         if prof:
