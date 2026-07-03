@@ -661,6 +661,96 @@ def livefeed(name: str, limit: int = 40, x_api_key: str | None = Header(default=
         db.close()
 
 
+_network_cache: dict[str, dict] = {}
+_NETWORK_TTL = 1800
+
+
+@app.get("/api/network")
+def network(name: str, x_api_key: str | None = Header(default=None)):
+    """Full people-relationship graph: every person found, influence-sized,
+    stance-colored, with typed relationships and grounded profiles. Cached
+    30 min per politician; always computed from the live DB, so scheduled
+    sweeps keep the web current."""
+    _require_api_key(x_api_key)
+    key = name.strip().lower()
+    cached = _network_cache.get(key)
+    if cached and time.time() - cached["at"] < _NETWORK_TTL:
+        return {"ok": True, "graph": cached["graph"], "cached": True}
+    from engine.intelligence.people_graph import build_people_graph
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter_by(name=name.strip()).first()
+        if not politician:
+            raise HTTPException(status_code=404, detail="unknown politician — generate a report first")
+        graph = build_people_graph(db, politician)
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="graph build failed — see server logs")
+    finally:
+        db.close()
+    _network_cache[key] = {"at": time.time(), "graph": graph}
+    return {"ok": True, "graph": graph, "cached": False}
+
+
+@app.get("/api/network/edge")
+def network_edge(name: str, a: str, b: str, x_api_key: str | None = Header(default=None)):
+    """The receipts: actual mentions where both names co-occur."""
+    _require_api_key(x_api_key)
+    from engine.db.models import Entity, MentionEntity
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter_by(name=name.strip()).first()
+        if not politician:
+            raise HTTPException(status_code=404, detail="unknown politician")
+
+        def mention_ids_for(person_name: str) -> set[str]:
+            if person_name.strip().lower() in (politician.name.lower(), "subject"):
+                entity = db.query(Entity).filter_by(type="politician", name=politician.name).first()
+            else:
+                entity = db.query(Entity).filter_by(type="person", name=person_name.strip()).first()
+            if not entity:
+                return set()
+            return {
+                mid
+                for (mid,) in db.query(MentionEntity.mention_id)
+                .join(RawMention, RawMention.id == MentionEntity.mention_id)
+                .filter(MentionEntity.entity_id == entity.id, RawMention.politician_id == politician.id)
+                .all()
+            }
+
+        shared = mention_ids_for(a) & mention_ids_for(b)
+        rows = (
+            db.query(RawMention, MentionSentiment)
+            .outerjoin(MentionSentiment, MentionSentiment.mention_id == RawMention.id)
+            .filter(RawMention.id.in_(shared))
+            .order_by(RawMention.posted_at.desc())
+            .limit(25)
+            .all()
+        )
+        return {
+            "ok": True,
+            "a": a,
+            "b": b,
+            "receipts": [
+                {
+                    "text": (m.text or "")[:400],
+                    "author": m.author_handle,
+                    "platform": m.platform,
+                    "sentiment": s.sentiment if s else None,
+                    "posted_at": str(m.posted_at),
+                    "url": m.source_url,
+                }
+                for m, s in rows
+            ],
+        }
+    finally:
+        db.close()
+
+
 _baraza_cache: dict = {"at": 0.0, "data": None}
 
 
