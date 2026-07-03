@@ -6,6 +6,10 @@
       "env": {
         "SOCIALCRAWL_API_KEY": "${SOCIALCRAWL_API_KEY}"
       }
+    },
+    "heygen": {
+      "type": "http",
+      "url": "https://mcp.heygen.com/mcp/v1/"
     }
   }
 }
