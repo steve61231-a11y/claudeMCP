@@ -93,6 +93,11 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="newsapi", platform="news", endpoint="everything", query=news_query)
         )
 
+    if settings.enable_agentreach:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="agentreach", platform="mixed", endpoint="web", query=politician.name)
+        )
+
     slug = politician.name.lower().replace(" ", "_")
     if (CURATED_DIR / f"{slug}.json").exists():
         tasks.append(
@@ -351,11 +356,15 @@ def _execute_newsapi_task(session: Session, run: IngestionRun, task: IngestionTa
 
 
 def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: IngestionTask, politician: Politician) -> None:
-    """Curated fixtures and mock data have no pagination — one bulk fetch."""
+    """Curated fixtures, AgentReach, and mock data have no pagination — one bulk fetch."""
     if task.connector == "curated":
         from engine.ingestion.curated_source import CuratedResearchConnector
 
         connector = CuratedResearchConnector()
+    elif task.connector == "agentreach":
+        from engine.ingestion.agentreach_connector import AgentReachConnector
+
+        connector = AgentReachConnector()
     else:
         from engine.ingestion.mock_source import MockIngestionConnector
 

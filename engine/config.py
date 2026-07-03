@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # Comma-separated names to track automatically in scheduled sweeps, so
     # likely demo/search targets accumulate data before anyone asks.
     prewarm_names: str = ""
+    # AgentReach: free, no-API-key web/social scraping via installed backends
+    # (github.com/Panniantong/Agent-Reach). Off by default; enable where the
+    # agent-reach CLI is installed and outbound network is open.
+    enable_agentreach: bool = False
 
     class Config:
         env_file = ".env"
