@@ -103,6 +103,21 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="facebook", platform="facebook", endpoint="pages", query=politician.name)
         )
 
+    if settings.enable_gdelt:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="gdelt", platform="news", endpoint="doc", query=politician.name)
+        )
+
+    if settings.enable_wayback:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="wayback", platform="news", endpoint="cdx", query=politician.name)
+        )
+
+    if settings.enable_twscrape:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="twscrape", platform="twitter", endpoint="search", query=politician.name)
+        )
+
     slug = politician.name.lower().replace(" ", "_")
     if (CURATED_DIR / f"{slug}.json").exists():
         tasks.append(
@@ -375,6 +390,18 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
 
         pages = [p.strip() for p in settings.facebook_pages.split(",") if p.strip()] or None
         connector = FacebookConnector(pages=pages, cookies=settings.facebook_cookies_path or None)
+    elif task.connector == "gdelt":
+        from engine.ingestion.gdelt_connector import GdeltConnector
+
+        connector = GdeltConnector()
+    elif task.connector == "wayback":
+        from engine.ingestion.wayback_connector import WaybackConnector
+
+        connector = WaybackConnector()
+    elif task.connector == "twscrape":
+        from engine.ingestion.twscrape_connector import TwscrapeConnector
+
+        connector = TwscrapeConnector()
     else:
         from engine.ingestion.mock_source import MockIngestionConnector
 

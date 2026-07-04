@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     enable_facebook_scraper: bool = False
     facebook_pages: str = ""  # comma-separated page names; empty = built-in defaults
     facebook_cookies_path: str = ""  # optional Netscape cookies.txt for logged-in reach
+    # GDELT: free historical global-news search (no key). Closes the >30-day
+    # history gap NewsAPI's free tier and point-in-time scrapers can't.
+    enable_gdelt: bool = False
+    # Wayback Machine: free archived-page recovery / historical article slugs.
+    enable_wayback: bool = False
+    # twscrape: free X/Twitter via an account pool. Needs a prepared accounts db.
+    enable_twscrape: bool = False
+    twscrape_db: str = "accounts.db"
 
     class Config:
         env_file = ".env"
