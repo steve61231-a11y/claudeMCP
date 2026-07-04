@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # (github.com/Panniantong/Agent-Reach). Off by default; enable where the
     # agent-reach CLI is installed and outbound network is open.
     enable_agentreach: bool = False
+    # Facebook via facebook-scraper (github.com/kevinzg/facebook-scraper) — free
+    # public page/group + comment scraping, Kenya's biggest platform. Off by
+    # default; needs `pip install facebook-scraper` and open egress.
+    enable_facebook_scraper: bool = False
+    facebook_pages: str = ""  # comma-separated page names; empty = built-in defaults
+    facebook_cookies_path: str = ""  # optional Netscape cookies.txt for logged-in reach
 
     class Config:
         env_file = ".env"

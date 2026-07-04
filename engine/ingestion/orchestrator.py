@@ -98,6 +98,11 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="agentreach", platform="mixed", endpoint="web", query=politician.name)
         )
 
+    if settings.enable_facebook_scraper:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="facebook", platform="facebook", endpoint="pages", query=politician.name)
+        )
+
     slug = politician.name.lower().replace(" ", "_")
     if (CURATED_DIR / f"{slug}.json").exists():
         tasks.append(
@@ -365,6 +370,11 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         from engine.ingestion.agentreach_connector import AgentReachConnector
 
         connector = AgentReachConnector()
+    elif task.connector == "facebook":
+        from engine.ingestion.facebook_connector import FacebookConnector
+
+        pages = [p.strip() for p in settings.facebook_pages.split(",") if p.strip()] or None
+        connector = FacebookConnector(pages=pages, cookies=settings.facebook_cookies_path or None)
     else:
         from engine.ingestion.mock_source import MockIngestionConnector
 
