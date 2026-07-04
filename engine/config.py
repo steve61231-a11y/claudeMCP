@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     # twscrape: free X/Twitter via an account pool. Needs a prepared accounts db.
     enable_twscrape: bool = False
     twscrape_db: str = "accounts.db"
+    # Per-million-token USD prices for the configured Anthropic model, used to
+    # turn real token counts into a real spend figure on the admin dashboard.
+    anthropic_price_in: float = 3.0
+    anthropic_price_out: float = 15.0
 
     class Config:
         env_file = ".env"

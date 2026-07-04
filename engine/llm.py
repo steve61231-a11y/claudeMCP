@@ -25,12 +25,50 @@ def call_json(prompt: str, max_tokens: int = 1024) -> dict | list:
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
+    _record_usage(response)
     if response.stop_reason == "max_tokens" and max_tokens < 8000:
         return call_json(prompt, max_tokens=min(8000, max_tokens * 2))
     text = response.content[0].text
     start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
     end = max(text.rfind("}"), text.rfind("]"))
     return json.loads(text[start : end + 1])
+
+
+def _record_usage(response) -> None:
+    """Best-effort daily rollup of token usage for the admin dashboard's
+    real Anthropic-spend figure. Never breaks an LLM call."""
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+        out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+        from datetime import date
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from engine.db.models import LlmUsage
+        from engine.db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            stmt = pg_insert(LlmUsage.__table__).values(
+                day=date.today(), calls=1, input_tokens=in_tok, output_tokens=out_tok
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["day"],
+                set_={
+                    "calls": LlmUsage.__table__.c.calls + 1,
+                    "input_tokens": LlmUsage.__table__.c.input_tokens + in_tok,
+                    "output_tokens": LlmUsage.__table__.c.output_tokens + out_tok,
+                },
+            )
+            db.execute(stmt)
+            db.commit()
+        finally:
+            db.close()
+    except Exception:
+        pass
 
 
 UNTRUSTED_TEXT_MAX_CHARS = 4000

@@ -781,6 +781,226 @@ def baraza():
     return {"ok": True, "index": _baraza_cache["data"]}
 
 
+_PROCESS_START = time.time()
+_metrics_cache: dict = {"at": 0.0, "data": None}
+_METRICS_TTL = 30
+
+# All ingestion connectors and their config flag, for the source-health board.
+_SOURCE_FLAGS = {
+    "socialcrawl": "socialcrawl_api_key",
+    "newsapi": "newsapi_key",
+    "gdelt": "enable_gdelt",
+    "wayback": "enable_wayback",
+    "twscrape": "enable_twscrape",
+    "agentreach": "enable_agentreach",
+    "facebook": "enable_facebook_scraper",
+}
+
+
+def _admin_metrics() -> dict:
+    from datetime import date, timedelta
+
+    from sqlalchemy import func
+
+    from engine.db.models import (
+        Alert,
+        Entity,
+        IngestionRun,
+        IntelligenceReport,
+        LlmUsage,
+        MentionSentiment,
+        Politician,
+        RawMention,
+    )
+
+    now = datetime.utcnow()
+    db = SessionLocal()
+    try:
+        # --- credits ---
+        socialcrawl_balance = None
+        if settings.socialcrawl_api_key:
+            try:
+                from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
+
+                socialcrawl_balance = SocialCrawlConnector().check_balance()
+            except Exception:
+                socialcrawl_balance = None
+
+        def _spend(since_days: int) -> dict:
+            cutoff = date.today() - timedelta(days=since_days)
+            rows = db.query(
+                func.coalesce(func.sum(LlmUsage.input_tokens), 0),
+                func.coalesce(func.sum(LlmUsage.output_tokens), 0),
+                func.coalesce(func.sum(LlmUsage.calls), 0),
+            ).filter(LlmUsage.day >= cutoff).one()
+            in_tok, out_tok, calls = int(rows[0]), int(rows[1]), int(rows[2])
+            cost = (in_tok / 1e6) * settings.anthropic_price_in + (out_tok / 1e6) * settings.anthropic_price_out
+            return {"input_tokens": in_tok, "output_tokens": out_tok, "calls": calls, "usd": round(cost, 2)}
+
+        credits = {
+            "socialcrawl_balance": socialcrawl_balance,
+            "anthropic_today": _spend(0),
+            "anthropic_7d": _spend(7),
+            "anthropic_30d": _spend(30),
+            "anthropic_model": settings.anthropic_model,
+        }
+
+        # --- sources (enabled flag + latest run health) ---
+        last_run = db.query(IngestionRun).order_by(IngestionRun.started_at.desc()).first()
+        health = ((last_run.stats or {}).get("source_health") if last_run else {}) or {}
+        sources = []
+        for name, flag in _SOURCE_FLAGS.items():
+            enabled = bool(getattr(settings, flag, ""))
+            # health keys are platform names; match loosely by connector name.
+            h = next((v for k, v in health.items() if name in k or k in name), None)
+            status = "disabled"
+            if enabled:
+                if h is None:
+                    status = "idle"
+                elif h.get("succeeded", 0) == h.get("attempted", 0) and h.get("attempted", 0) > 0:
+                    status = "ok"
+                elif h.get("succeeded", 0) > 0:
+                    status = "degraded"
+                else:
+                    status = "down"
+            sources.append({
+                "name": name, "enabled": enabled, "status": status,
+                "results": (h or {}).get("results"), "failures": (h or {}).get("failures"),
+            })
+        sources.append({"name": "tipline", "enabled": True,
+                        "status": "ok", "results": None, "failures": None})
+
+        # --- corpus ---
+        def _mentions_since(hours: int) -> int:
+            return db.query(func.count(RawMention.id)).filter(
+                RawMention.posted_at >= now - timedelta(hours=hours)
+            ).scalar()
+
+        by_platform = dict(
+            db.query(RawMention.platform, func.count(RawMention.id)).group_by(RawMention.platform).all()
+        )
+        by_source_type = dict(
+            db.query(RawMention.source_type, func.count(RawMention.id)).group_by(RawMention.source_type).all()
+        )
+        sentiment_counts = dict(
+            db.query(MentionSentiment.sentiment, func.count(MentionSentiment.mention_id))
+            .group_by(MentionSentiment.sentiment).all()
+        )
+        corpus = {
+            "politicians": db.query(func.count(Politician.id)).scalar(),
+            "total_mentions": db.query(func.count(RawMention.id)).scalar(),
+            "distinct_authors": db.query(func.count(func.distinct(RawMention.author_handle))).scalar(),
+            "people_entities": db.query(func.count(Entity.id)).filter(Entity.type == "person").scalar(),
+            "by_platform": {k: int(v) for k, v in by_platform.items()},
+            "by_source_type": {k: int(v) for k, v in by_source_type.items()},
+            "sentiment": {k: int(v) for k, v in sentiment_counts.items()},
+            "last_24h": _mentions_since(24),
+            "last_7d": _mentions_since(24 * 7),
+            "last_30d": _mentions_since(24 * 30),
+        }
+
+        # --- pipeline ---
+        recent_runs = db.query(IngestionRun).order_by(IngestionRun.started_at.desc().nullslast()).limit(10).all()
+        pipeline = {
+            "running": db.query(func.count(IngestionRun.id)).filter(IngestionRun.status == "running").scalar(),
+            "failed_recent": sum(1 for r in recent_runs if r.status == "failed"),
+            "recent": [
+                {
+                    "politician": (db.get(Politician, r.politician_id).name if db.get(Politician, r.politician_id) else "?"),
+                    "status": r.status,
+                    "mentions": (r.stats or {}).get("mentions_total"),
+                    "credits_spent": r.credits_spent,
+                    "started_at": str(r.started_at),
+                    "duration_s": ((r.finished_at - r.started_at).total_seconds() if r.finished_at and r.started_at else None),
+                }
+                for r in recent_runs
+            ],
+        }
+
+        # --- reports ---
+        reports = {
+            "total": db.query(func.count(IntelligenceReport.id)).scalar(),
+            "last_7d": db.query(func.count(IntelligenceReport.id)).filter(
+                IntelligenceReport.generated_at >= now - timedelta(days=7)
+            ).scalar(),
+        }
+
+        # --- alerts ---
+        alert_sev = dict(
+            db.query(Alert.severity, func.count(Alert.id)).group_by(Alert.severity).all()
+        )
+        recent_alerts = db.query(Alert).order_by(Alert.created_at.desc()).limit(5).all()
+        alerts = {
+            "by_severity": {k: int(v) for k, v in alert_sev.items()},
+            "recent": [
+                {"severity": a.severity, "kind": a.kind, "headline": a.headline, "created_at": str(a.created_at)}
+                for a in recent_alerts
+            ],
+        }
+
+        system = {
+            "db_ok": True,
+            "scheduler_enabled": settings.ingestion_refresh_hours > 0,
+            "refresh_hours": settings.ingestion_refresh_hours,
+            "prewarm_names": [n.strip() for n in settings.prewarm_names.split(",") if n.strip()],
+            "uptime_seconds": int(time.time() - _PROCESS_START),
+            "generated_at": str(now),
+        }
+        return {"credits": credits, "sources": sources, "corpus": corpus,
+                "pipeline": pipeline, "reports": reports, "alerts": alerts, "system": system}
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/metrics")
+def admin_metrics(x_api_key: str | None = Header(default=None)):
+    """Everything about the running system in one payload — the mission-control
+    feed. Cached ~30s so dashboard polling never hammers the DB or the balance
+    API."""
+    _require_api_key(x_api_key)
+    if _metrics_cache["data"] is None or time.time() - _metrics_cache["at"] > _METRICS_TTL:
+        _metrics_cache["data"] = _admin_metrics()
+        _metrics_cache["at"] = time.time()
+    return {"ok": True, "metrics": _metrics_cache["data"]}
+
+
+@app.get("/api/admin/timeseries")
+def admin_timeseries(metric: str = "mentions", days: int = 30, x_api_key: str | None = Header(default=None)):
+    """Daily buckets for the dashboard charts."""
+    _require_api_key(x_api_key)
+    from datetime import date, timedelta
+
+    from sqlalchemy import func
+
+    from engine.db.models import LlmUsage, RawMention
+
+    db = SessionLocal()
+    try:
+        if metric == "llm_cost":
+            rows = db.query(LlmUsage.day, LlmUsage.input_tokens, LlmUsage.output_tokens).filter(
+                LlmUsage.day >= date.today() - timedelta(days=days)
+            ).order_by(LlmUsage.day).all()
+            series = [
+                {
+                    "date": str(d),
+                    "usd": round((i / 1e6) * settings.anthropic_price_in + (o / 1e6) * settings.anthropic_price_out, 2),
+                }
+                for d, i, o in rows
+            ]
+        else:
+            rows = (
+                db.query(func.date(RawMention.posted_at), func.count(RawMention.id))
+                .filter(RawMention.posted_at >= datetime.utcnow() - timedelta(days=days))
+                .group_by(func.date(RawMention.posted_at))
+                .order_by(func.date(RawMention.posted_at))
+                .all()
+            )
+            series = [{"date": str(d), "count": int(c)} for d, c in rows]
+        return {"ok": True, "metric": metric, "series": series}
+    finally:
+        db.close()
+
+
 @app.get("/api/health")
 def health():
     """Liveness + data-supply state: the operator's one-glance view of

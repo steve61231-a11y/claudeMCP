@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     ARRAY,
     Column,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -211,3 +212,16 @@ class Alert(Base):
     evidence = Column(JSONB, default=list)  # [{mention_id, url, text, author, platform}]
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     delivered = Column(Integer, default=0)  # webhook delivery flag
+
+
+class LlmUsage(Base):
+    """Daily rollup of Anthropic token usage — the basis for real
+    'Anthropic spend' on the admin dashboard (tokens x configured price)."""
+
+    __tablename__ = "llm_usage"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    day = Column(Date, nullable=False, unique=True, index=True)
+    calls = Column(Integer, default=0)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
