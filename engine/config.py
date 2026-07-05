@@ -62,9 +62,11 @@ class Settings(BaseSettings):
     facebook_cookies_path: str = ""  # optional Netscape cookies.txt for logged-in reach
     # GDELT: free historical global-news search (no key). Closes the >30-day
     # history gap NewsAPI's free tier and point-in-time scrapers can't.
-    enable_gdelt: bool = False
+    # ON by default: free, no key, no extra packages — only needs open egress.
+    enable_gdelt: bool = True
     # Wayback Machine: free archived-page recovery / historical article slugs.
-    enable_wayback: bool = False
+    # ON by default: free, no key, no extra packages — only needs open egress.
+    enable_wayback: bool = True
     # twscrape: free X/Twitter via an account pool. Needs a prepared accounts db.
     enable_twscrape: bool = False
     twscrape_db: str = "accounts.db"
