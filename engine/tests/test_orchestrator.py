@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from engine.config import settings
 from engine.db.models import AuthorProfile, IngestionTask, Politician, RawMention
 from engine.ingestion import orchestrator
@@ -7,6 +9,15 @@ from engine.ingestion.base import IngestedMention
 from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
 
 WINDOW = (datetime(2026, 6, 1), datetime(2026, 6, 30, 23, 59, 59))
+
+
+@pytest.fixture(autouse=True)
+def _no_keyless_network(monkeypatch):
+    # These tests assert SocialCrawl/mock connector planning. GDELT/Wayback are
+    # default-on in production but would add tasks and make real network calls,
+    # so keep this module hermetic by turning them off.
+    monkeypatch.setattr(settings, "enable_gdelt", False, raising=False)
+    monkeypatch.setattr(settings, "enable_wayback", False, raising=False)
 
 
 def make_politician(db):
