@@ -332,6 +332,44 @@ def synthesize_executive_brief(name: str, analyst_outputs: dict) -> str:
     return result.get("executive_brief", "")
 
 
+INSIGHT_PROMPT = """You are a senior intelligence analyst. Below is a COMPLETE distilled digest of every mention collected about {name} — claims, themes, quotes, entities, sentiment and anomalies from the whole corpus. Your job is the part a human analyst does when, after reading everything, one thing suddenly clicks and the real picture snaps into focus.
+
+{grounding}
+
+Look BENEATH the surface. Do not restate the obvious headline story. Find:
+- contradictions between what officials/media say and what ordinary people say;
+- a narrative forming quietly under the dominant one;
+- signs of coordinated or inauthentic amplification (many similar messages, sudden new voices);
+- the single detail or connection that reframes how everything else should be read;
+- what is conspicuously ABSENT that you would expect to see.
+
+For each finding: state it plainly, explain the evidence pattern that supports it (referencing the digest), and give a confidence (high/medium/low). Only assert what the digest supports.
+
+COMPLETE CORPUS DIGEST:
+{digest}
+
+Respond with ONLY this JSON:
+{{"insights": [{{"headline":"the finding in one sharp sentence","reasoning":"the pattern in the data that reveals it","confidence":"high|medium|low","implication":"why it matters"}}], "the_one_thing":"if a decision-maker remembers only one non-obvious thing from all this data, it is: ..."}}"""
+
+
+def analyze_deep_insights(name: str, corpus_digest: dict) -> dict:
+    """The 'see through the layers' pass: reads the whole-corpus digest and
+    surfaces non-obvious patterns, contradictions and the reframing insight."""
+    from engine.reports.digest import digest_context
+
+    try:
+        result = llm.call_json(
+            INSIGHT_PROMPT.format(
+                name=name, grounding=GROUNDING_RULES, digest=digest_context(corpus_digest, max_chars=42000)
+            ),
+            max_tokens=2500,
+        )
+        insights = [i for i in (result.get("insights") or []) if isinstance(i, dict)]
+        return {"insights": insights, "the_one_thing": result.get("the_one_thing", "")}
+    except Exception:
+        return {"insights": [], "the_one_thing": ""}
+
+
 VERIFY_PROMPT = """You are a fact-grounding auditor. Below is analyst-written report prose, followed by the source quotes the analysts worked from.
 
 Your ONLY job: find sentences in the prose that assert a biographical fact or current status about a named person (alive/dead, holds office X, belongs to party Y, is a journalist at Z, etc.) that is NOT supported by the source quotes, and rewrite the prose with those unsupported claims removed. Do not add anything. Keep everything that IS supported or that makes no biographical/status claim.

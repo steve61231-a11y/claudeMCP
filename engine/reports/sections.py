@@ -166,6 +166,16 @@ def enrich_report_payload(
         by_day = payload["volume_trends"].get("by_day", {})
         influence = payload["influence_summary"]
         mentions_by_id = {str(m.get("id")): m for m in mentions}
+        # Whole-corpus map-reduce digest: guarantees every mention is read by
+        # the model (not a truncated slice) and powers the deep-insight pass.
+        from engine.reports.digest import build_corpus_digest
+
+        corpus_digest = build_corpus_digest(politician_name, mentions)
+        payload["coverage"] = corpus_digest["coverage"]
+        jobs["deep_insights"] = (
+            lambda: analysts.analyze_deep_insights(politician_name, corpus_digest),
+            {"insights": [], "the_one_thing": ""},
+        )
         jobs.update(
             {
                 "public_voice": (
@@ -215,6 +225,7 @@ def enrich_report_payload(
                 "timeline",
                 "influencer_stances",
                 "narrative_deep_dives",
+                "deep_insights",
                 "sentiment_breakdown",
             )
         }

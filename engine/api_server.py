@@ -157,6 +157,27 @@ def _extract_url(raw_payload: dict) -> str | None:
     return None
 
 
+def _freshness(politician_id: str) -> dict:
+    """How current the underlying data is — the honest 'live vs stale' signal."""
+    from sqlalchemy import func
+
+    db = SessionLocal()
+    try:
+        newest = db.query(func.max(RawMention.posted_at)).filter(
+            RawMention.politician_id == politician_id
+        ).scalar()
+        last_24h = db.query(func.count(RawMention.id)).filter(
+            RawMention.politician_id == politician_id,
+            RawMention.posted_at >= datetime.utcnow() - timedelta(hours=24),
+        ).scalar()
+        return {
+            "newestMentionAt": newest.isoformat() if newest else None,
+            "mentionsLast24h": int(last_24h or 0),
+        }
+    finally:
+        db.close()
+
+
 def _build_frontend_payload(politician: Politician, report) -> dict:
     payload = report.payload
     sentiment = payload["sentiment_breakdown"]
@@ -307,6 +328,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "title": "",
         "window": f"{report.window_start.date()} – {report.window_end.date()}",
         "generated": datetime.utcnow().date().isoformat(),
+        "generatedAt": datetime.utcnow().isoformat(),
+        "freshness": _freshness(politician.id),
         "summary": payload["executive_summary"],
         "sentiment": {
             "negative": sentiment["negative_pct"],
@@ -351,6 +374,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "timeline": payload.get("timeline", []),
         "influencerStances": payload.get("influencer_stances", []),
         "narrativeDeepDives": payload.get("narrative_deep_dives", []),
+        "deepInsights": payload.get("deep_insights", {}),
+        "coverage": payload.get("coverage", {}),
         "topComments": top_comments,
         "recency": {
             "last7Days": volume.get("last_7_days", 0),
@@ -403,16 +428,26 @@ def _run_report_job(job_id: str, name: str) -> None:
             "ok": True,
             "report": _build_frontend_payload(politician, report),
             "created_at": time.time(),
+            "live": True,
         }
     except Exception:  # noqa: BLE001 - demo endpoint must never hard-fail the UI
         # Log the full traceback server-side; never leak internals to clients.
         traceback.print_exc()
-        _jobs[job_id] = {
-            "status": "done",
-            "ok": False,
-            "error": "report generation failed — see server logs",
-            "created_at": time.time(),
-        }
+        # Fall back to a pre-generated report if we have one for this name, so a
+        # live-path failure degrades to a real-looking report instead of an
+        # error — but this is a FALLBACK, never a substitute for fresh data.
+        precached = _PRECACHED_REPORTS.get(name.strip().lower())
+        if precached is not None:
+            _jobs[job_id] = {
+                "status": "done", "ok": True, "report": precached,
+                "created_at": time.time(), "live": False, "stale_fallback": True,
+            }
+        else:
+            _jobs[job_id] = {
+                "status": "done", "ok": False,
+                "error": "report generation failed — see server logs",
+                "created_at": time.time(),
+            }
     finally:
         db.close()
 
@@ -425,11 +460,9 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
 
     name = req.name.strip()
     job_id = uuid.uuid4().hex
-    precached = _PRECACHED_REPORTS.get(name.lower())
-    if precached is not None:
-        _jobs[job_id] = {"status": "done", "ok": True, "report": precached, "created_at": time.time()}
-        return {"ok": True, "job_id": job_id}
-
+    # Always run the LIVE pipeline so every report reflects the newest data.
+    # A pre-generated report (if any) is used only as a fallback on failure
+    # (see _run_report_job) — never as a substitute for a fresh run.
     _jobs[job_id] = {"status": "running", "created_at": time.time()}
     thread = threading.Thread(target=_run_report_job, args=(job_id, name), daemon=True)
     thread.start()
