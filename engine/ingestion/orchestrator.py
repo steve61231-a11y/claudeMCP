@@ -118,6 +118,11 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="twscrape", platform="twitter", endpoint="search", query=politician.name)
         )
 
+    if settings.enable_wikipedia:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="wikipedia", platform="wikipedia", endpoint="rest", query=politician.name)
+        )
+
     slug = politician.name.lower().replace(" ", "_")
     if (CURATED_DIR / f"{slug}.json").exists():
         tasks.append(
@@ -366,8 +371,11 @@ def _execute_newsapi_task(session: Session, run: IngestionRun, task: IngestionTa
     from engine.ingestion.news_connector import NewsApiConnector
 
     connector = NewsApiConnector()
+    from engine.ingestion.article_text import enrich_with_article_text
+
     while task.page_cursor <= MAX_PAGES_PER_TASK:
         mentions, has_more = connector.search_page(task.query, task.page_cursor, run.window_start, run.window_end)
+        enrich_with_article_text(mentions)  # full body text for NewsAPI articles
         task.result_count += _store_mentions(session, run, task, politician, mentions)
         task.page_cursor += 1
         session.commit()
@@ -402,11 +410,21 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         from engine.ingestion.twscrape_connector import TwscrapeConnector
 
         connector = TwscrapeConnector()
+    elif task.connector == "wikipedia":
+        from engine.ingestion.wikipedia_connector import WikipediaConnector
+
+        connector = WikipediaConnector()
     else:
         from engine.ingestion.mock_source import MockIngestionConnector
 
         connector = MockIngestionConnector()
     mentions = connector.fetch(politician.name, politician.aliases or [], run.window_start, run.window_end)
+    # Turn headline-only article mentions into full journalism bodies before
+    # they're stored, so the corpus (and the LLM digest) reads whole articles.
+    if task.connector in ("gdelt", "wayback", "curated"):
+        from engine.ingestion.article_text import enrich_with_article_text
+
+        enrich_with_article_text(mentions)
     task.result_count += _store_mentions(session, run, task, politician, mentions)
 
 

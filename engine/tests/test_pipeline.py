@@ -73,6 +73,7 @@ def patch_pipeline_dependencies(monkeypatch):
     # default-on in production, but tests must not make real network calls.
     monkeypatch.setattr(config_settings, "enable_gdelt", False, raising=False)
     monkeypatch.setattr(config_settings, "enable_wayback", False, raising=False)
+    monkeypatch.setattr(config_settings, "enable_wikipedia", False, raising=False)
     monkeypatch.setattr(llm, "call_json", fake_call_json)
     monkeypatch.setattr(sentiment_module, "local_sentiment", fake_local_sentiment)
     monkeypatch.setattr(narratives_module, "embed_texts", fake_embed_texts)

@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     # twscrape: free X/Twitter via an account pool. Needs a prepared accounts db.
     enable_twscrape: bool = False
     twscrape_db: str = "accounts.db"
+    # Full-article extraction (trafilatura, keyless): fetch and read the whole
+    # body of every article URL (GDELT/NewsAPI/Wayback headlines become full
+    # journalism). ON by default: free, only needs open egress + trafilatura.
+    enable_article_text: bool = True
+    article_text_max_chars: int = 6000   # per-article body cap fed downstream
+    article_text_max_fetch: int = 60      # max URLs enriched per run (bounded)
+    # Wikipedia (keyless MediaWiki REST API): authoritative background on the
+    # subject + linked entities. ON by default: free, no key, no extra packages.
+    enable_wikipedia: bool = True
     # Per-million-token USD prices for the configured Anthropic model, used to
     # turn real token counts into a real spend figure on the admin dashboard.
     anthropic_price_in: float = 3.0

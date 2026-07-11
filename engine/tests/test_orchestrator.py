@@ -18,6 +18,7 @@ def _no_keyless_network(monkeypatch):
     # so keep this module hermetic by turning them off.
     monkeypatch.setattr(settings, "enable_gdelt", False, raising=False)
     monkeypatch.setattr(settings, "enable_wayback", False, raising=False)
+    monkeypatch.setattr(settings, "enable_wikipedia", False, raising=False)
 
 
 def make_politician(db):
