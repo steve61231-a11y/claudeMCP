@@ -42,6 +42,7 @@ class TwscrapeConnector(IngestionConnector):
             from twscrape import API
 
             api = API(settings.twscrape_db or "accounts.db")
+            await self._ensure_account(api)
 
         terms = [politician_name, *[a for a in aliases if a]][:3]
         mentions: list[IngestedMention] = []
@@ -60,6 +61,27 @@ class TwscrapeConnector(IngestionConnector):
             except Exception:
                 continue
         return mentions
+
+    @staticmethod
+    async def _ensure_account(api) -> None:
+        """Best-effort: seed the account pool from the shared burner creds
+        (X_USERNAME/X_EMAIL/X_PASSWORD) so a fresh deploy has a usable session
+        without a manual `twscrape add_accounts` step. No-op if creds are absent
+        or the account already exists; never raises."""
+        if not (settings.x_username and settings.x_password):
+            return
+        try:
+            await api.pool.add_account(
+                settings.x_username,
+                settings.x_password,
+                settings.x_email or settings.x_username,
+                settings.x_password,
+            )
+            await api.pool.login_all()
+        except Exception:
+            # Already added / login rate-limited / offline — the search below
+            # still works if any prior session is valid, and degrades to [].
+            return
 
     @staticmethod
     def _map_tweet(tweet, seen: set) -> IngestedMention | None:

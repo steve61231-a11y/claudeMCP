@@ -16,6 +16,16 @@ requests==2.32.3
 # Full-article body extraction (keyless): turns headline-only article mentions
 # into the whole readable article. Powers engine/ingestion/article_text.py.
 trafilatura==2.1.0
+# Scweet (github.com/Altimis/Scweet): free X/Twitter scraping (no paid API),
+# multi-account pooling + proxy. Powers engine/ingestion/scweet_connector.py.
+# Needs a burner X login (X_USERNAME/X_EMAIL/X_PASSWORD) + open egress at
+# runtime; enabled via ENABLE_SCWEET=true. Drives Chromium (present on deploy).
+Scweet==3.0.0
+# twscrape (github.com/vladkens/twscrape): the second free X backend, run
+# alongside Scweet. Powers engine/ingestion/twscrape_connector.py; ENABLE_TWSCRAPE=true.
+# Wikipedia is served in-process by engine/ingestion/wikipedia_connector.py
+# (MediaWiki API, keyless). The standalone MCP equivalent, if wanted, is
+# github.com/Rudra-ravi/wikipedia-mcp (`pip install wikipedia-mcp`).
 # AgentReach (optional free web/social scraping — github.com/Panniantong/Agent-Reach).
 # Install separately where ENABLE_AGENTREACH=true: `pip install agent-reach`.
 # Left as a comment because its backends need open egress + optional CLIs.

@@ -118,6 +118,11 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="twscrape", platform="twitter", endpoint="search", query=politician.name)
         )
 
+    if settings.enable_scweet:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="scweet", platform="x", endpoint="search", query=politician.name)
+        )
+
     if settings.enable_wikipedia:
         tasks.append(
             IngestionTask(run_id=run.id, connector="wikipedia", platform="wikipedia", endpoint="rest", query=politician.name)
@@ -410,6 +415,10 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         from engine.ingestion.twscrape_connector import TwscrapeConnector
 
         connector = TwscrapeConnector()
+    elif task.connector == "scweet":
+        from engine.ingestion.scweet_connector import ScweetConnector
+
+        connector = ScweetConnector()
     elif task.connector == "wikipedia":
         from engine.ingestion.wikipedia_connector import WikipediaConnector
 

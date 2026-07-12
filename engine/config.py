@@ -70,6 +70,16 @@ class Settings(BaseSettings):
     # twscrape: free X/Twitter via an account pool. Needs a prepared accounts db.
     enable_twscrape: bool = False
     twscrape_db: str = "accounts.db"
+    # Scweet (github.com/Altimis/Scweet): free X/Twitter scraping, no paid API,
+    # with multi-account pooling + proxy. Off by default; needs a burner X login
+    # + open egress. Runs alongside twscrape (both read the shared creds below).
+    enable_scweet: bool = False
+    scweet_max_tweets: int = 120          # bounded per-run cap
+    # Shared burner X account used by BOTH twscrape and Scweet (X blocks
+    # anonymous reads). Supply via env X_USERNAME / X_EMAIL / X_PASSWORD.
+    x_username: str = ""
+    x_email: str = ""
+    x_password: str = ""
     # Full-article extraction (trafilatura, keyless): fetch and read the whole
     # body of every article URL (GDELT/NewsAPI/Wayback headlines become full
     # journalism). ON by default: free, only needs open egress + trafilatura.
