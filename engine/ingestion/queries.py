@@ -18,6 +18,11 @@ MAX_HASHTAG_VARIANTS = 8
 # Honorifics that commonly prefix a surname in Kenyan media/social posts.
 COMMON_HONORIFICS = ["Hon"]
 
+# Subject types that name a *person* — surname/honorific expansion applies.
+# Organisations, ministries and businesses are searched by their full name and
+# operator-supplied aliases only (a "surname" of an institution is meaningless).
+_PERSON_TYPES = {"person", "politician", "individual"}
+
 
 def surname(name: str) -> str:
     parts = name.strip().split()
@@ -25,18 +30,25 @@ def surname(name: str) -> str:
 
 
 def text_variants(politician: Politician) -> list[str]:
-    """Search-phrase variants for keyword/search endpoints, most-specific first."""
+    """Search-phrase variants for keyword/search endpoints, most-specific first.
+
+    Phrasing adapts to `subject_type`: person-like subjects get surname+title
+    and honorific expansion; organisations/ministries/businesses are matched by
+    full name + aliases + operator terms, since surname/honorific logic doesn't
+    apply to an institution."""
+    is_person = getattr(politician, "subject_type", "politician") in _PERSON_TYPES
     last = surname(politician.name)
     variants: list[str] = [politician.name]
     variants.extend(politician.aliases or [])
     for title in politician.titles or []:
-        variants.append(f"{title} {last}")
+        variants.append(f"{title} {last}" if is_person else title)
         # Standalone Swahili titles ("Waziri wa Fedha") are searchable phrases
         # on their own; single-word English titles ("CS") are not.
         if len(title.split()) > 1:
             variants.append(title)
-    for honorific in COMMON_HONORIFICS:
-        variants.append(f"{honorific} {last}")
+    if is_person:
+        for honorific in COMMON_HONORIFICS:
+            variants.append(f"{honorific} {last}")
     variants.extend(politician.swahili_terms or [])
 
     return _dedupe(variants)[:MAX_TEXT_VARIANTS]

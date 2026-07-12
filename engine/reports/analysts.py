@@ -370,6 +370,54 @@ def analyze_deep_insights(name: str, corpus_digest: dict) -> dict:
         return {"insights": [], "the_one_thing": ""}
 
 
+ISSUE_MAP_PROMPT = """You are an intelligence analyst mapping the relationship between a PRINCIPAL and an ISSUE/INSTITUTION. Below is a COMPLETE distilled digest of every collected mention at their intersection — everything said about {principal} *in connection with* {issue}.
+
+{grounding}
+
+Map the intersection precisely:
+- involvement: what is {principal}'s actual role, stance, action or exposure regarding {issue}? (supporter/architect/critic/implicated/absent — say which, with evidence.)
+- linking_narratives: the distinct storylines connecting {principal} to {issue}, each with its framing and who pushes it.
+- key_actors: other people/organisations that appear at this intersection and how they relate to {principal} on {issue}.
+- timeline: the sequence of notable moments linking them, oldest to newest.
+- tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict.
+- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines.
+
+Only assert what the digest supports; note if the connection is thin.
+
+COMPLETE INTERSECTION DIGEST:
+{digest}
+
+Respond with ONLY this JSON:
+{{"involvement":"...","linking_narratives":[{{"narrative":"...","framing":"...","pushed_by":"..."}}],"key_actors":[{{"name":"...","relation":"..."}}],"timeline":[{{"when":"...","event":"..."}}],"tension_or_risk":"...","verdict":"..."}}"""
+
+
+def analyze_issue_intersection(principal: str, issue: str, corpus_digest: dict) -> dict:
+    """Reads the whole intersection digest and maps how the principal and the
+    issue/institution are actually connected. Degrades to an empty map."""
+    from engine.reports.digest import digest_context
+
+    empty = {"involvement": "", "linking_narratives": [], "key_actors": [],
+             "timeline": [], "tension_or_risk": "", "verdict": ""}
+    try:
+        result = llm.call_json(
+            ISSUE_MAP_PROMPT.format(
+                principal=principal, issue=issue, grounding=GROUNDING_RULES,
+                digest=digest_context(corpus_digest, max_chars=42000),
+            ),
+            max_tokens=2500,
+        )
+    except Exception:
+        return empty
+    return {
+        "involvement": result.get("involvement", ""),
+        "linking_narratives": [n for n in (result.get("linking_narratives") or []) if isinstance(n, dict)],
+        "key_actors": [a for a in (result.get("key_actors") or []) if isinstance(a, dict)],
+        "timeline": [t for t in (result.get("timeline") or []) if isinstance(t, dict)],
+        "tension_or_risk": result.get("tension_or_risk", ""),
+        "verdict": result.get("verdict", ""),
+    }
+
+
 VERIFY_PROMPT = """You are a fact-grounding auditor. Below is analyst-written report prose, followed by the source quotes the analysts worked from.
 
 Your ONLY job: find sentences in the prose that assert a biographical fact or current status about a named person (alive/dead, holds office X, belongs to party Y, is a journalist at Z, etc.) that is NOT supported by the source quotes, and rewrite the prose with those unsupported claims removed. Do not add anything. Keep everything that IS supported or that makes no biographical/status claim.

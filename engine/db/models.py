@@ -28,6 +28,11 @@ class Politician(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     name = Column(String, nullable=False)
+    # Multi-domain subject: not just politicians. One of
+    # person | politician | organization | ministry | business | individual.
+    # Kept on this table (no rename) so the whole pipeline stays compatible;
+    # it only tunes acquisition queries and analyst phrasing.
+    subject_type = Column(String, nullable=False, default="politician", server_default="politician")
     aliases = Column(ARRAY(String), default=list)
     keywords = Column(ARRAY(String), default=list)
     social_handles = Column(JSONB, default=dict)  # {"tiktok": "...", "youtube": "...", ...}

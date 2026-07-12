@@ -129,16 +129,38 @@ def _evict_stale_jobs() -> None:
 
 class ReportRequest(BaseModel):
     name: str
+    # Multi-domain: person | politician | organization | ministry | business |
+    # individual. Defaults to politician for backward compatibility.
+    type: str = "politician"
 
 
-def _ensure_politician(db, name: str) -> Politician:
+class IssueMapRequest(BaseModel):
+    principal: str          # the person/organisation (e.g. "William Ruto")
+    issue: str              # the issue/institution (e.g. "forestry", "SHA", "KRA")
+    days: int = 365         # look-back window
+
+
+_PERSON_SUBJECT_TYPES = {"person", "politician", "individual"}
+_VALID_SUBJECT_TYPES = _PERSON_SUBJECT_TYPES | {"organization", "ministry", "business"}
+
+
+def _ensure_politician(db, name: str, subject_type: str = "politician") -> Politician:
+    subject_type = subject_type if subject_type in _VALID_SUBJECT_TYPES else "politician"
     politician = db.query(Politician).filter_by(name=name).first()
     if politician:
+        # Let a caller correct/upgrade the subject type on an existing record.
+        if subject_type != "politician" and getattr(politician, "subject_type", None) != subject_type:
+            politician.subject_type = subject_type
+            db.commit()
         return politician
 
-    last_word = name.strip().split()[-1]
-    aliases = [name, f"Hon. {name}", f"Sen. {last_word}", f"Honorable {name}"]
-    politician = Politician(name=name, aliases=aliases, keywords=[])
+    # Person-like subjects get honorific aliases; institutions do not.
+    if subject_type in _PERSON_SUBJECT_TYPES:
+        last_word = name.strip().split()[-1]
+        aliases = [name, f"Hon. {name}", f"Sen. {last_word}", f"Honorable {name}"]
+    else:
+        aliases = [name]
+    politician = Politician(name=name, aliases=aliases, keywords=[], subject_type=subject_type)
     db.add(politician)
     db.commit()
     return politician
@@ -402,10 +424,10 @@ _PRECACHED_REPORTS: dict[str, dict] = {
 }
 
 
-def _run_report_job(job_id: str, name: str) -> None:
+def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
     db = SessionLocal()
     try:
-        politician = _ensure_politician(db, name)
+        politician = _ensure_politician(db, name, subject_type)
         window_end = datetime.utcnow()
         window_start = window_end - timedelta(days=210)
         # Surface progress to the polling frontend: a full first-time run is
@@ -464,7 +486,7 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
     # A pre-generated report (if any) is used only as a fallback on failure
     # (see _run_report_job) — never as a substitute for a fresh run.
     _jobs[job_id] = {"status": "running", "created_at": time.time()}
-    thread = threading.Thread(target=_run_report_job, args=(job_id, name), daemon=True)
+    thread = threading.Thread(target=_run_report_job, args=(job_id, name, req.type), daemon=True)
     thread.start()
     return {"ok": True, "job_id": job_id}
 
@@ -476,6 +498,42 @@ def get_report(job_id: str, x_api_key: str | None = Header(default=None)):
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job_id")
     return job
+
+
+def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int) -> None:
+    from datetime import datetime, timedelta
+
+    from engine.reports.issue_map import build_issue_map
+
+    try:
+        we = datetime.utcnow()
+        ws = we - timedelta(days=max(1, days))
+        payload = build_issue_map(principal, issue, window_start=ws, window_end=we)
+        _jobs[job_id] = {"status": "done", "ok": True, "issue_map": payload, "created_at": time.time()}
+    except Exception:  # surface server-side, don't crash the worker or leak internals
+        traceback.print_exc()
+        _jobs[job_id] = {"status": "done", "ok": False, "error": "issue map failed — see server logs",
+                         "created_at": time.time()}
+
+
+@app.post("/api/issue-map")
+def create_issue_map(req: IssueMapRequest, request: Request, x_api_key: str | None = Header(default=None)):
+    """Map the intersection of a principal and an issue/institution — e.g.
+    'William Ruto' × 'forestry'. Runs async like /api/report; poll
+    /api/report/{job_id} for the result."""
+    _require_api_key(x_api_key)
+    _check_rate_limit(request.client.host if request.client else "unknown")
+    _evict_stale_jobs()
+
+    principal = req.principal.strip()
+    issue = req.issue.strip()
+    if not principal or not issue:
+        raise HTTPException(status_code=400, detail="principal and issue are both required")
+    job_id = uuid.uuid4().hex
+    _jobs[job_id] = {"status": "running", "created_at": time.time()}
+    thread = threading.Thread(target=_run_issue_map_job, args=(job_id, principal, issue, req.days), daemon=True)
+    thread.start()
+    return {"ok": True, "job_id": job_id}
 
 
 def _latest_report_core(db, name: str) -> dict | None:
