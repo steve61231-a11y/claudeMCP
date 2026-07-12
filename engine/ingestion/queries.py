@@ -36,7 +36,7 @@ def text_variants(politician: Politician) -> list[str]:
     and honorific expansion; organisations/ministries/businesses are matched by
     full name + aliases + operator terms, since surname/honorific logic doesn't
     apply to an institution."""
-    is_person = getattr(politician, "subject_type", "politician") in _PERSON_TYPES
+    is_person = (getattr(politician, "subject_type", None) or "politician") in _PERSON_TYPES
     last = surname(politician.name)
     variants: list[str] = [politician.name]
     variants.extend(politician.aliases or [])
