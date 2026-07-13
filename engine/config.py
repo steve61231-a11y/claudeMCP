@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     pulse_api_key: str = ""
     allowed_origins: str = ""
     report_rate_limit_per_hour: int = 20
+    # Local ML models (transformers sentiment + sentence-transformers embeddings)
+    # pull PyTorch, which OOM-kills a 512MB free instance. OFF by default so the
+    # pipeline uses its LLM-sentiment + TF-IDF-narrative fallbacks (no torch) and
+    # fits free hosting. Set USE_LOCAL_ML=true on a box with >=2GB RAM for the
+    # faster/cheaper local models.
+    use_local_ml: bool = False
     # Recurring background ingestion for every tracked politician, so mention
     # history accumulates between report requests instead of each report only
     # seeing what one fetch returns. 0 disables (default: off, since each

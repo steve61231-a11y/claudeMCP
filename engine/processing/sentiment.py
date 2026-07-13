@@ -9,6 +9,11 @@ def get_local_pipeline():
     global _local_pipeline, _local_pipeline_unavailable
     if _local_pipeline_unavailable:
         raise RuntimeError("Local sentiment model previously failed to load")
+    if not settings.use_local_ml:
+        # Never import torch/transformers on a memory-constrained deploy — the
+        # LLM sentiment path is used instead (see analyze_sentiment).
+        _local_pipeline_unavailable = True
+        raise RuntimeError("local ML disabled (USE_LOCAL_ML=false)")
     if _local_pipeline is None:
         from transformers import pipeline
 

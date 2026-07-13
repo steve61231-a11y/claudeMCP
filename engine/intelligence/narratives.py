@@ -14,6 +14,13 @@ def get_embedder():
     global _embedder, _embedder_unavailable
     if _embedder_unavailable:
         raise RuntimeError("Sentence embedder previously failed to load")
+    from engine.config import settings
+
+    if not settings.use_local_ml:
+        # Skip torch/sentence-transformers on constrained deploys — embed_texts
+        # falls back to TF-IDF (scikit-learn), keeping narrative clustering alive.
+        _embedder_unavailable = True
+        raise RuntimeError("local ML disabled (USE_LOCAL_ML=false)")
     if _embedder is None:
         from sentence_transformers import SentenceTransformer
 
