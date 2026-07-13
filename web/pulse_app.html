@@ -140,13 +140,14 @@
   }
   // poll a job endpoint until done
   async function pollJob(job_id, onTick){
-    for(let i=0;i<120;i++){
+    // Free-tier CPU is slow — allow up to ~8 min before giving up.
+    for(let i=0;i<240;i++){
       const j = await api('/api/report/'+job_id);
       if(j.status==='done') return j;
       if(onTick) onTick(i);
       await new Promise(r=>setTimeout(r,2000));
     }
-    throw new Error('timed out');
+    throw new Error('still generating after 8 min — the free instance is slow; try again in a moment');
   }
 
   const TABS=[['search','Search'],['issue','Issue Map'],['network','Network'],['baraza','Baraza'],['mission','Mission Control'],['settings','Settings']];
