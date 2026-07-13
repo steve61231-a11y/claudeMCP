@@ -455,9 +455,15 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             "created_at": time.time(),
             "live": True,
         }
-    except Exception:  # noqa: BLE001 - demo endpoint must never hard-fail the UI
-        # Log the full traceback server-side; never leak internals to clients.
+    except Exception as exc:  # noqa: BLE001 - demo endpoint must never hard-fail the UI
+        # Log the full traceback server-side...
         traceback.print_exc()
+        tb = traceback.format_exc()
+        # ...and surface a compact diagnostic to the operator's own UI so the
+        # failure can be debugged without server-log access. This is an
+        # API-key-gated operator tool, not a public endpoint.
+        last = tb.strip().splitlines()[-1] if tb.strip() else ""
+        diag = f"{type(exc).__name__}: {exc}".strip()[:400]
         # Fall back to a pre-generated report if we have one for this name, so a
         # live-path failure degrades to a real-looking report instead of an
         # error — but this is a FALLBACK, never a substitute for fresh data.
@@ -466,11 +472,12 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             _jobs[job_id] = {
                 "status": "done", "ok": True, "report": precached,
                 "created_at": time.time(), "live": False, "stale_fallback": True,
+                "error_detail": diag,
             }
         else:
             _jobs[job_id] = {
                 "status": "done", "ok": False,
-                "error": "report generation failed — see server logs",
+                "error": f"report generation failed: {diag or last}",
                 "created_at": time.time(),
             }
     finally:
