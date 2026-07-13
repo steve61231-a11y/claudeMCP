@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY engine ./engine
 COPY mock-data ./mock-data
+COPY web ./web
 
 ENV PYTHONPATH=/app
 

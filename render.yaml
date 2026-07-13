@@ -31,3 +31,16 @@ services:
         value: "6"
       - key: SCHEDULED_CREDIT_BUDGET
         value: "200"
+      # Hot subjects kept continuously fresh by the 6h scheduler. Edit freely.
+      - key: PREWARM_NAMES
+        value: "William Ruto,Rigathi Gachagua,Raila Odinga,John Mbadi,Edwin Sifuna"
+      # Free X backend (browserless). Set X_USERNAME/X_EMAIL/X_PASSWORD as
+      # secrets in the dashboard to activate real X scraping.
+      - key: ENABLE_TWSCRAPE
+        value: "true"
+      - key: X_USERNAME
+        sync: false
+      - key: X_EMAIL
+        sync: false
+      - key: X_PASSWORD
+        sync: false

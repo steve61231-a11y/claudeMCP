@@ -12,8 +12,11 @@ import traceback
 import uuid
 from datetime import datetime, timedelta
 
+from pathlib import Path
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from engine.config import settings
@@ -1149,6 +1152,25 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
         "working_sources": [n for n, r in results.items() if r["items"] > 0],
         "sources": results,
     }
+
+
+_WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+
+
+@app.get("/", response_class=HTMLResponse)
+def serve_frontend():
+    """Serve the Zenith frontend from the engine itself, so the app and API
+    share one origin — no separate hosting, no CORS setup, no demo mode. Just
+    open the engine's URL and it IS the live app. (Falls back to a tiny notice
+    if the web bundle wasn't shipped.)"""
+    index = _WEB_DIR / "index.html"
+    if index.exists():
+        return FileResponse(str(index), media_type="text/html")
+    return HTMLResponse(
+        "<h1>Zenith engine</h1><p>API is live. Frontend bundle not found — "
+        "hit <a href='/api/health'>/api/health</a>.</p>",
+        status_code=200,
+    )
 
 
 @app.get("/api/health")

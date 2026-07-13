@@ -1,0 +1,30 @@
+name: keepalive
+
+# Free 24/7 keep-alive: pings the engine so the Render free instance never
+# spins down, which in turn lets the in-app 6h ingestion scheduler keep running.
+# Replaces needing UptimeRobot. GitHub disables scheduled workflows after ~60
+# days of repo inactivity — any push re-arms it. Cron is best-effort (GitHub may
+# delay a few minutes), which is fine for keep-warm.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every ~10 minutes
+  workflow_dispatch: {}        # allow manual runs
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping engine health
+        run: |
+          URL="${ENGINE_URL:-https://pulse-engine-efnd.onrender.com}/api/health"
+          echo "Pinging $URL"
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo 000)
+            echo "attempt $i -> HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 20
+          done
+          echo "engine did not return 200 (may be waking up); not failing the job"
+        env:
+          ENGINE_URL: ${{ vars.ENGINE_URL }}

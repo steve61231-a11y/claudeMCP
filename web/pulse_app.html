@@ -112,7 +112,7 @@
   const pct = n => (n==null?'—':Math.round(n)+'%');
 
   const CFG = {
-    base: localStorage.getItem('zenith_base') || 'https://pulse-engine-efnd.onrender.com',
+    base: localStorage.getItem('zenith_base') || ((location.protocol.startsWith('http') && !/claude\.ai|claudeusercontent/.test(location.host)) ? location.origin : 'https://pulse-engine-efnd.onrender.com'),
     key:  localStorage.getItem('zenith_key')  || ''
   };
   let LIVE = false;
