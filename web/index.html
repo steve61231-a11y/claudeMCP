@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070b12">
-<title>Pulse Intelligence</title>
-<meta name="description" content="Live public-signal intelligence — news, Reddit, YouTube, Wikipedia and X for any person, politician, organization or business.">
+<title>Zenith Intelligence</title>
+<meta name="description" content="Zenith Intelligence platform — live public-signal intelligence powered by Zenith Intelligence.">
 <style>html,body{margin:0;background:#070b12}</style>
 </head>
 <body>
@@ -20,91 +20,91 @@
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,system-ui,sans-serif;
   }
   *{box-sizing:border-box}
-  #pulse{font-family:var(--sans);color:var(--ink);line-height:1.5;
+  #zenith{font-family:var(--sans);color:var(--ink);line-height:1.5;
     background:radial-gradient(1200px 700px at 15% -10%,#0d2033 0%,transparent 55%),
                radial-gradient(1000px 600px at 100% 0%,#0a1b2e 0%,transparent 50%),
                linear-gradient(180deg,var(--bg) 0%,#05080e 100%);
     min-height:100vh;-webkit-font-smoothing:antialiased}
-  #pulse .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
-  #pulse a{color:var(--sky2);text-decoration:none}
-  #pulse button{font-family:inherit;cursor:pointer}
-  #pulse .tnum{font-variant-numeric:tabular-nums}
+  #zenith .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+  #zenith a{color:var(--sky2);text-decoration:none}
+  #zenith button{font-family:inherit;cursor:pointer}
+  #zenith .tnum{font-variant-numeric:tabular-nums}
 
   /* nav */
-  #pulse .nav{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);
+  #zenith .nav{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);
     background:linear-gradient(180deg,rgba(7,11,18,.92),rgba(7,11,18,.62));border-bottom:1px solid var(--line2)}
-  #pulse .nav .wrap{display:flex;align-items:center;gap:6px;height:60px}
-  #pulse .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:19px;letter-spacing:-.02em;margin-right:14px}
-  #pulse .dot{width:10px;height:10px;border-radius:50%;background:var(--sky2);box-shadow:0 0 0 0 var(--glow);animation:pulse 2.4s infinite}
+  #zenith .nav .wrap{display:flex;align-items:center;gap:6px;height:60px}
+  #zenith .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:19px;letter-spacing:-.02em;margin-right:14px}
+  #zenith .dot{width:10px;height:10px;border-radius:50%;background:var(--sky2);box-shadow:0 0 0 0 var(--glow);animation:pulse 2.4s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 var(--glow)}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
-  #pulse .tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
-  #pulse .tabs::-webkit-scrollbar{display:none}
-  #pulse .tab{padding:8px 13px;border-radius:10px;color:var(--mut);font-size:14px;font-weight:500;
+  #zenith .tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
+  #zenith .tabs::-webkit-scrollbar{display:none}
+  #zenith .tab{padding:8px 13px;border-radius:10px;color:var(--mut);font-size:14px;font-weight:500;
     background:none;border:none;white-space:nowrap}
-  #pulse .tab:hover{color:var(--ink);background:var(--panel)}
-  #pulse .tab.on{color:#04121d;background:var(--sky2);font-weight:600}
-  #pulse .status{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);
+  #zenith .tab:hover{color:var(--ink);background:var(--panel)}
+  #zenith .tab.on{color:#04121d;background:var(--sky2);font-weight:600}
+  #zenith .status{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);
     padding:6px 11px;border:1px solid var(--line2);border-radius:999px;white-space:nowrap}
-  #pulse .status .sd{width:7px;height:7px;border-radius:50%;background:var(--mut2)}
-  #pulse .status.live .sd{background:var(--pos);box-shadow:0 0 8px var(--pos)}
-  #pulse .status.demo .sd{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+  #zenith .status .sd{width:7px;height:7px;border-radius:50%;background:var(--mut2)}
+  #zenith .status.live .sd{background:var(--pos);box-shadow:0 0 8px var(--pos)}
+  #zenith .status.demo .sd{background:var(--amber);box-shadow:0 0 8px var(--amber)}
 
   /* generic */
-  #pulse main{padding:28px 0 90px}
-  #pulse .eyebrow{text-transform:uppercase;letter-spacing:.18em;font-size:11px;color:var(--sky);font-weight:700}
-  #pulse h1{font-size:34px;font-weight:800;letter-spacing:-.03em;margin:6px 0 4px;text-wrap:balance}
-  #pulse h2{font-size:21px;font-weight:700;letter-spacing:-.02em;margin:0}
-  #pulse .sub{color:var(--mut);font-size:15px;max-width:60ch}
-  #pulse .card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:20px;
+  #zenith main{padding:28px 0 90px}
+  #zenith .eyebrow{text-transform:uppercase;letter-spacing:.18em;font-size:11px;color:var(--sky);font-weight:700}
+  #zenith h1{font-size:34px;font-weight:800;letter-spacing:-.03em;margin:6px 0 4px;text-wrap:balance}
+  #zenith h2{font-size:21px;font-weight:700;letter-spacing:-.02em;margin:0}
+  #zenith .sub{color:var(--mut);font-size:15px;max-width:60ch}
+  #zenith .card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:20px;
     backdrop-filter:blur(8px)}
-  #pulse .card.glow{border-color:var(--line);box-shadow:0 0 0 1px rgba(56,189,248,.05),0 18px 50px -30px var(--glow)}
-  #pulse .grid{display:grid;gap:14px}
-  #pulse .muted{color:var(--mut)}
-  #pulse .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  #pulse label.fl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin:0 0 7px}
-  #pulse input,#pulse select{width:100%;background:rgba(3,8,14,.6);border:1px solid var(--line2);color:var(--ink);
+  #zenith .card.glow{border-color:var(--line);box-shadow:0 0 0 1px rgba(56,189,248,.05),0 18px 50px -30px var(--glow)}
+  #zenith .grid{display:grid;gap:14px}
+  #zenith .muted{color:var(--mut)}
+  #zenith .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  #zenith label.fl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin:0 0 7px}
+  #zenith input,#zenith select{width:100%;background:rgba(3,8,14,.6);border:1px solid var(--line2);color:var(--ink);
     padding:13px 14px;border-radius:12px;font-size:15px;font-family:inherit;outline:none}
-  #pulse input:focus,#pulse select:focus{border-color:var(--sky);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
-  #pulse .btn{background:linear-gradient(180deg,var(--sky2),var(--sky));color:#04121d;font-weight:700;font-size:15px;
+  #zenith input:focus,#zenith select:focus{border-color:var(--sky);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+  #zenith .btn{background:linear-gradient(180deg,var(--sky2),var(--sky));color:#04121d;font-weight:700;font-size:15px;
     border:none;padding:13px 22px;border-radius:12px;transition:transform .08s,filter .15s}
-  #pulse .btn:hover{filter:brightness(1.08)}
-  #pulse .btn:active{transform:translateY(1px)}
-  #pulse .btn:disabled{opacity:.5;cursor:default}
-  #pulse .btn.ghost{background:none;border:1px solid var(--line);color:var(--sky2)}
-  #pulse .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;
+  #zenith .btn:hover{filter:brightness(1.08)}
+  #zenith .btn:active{transform:translateY(1px)}
+  #zenith .btn:disabled{opacity:.5;cursor:default}
+  #zenith .btn.ghost{background:none;border:1px solid var(--line);color:var(--sky2)}
+  #zenith .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;
     border:1px solid var(--line2);color:var(--mut)}
-  #pulse .pill.pos{color:var(--pos);border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.08)}
-  #pulse .pill.neg{color:var(--neg);border-color:rgba(251,113,133,.3);background:rgba(251,113,133,.08)}
-  #pulse .pill.amber{color:var(--amber);border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.08)}
-  #pulse .pill.sky{color:var(--sky2);border-color:var(--line);background:rgba(56,189,248,.08)}
-  #pulse .chip{font-size:12px;padding:4px 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut)}
-  #pulse .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--sky2);border-radius:50%;
+  #zenith .pill.pos{color:var(--pos);border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.08)}
+  #zenith .pill.neg{color:var(--neg);border-color:rgba(251,113,133,.3);background:rgba(251,113,133,.08)}
+  #zenith .pill.amber{color:var(--amber);border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.08)}
+  #zenith .pill.sky{color:var(--sky2);border-color:var(--line);background:rgba(56,189,248,.08)}
+  #zenith .chip{font-size:12px;padding:4px 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut)}
+  #zenith .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--sky2);border-radius:50%;
     display:inline-block;animation:spin .8s linear infinite;vertical-align:-3px}
   @keyframes spin{to{transform:rotate(360deg)}}
-  #pulse .kpi{font-size:30px;font-weight:800;letter-spacing:-.02em}
-  #pulse .kpi.sm{font-size:22px}
-  #pulse .lbl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
-  #pulse .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
-  #pulse .bar>i{display:block;height:100%;border-radius:99px}
-  #pulse .hero-one{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.35;text-wrap:balance}
-  #pulse .divider{height:1px;background:var(--line2);margin:22px 0}
-  #pulse .empty{text-align:center;padding:46px 20px;color:var(--mut)}
-  #pulse .empty .em{font-size:34px;margin-bottom:10px}
-  #pulse canvas{display:block;width:100%;border-radius:12px;touch-action:none;cursor:grab}
-  #pulse canvas:active{cursor:grabbing}
-  #pulse .mentr{padding:12px 0;border-top:1px solid var(--line2)}
-  #pulse .mentr:first-child{border-top:none}
-  #pulse table{width:100%;border-collapse:collapse;font-size:14px}
-  #pulse th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);padding:9px 10px;border-bottom:1px solid var(--line2)}
-  #pulse td{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
-  #pulse .fade{animation:fade .4s ease}
+  #zenith .kpi{font-size:30px;font-weight:800;letter-spacing:-.02em}
+  #zenith .kpi.sm{font-size:22px}
+  #zenith .lbl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
+  #zenith .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+  #zenith .bar>i{display:block;height:100%;border-radius:99px}
+  #zenith .hero-one{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.35;text-wrap:balance}
+  #zenith .divider{height:1px;background:var(--line2);margin:22px 0}
+  #zenith .empty{text-align:center;padding:46px 20px;color:var(--mut)}
+  #zenith .empty .em{font-size:34px;margin-bottom:10px}
+  #zenith canvas{display:block;width:100%;border-radius:12px;touch-action:none;cursor:grab}
+  #zenith canvas:active{cursor:grabbing}
+  #zenith .mentr{padding:12px 0;border-top:1px solid var(--line2)}
+  #zenith .mentr:first-child{border-top:none}
+  #zenith table{width:100%;border-collapse:collapse;font-size:14px}
+  #zenith th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);padding:9px 10px;border-bottom:1px solid var(--line2)}
+  #zenith td{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+  #zenith .fade{animation:fade .4s ease}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-  @media(max-width:640px){#pulse h1{font-size:27px}#pulse .kpi{font-size:24px}}
+  @media(max-width:640px){#zenith h1{font-size:27px}#zenith .kpi{font-size:24px}}
 </style>
 
-<div id="pulse">
+<div id="zenith">
   <nav class="nav"><div class="wrap">
-    <div class="brand"><span class="dot"></span>Pulse</div>
+    <div class="brand"><span class="dot"></span>Zenith<span style="font-weight:400;color:var(--mut);font-size:12px;margin-left:6px;letter-spacing:.02em">powered by Zenith Intelligence</span></div>
     <div class="tabs" id="tabs"></div>
     <div class="status" id="status"><span class="sd"></span><span id="statusTxt">connecting…</span></div>
   </div></nav>
@@ -120,8 +120,8 @@
   const pct = n => (n==null?'—':Math.round(n)+'%');
 
   const CFG = {
-    base: localStorage.getItem('pulse_base') || 'https://pulse-engine-efnd.onrender.com',
-    key:  localStorage.getItem('pulse_key')  || ''
+    base: localStorage.getItem('zenith_base') || 'https://pulse-engine-efnd.onrender.com',
+    key:  localStorage.getItem('zenith_key')  || ''
   };
   let LIVE = false;
 
@@ -172,7 +172,7 @@
     const w=el('div','grid');
     w.appendChild(el('div','',`<div class="eyebrow">Intelligence report</div>
       <h1>Read anyone's public signal.</h1>
-      <div class="sub">A person, politician, organization, ministry or business. Pulse pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
+      <div class="sub">A person, politician, organization, ministry or business. Zenith pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
     const form=el('div','card glow');
     form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 190px;gap:12px">
       <div><label class="fl">Subject</label><input id="q" placeholder="e.g. William Ruto" autocomplete="off"></div>
@@ -368,22 +368,28 @@
     });};
     const run=async()=>{const name=$('#nq',bar).value.trim()||'William Ruto';const msg=$('#nmsg',bar);
       msg.innerHTML='<span class="spinner"></span>';
-      try{ if(!LIVE)throw 0; const g=await api('/api/network?name='+encodeURIComponent(name)); msg.textContent=''; draw(normNet(g)); }
+      try{ if(!LIVE)throw 0; const g=await api('/api/network?name='+encodeURIComponent(name)); msg.textContent=''; draw(normNet(g.graph||g)); }
       catch(e){ msg.textContent=LIVE?'no network yet':''; draw(DEMO.net); }
     };
     $('#nrun',bar).onclick=run; setTimeout(()=>{draw(DEMO.net); if(LIVE)run();},30);
     return w;
   }
   function normNet(g){
-    const nodes=(g.nodes||[]).map(n=>({id:n.id,label:n.label||n.id,group:n.group,val:n.value||n.weight||8,role:n.role,affiliation:n.affiliation,co_mentions:n.co_mentions}));
+    const grp=n=>{ if(n.id==='subject'||n.node_type==='subject')return 'subject';
+      if(n.stance&&n.stance!=='neutral'&&n.stance!=='subject')return n.stance;   // ally/rival
+      return n.node_type||n.group||'person'; };
+    const nodes=(g.nodes||[]).map(n=>({id:n.id,label:n.label||n.id,group:grp(n),
+      val:n.influence||n.value||n.weight||8,role:n.role,affiliation:n.affiliation,
+      co_mentions:n.mention_count||n.co_mentions}));
     const ids=new Set(nodes.map(n=>n.id));
-    const edges=(g.edges||[]).filter(e=>ids.has(e.from)&&ids.has(e.to)).map(e=>({from:e.from,to:e.to,w:e.weight||1}));
+    const edges=(g.edges||[]).map(e=>({from:e.from||e.source,to:e.to||e.target,w:e.weight||1}))
+      .filter(e=>ids.has(e.from)&&ids.has(e.to));
     return {nodes,edges};
   }
   // tiny force + pseudo-3D renderer
   function NET(){
     let cv,ctx,g,onSel,W,H,rot=0,tilt=.3,zoom=1,drag=null,sel=null,raf;
-    const colors={core:'#7dd3fc',subject:'#7dd3fc',politician:'#fbbf24',person:'#c4b5fd',influencer:'#86efac',ally:'#86efac',rival:'#fb7185',rival2:'#fb7185'};
+    const colors={core:'#7dd3fc',subject:'#7dd3fc',politician:'#fbbf24',person:'#c4b5fd',public_figure:'#c4b5fd',influencer:'#86efac',author:'#86efac',ally:'#86efac',rival:'#fb7185',neutral:'#9fb4c7'};
     function layout(){const N=g.nodes;N.forEach((n,i)=>{const a=i/N.length*Math.PI*2;const r=n.id==='subject'?0:120+ (i%3)*40;
       n.x=Math.cos(a)*r;n.y=(Math.random()-.5)*140;n.z=Math.sin(a)*r;n.vx=n.vy=n.vz=0;});}
     function sim(){for(let s=0;s<70;s++){const N=g.nodes;
@@ -431,10 +437,11 @@
     if(!rows.length){out.innerHTML=`<div class="empty"><div class="em">📊</div><b>No index yet this week.</b><div style="margin-top:6px">Run a few reports and the leaderboard fills in.</div></div>`;return;}
     out.innerHTML=(demo?'<div class="pill amber" style="margin-bottom:12px">Demo preview</div>':'')+(idx.week||idx.week_ending?`<div class="chip" style="margin-bottom:12px">Week ending ${esc(idx.week||idx.week_ending)}</div>`:'');
     const t=el('table');t.innerHTML='<thead><tr><th>#</th><th>Leader</th><th>Mentions</th><th>Sentiment</th></tr></thead>';
-    const tb=el('tbody');rows.slice(0,15).forEach((r,i)=>{const s=r.sentiment||r.net_sentiment;const sc=typeof s==='number'?(s>0?'var(--pos)':s<0?'var(--neg)':'var(--neu)'):'var(--mut)';
-      tb.appendChild(el('tr','',`<td class="tnum muted">${i+1}</td><td><b>${esc(r.name||r.leader||r.label)}</b></td>
-        <td class="tnum">${fmt(r.mentions||r.volume||r.count)}</td>
-        <td style="color:${sc}">${typeof s==='number'?(s>0?'+':'')+Math.round(s*100)/100:esc(s||'—')}</td>`));});
+    const tb=el('tbody');rows.slice(0,15).forEach((r,i)=>{const s=(r.net_sentiment!=null?r.net_sentiment:r.sentiment);const sc=typeof s==='number'?(s>0?'var(--pos)':s<0?'var(--neg)':'var(--neu)'):'var(--mut)';
+      const mn=r.mentions_this_week!=null?r.mentions_this_week:(r.mentions||r.volume||r.count);
+      tb.appendChild(el('tr','',`<td class="tnum muted">${r.rank||i+1}</td><td><b>${esc(r.name||r.leader||r.label)}</b></td>
+        <td class="tnum">${fmt(mn)}</td>
+        <td style="color:${sc}">${typeof s==='number'?(s>0?'+':'')+(Math.round(s*100)/100):esc(s||'—')}</td>`));});
     t.appendChild(tb);out.appendChild(t);
   }
 
@@ -462,15 +469,29 @@
     t.appendChild(tb);o.appendChild(t);}
   function renderMetrics(o,m,demo){o.innerHTML='';
     if(demo){o.appendChild(el('div','pill amber','Demo preview'));}
+    const d=m.metrics||m;
+    const rep=d.reports||{},cor=d.corpus||{},cr=d.credits||{},pl=d.pipeline||{},sys=d.system||{};
+    const spend=(cr.anthropic_7d&&cr.anthropic_7d.usd)!=null?'$'+cr.anthropic_7d.usd:(d.llm_spend_usd!=null?'$'+d.llm_spend_usd:'—');
     const g=el('div','grid');g.style.gridTemplateColumns='repeat(auto-fit,minmax(130px,1fr))';g.style.marginTop='10px';
-    const d=m.metrics||m;const cards=[['Reports (7d)',d.reports_last_7d||d.reports||'—'],['Mentions',d.mentions_total||d.total_mentions||'—'],['LLM spend',d.llm_spend_usd!=null?'$'+d.llm_spend_usd:(d.spend_usd!=null?'$'+d.spend_usd:'—')],['Ingestion runs',d.ingestion_runs||d.runs||'—']];
-    cards.forEach(([l,v])=>g.appendChild(kpiCard(l,typeof v==='string'?v:fmt(v),'')));o.appendChild(g);}
+    [['Reports (7d)',rep.last_7d],['Total mentions',cor.total_mentions],['New · 24h',cor.last_24h],
+     ['LLM spend (7d)',spend],['SocialCrawl',cr.socialcrawl_balance!=null?cr.socialcrawl_balance:(d.socialcrawl_balance!=null?d.socialcrawl_balance:'—')],
+     ['Ingestion runs',(pl.recent&&pl.recent.length)||pl.running||'—']
+    ].forEach(([l,v])=>g.appendChild(kpiCard(l,typeof v==='string'?v:fmt(v),'')));
+    o.appendChild(g);
+    // honest system line
+    const upt=sys.uptime_seconds!=null?Math.round(sys.uptime_seconds/60)+'m':'—';
+    const line=el('div','row');line.style.marginTop='12px';
+    line.innerHTML=`<span class="chip">DB ${sys.db_ok!==false?'healthy':'down'}</span>
+      <span class="chip">Scheduler ${sys.scheduler_enabled?('on · every '+sys.refresh_hours+'h'):'off'}</span>
+      <span class="chip">Uptime ${upt}</span>
+      ${(sys.prewarm_names&&sys.prewarm_names.length)?'<span class="chip">Pre-warm: '+esc(sys.prewarm_names.join(', '))+'</span>':'<span class="pill amber">No pre-warm names set</span>'}`;
+    o.appendChild(line);}
 
   /* ---------------- SETTINGS ---------------- */
   function settingsView(){
     const w=el('div','grid');
     w.appendChild(el('div','',`<div class="eyebrow">Settings</div><h1>Connect to your engine.</h1>
-      <div class="sub">Point this app at your Pulse backend. Saved on this device only. When these are set and reachable, everything above goes live.</div>`));
+      <div class="sub">Point this app at your Zenith engine. Saved on this device only. When these are set and reachable, everything above goes live.</div>`));
     const c=el('div','card glow');
     c.innerHTML=`<label class="fl">API base URL</label><input id="sbase" value="${esc(CFG.base)}" placeholder="https://your-engine.onrender.com">
       <label class="fl" style="margin-top:16px">API key (x-api-key) — leave blank if none</label><input id="skey" value="${esc(CFG.key)}" placeholder="optional">
@@ -480,7 +501,7 @@
       <div class="muted" style="font-size:13px">Host this file free on <b>Cloudflare Pages</b>, <b>Netlify</b> or <b>GitHub Pages</b>. Then add that URL to your engine's <span class="chip">ALLOWED_ORIGINS</span> so the browser is allowed to call it.</div>`;
     w.appendChild(c);
     $('#ssave',c).onclick=()=>{CFG.base=$('#sbase',c).value.trim();CFG.key=$('#skey',c).value.trim();
-      localStorage.setItem('pulse_base',CFG.base);localStorage.setItem('pulse_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
+      localStorage.setItem('zenith_base',CFG.base);localStorage.setItem('zenith_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
     $('#stest',c).onclick=async()=>{const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';const b=$('#sbase',c).value.trim();
       try{const resp=await fetch(b.replace(/\/$/,'')+'/api/health');r.innerHTML=resp.ok?'<span style="color:var(--pos)">Reachable ✓</span>':'<span style="color:var(--neg)">HTTP '+resp.status+'</span>';}
       catch(e){r.innerHTML='<span style="color:var(--neg)">Unreachable (CORS or offline)</span>';}};
@@ -515,11 +536,12 @@
       edges:[{from:'subject',to:'moh',weight:4},{from:'subject',to:'sha',weight:3},{from:'subject',to:'opp',weight:5},{from:'subject',to:'nation',weight:3},{from:'subject',to:'citizen',weight:2},{from:'moh',to:'sha',weight:4},{from:'opp',to:'advoc',weight:3},{from:'reddit',to:'subject',weight:2},{from:'advoc',to:'sha',weight:2}]}),
     baraza:{week_ending:'2026-07-12',leaders:[{name:'William Ruto',mentions:612,sentiment:-0.12},{name:'Rigathi Gachagua',mentions:388,sentiment:0.05},{name:'Raila Odinga',mentions:274,sentiment:0.18},{name:'John Mbadi',mentions:141,sentiment:-0.04},{name:'Edwin Sifuna',mentions:120,sentiment:0.09}]},
     sc:{total_items:0,working_sources:['google_news','reddit','youtube','wikipedia'],sources:{google_news:{enabled:true,items:41,sample:'Ruto defends SHA rollout…'},reddit:{enabled:true,items:18,sample:'r/Kenya thread on SHA'},youtube:{enabled:true,items:12,sample:'Citizen TV address'},wikipedia:{enabled:true,items:9,sample:'William Ruto — background'},gdelt:{enabled:true,items:6},scweet_x:{enabled:false,error:'disabled'}}},
-    metrics:{reports_last_7d:14,mentions_total:5230,llm_spend_usd:2.71,ingestion_runs:22}
+    metrics:{reports:{total:31,last_7d:14},corpus:{total_mentions:5230,last_24h:212},credits:{anthropic_7d:{usd:2.71},socialcrawl_balance:0},pipeline:{recent:[1,2,3,4,5]},system:{db_ok:true,scheduler_enabled:true,refresh_hours:6,uptime_seconds:5400,prewarm_names:['William Ruto','John Mbadi']}}
   };
 
   renderTabs();go('search');ping();
 })();
 </script>
+
 </body>
 </html>
