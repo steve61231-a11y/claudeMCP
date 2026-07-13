@@ -69,13 +69,45 @@ def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) 
     return out
 
 
+def _google_news_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
+    """Google News RSS requiring BOTH terms — the strongest free source for the
+    Kenyan-politics intersection (local outlets GDELT misses). Reuses the
+    connector but with a fixed both-terms query via aliases."""
+    from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
+
+    conn = GoogleNewsRssConnector()
+    # The connector ORs name+aliases; to require BOTH terms we pass a single
+    # combined phrase as the "name" and no aliases.
+    return conn.fetch(f'{principal}" "{issue}', [], ws, we)
+
+
+def _reddit_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
+    from engine.ingestion.reddit_connector import RedditConnector
+
+    return RedditConnector().fetch(f"{principal} {issue}", [], ws, we)
+
+
 def acquire_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
     """Gather mentions that connect the principal and the issue. Best-effort
-    across the free sources; enriches article bodies so the digest reads full
-    journalism at the intersection."""
+    across ALL free sources (GDELT + Google News RSS + Reddit); enriches article
+    bodies so the digest reads full journalism at the intersection."""
     mentions: list[IngestedMention] = []
+    seen: set[str] = set()
+
+    def _add(items):
+        for m in items or []:
+            url = (m.get("raw_payload") or {}).get("url") or m.get("text", "")[:80]
+            if url and url not in seen:
+                seen.add(url)
+                mentions.append(m)
+
     if settings.enable_gdelt:
-        mentions.extend(_gdelt_intersection(principal, issue, ws, we))
+        _add(_gdelt_intersection(principal, issue, ws, we))
+    if settings.enable_google_news:
+        _add(_google_news_intersection(principal, issue, ws, we))
+    if settings.enable_reddit:
+        _add(_reddit_intersection(principal, issue, ws, we))
+
     if mentions:
         from engine.ingestion.article_text import enrich_with_article_text
 

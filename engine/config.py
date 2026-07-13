@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     # Wikipedia (keyless MediaWiki REST API): authoritative background on the
     # subject + linked entities. ON by default: free, no key, no extra packages.
     enable_wikipedia: bool = True
+    # Genuinely-free, keyless, Kenya-relevant sources — the real fix for data
+    # starvation when SocialCrawl credits are exhausted. All ON by default: no
+    # key, no login, no credits; only need open egress.
+    enable_google_news: bool = True   # Google News RSS (Nation/Standard/Citizen/Star)
+    enable_reddit: bool = True        # Reddit public JSON search (+ r/Kenya)
+    enable_youtube: bool = True       # YouTube via yt-dlp (search + top comments)
     # Per-million-token USD prices for the configured Anthropic model, used to
     # turn real token counts into a real spend figure on the admin dashboard.
     anthropic_price_in: float = 3.0

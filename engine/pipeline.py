@@ -76,7 +76,19 @@ def run_analysis(
     people_counts: dict[str, dict] = {}
     unchecked = db.query(RawMention).filter(*window_filter, RawMention.link_checked == 0).all()
 
+    # Sources that fetch BY the subject's name are on-topic by construction —
+    # a Google News / GDELT / Reddit / YouTube / Wikipedia / X result returned
+    # for a "John Mbadi" query is about John Mbadi. Auto-linking them (instead of
+    # gambling on an LLM yes/no that can wrongly drop the FEW items we get when
+    # data is thin) is the difference between a real report and "no data yet".
+    _TARGETED_SOURCES = {"google_news_rss", "gdelt", "reddit", "youtube", "wikipedia", "scweet", "twscrape"}
+
     def link_and_extract(mention: RawMention) -> tuple[dict | None, list[dict]]:
+        src = (mention.raw_payload or {}).get("source")
+        if src in _TARGETED_SOURCES and mention.source_type != "comment":
+            link = {"matched": True, "match_type": f"targeted_{src}", "confidence": 0.75}
+            return link, entities.extract_people(mention.text, politician.name)
+
         link = entities.detect_entity_link(
             mention.text, politician.name, politician.aliases or [], politician.keywords or []
         )

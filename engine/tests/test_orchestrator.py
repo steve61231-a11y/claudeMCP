@@ -16,9 +16,9 @@ def _no_keyless_network(monkeypatch):
     # These tests assert SocialCrawl/mock connector planning. GDELT/Wayback are
     # default-on in production but would add tasks and make real network calls,
     # so keep this module hermetic by turning them off.
-    monkeypatch.setattr(settings, "enable_gdelt", False, raising=False)
-    monkeypatch.setattr(settings, "enable_wayback", False, raising=False)
-    monkeypatch.setattr(settings, "enable_wikipedia", False, raising=False)
+    for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
+                 "enable_google_news", "enable_reddit", "enable_youtube"):
+        monkeypatch.setattr(settings, flag, False, raising=False)
 
 
 def make_politician(db):
@@ -81,6 +81,31 @@ def test_plan_run_with_socialcrawl_fans_out_queries_and_endpoints(db_session, mo
     tiktok_search = [t for t in tasks if t.endpoint == "/v1/tiktok/search"]
     assert len(tiktok_search) >= 2
     assert run.credit_budget == 500
+
+
+def test_run_is_partial_not_failed_when_some_sources_fail(db_session, monkeypatch):
+    """The data-starvation fix: an out-of-credit/erroring source must NOT flip the
+    whole run to 'failed' when another source stored data. Status becomes
+    'partial' (usable), not 'failed' (red / triggers empty-report fallback)."""
+    monkeypatch.setattr(settings, "socialcrawl_api_key", "test-key")
+    monkeypatch.setattr(settings, "newsapi_key", "")
+    politician = make_politician(db_session)
+    run = orchestrator.plan_run(db_session, politician, *WINDOW)
+
+    # One task stores a mention; every other task raises (credits exhausted).
+    def one_good_search(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None):
+        if path.endswith("/tiktok/search"):
+            return [fake_mention("Mbadi post", platform="tiktok", post_id=f"{query}-1")], False
+        raise RuntimeError("out of credits")
+
+    monkeypatch.setattr(SocialCrawlConnector, "search_page", one_good_search)
+    monkeypatch.setattr(SocialCrawlConnector, "comments_page", lambda self, *a, **k: ([], False))
+    monkeypatch.setattr(SocialCrawlConnector, "_fetch_brand_mentions", lambda self, *a: (_ for _ in ()).throw(RuntimeError("out of credits")))
+    monkeypatch.setattr(SocialCrawlConnector, "fetch_profile_activity", lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("out of credits")))
+
+    run = orchestrator.execute_run(db_session, run.id, max_workers=2)
+    assert run.status == "partial"
+    assert db_session.query(RawMention).count() > 0
 
 
 def test_execute_run_paginates_and_stores_with_provenance(db_session, monkeypatch):

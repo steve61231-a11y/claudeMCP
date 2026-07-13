@@ -128,6 +128,21 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="wikipedia", platform="wikipedia", endpoint="rest", query=politician.name)
         )
 
+    if settings.enable_google_news:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="google_news", platform="news", endpoint="rss", query=politician.name)
+        )
+
+    if settings.enable_reddit:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="reddit", platform="reddit", endpoint="search", query=politician.name)
+        )
+
+    if settings.enable_youtube:
+        tasks.append(
+            IngestionTask(run_id=run.id, connector="youtube", platform="youtube", endpoint="search", query=politician.name)
+        )
+
     slug = politician.name.lower().replace(" ", "_")
     if (CURATED_DIR / f"{slug}.json").exists():
         tasks.append(
@@ -169,9 +184,19 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     db.expire_all()
     run = db.get(IngestionRun, run_id)
     statuses = [t.status for t in db.query(IngestionTask).filter_by(run_id=run_id).all()]
-    run.status = "completed" if all(s in ("done", "skipped_budget") for s in statuses) else "failed"
-    run.finished_at = datetime.utcnow()
     stats = _run_stats(db, run)
+    # A run is only a real FAILURE when NOTHING worked. If any task succeeded, or
+    # any mentions were stored (e.g. the free GDELT/RSS/Wikipedia sources worked
+    # while out-of-credit SocialCrawl tasks errored), the run is usable:
+    #   - "completed" when every task is done/skipped,
+    #   - "partial"   when some sources failed but we still got data,
+    #   - "failed"    only when every task failed and nothing was stored.
+    # This stops out-of-credit paid sources from flipping the whole run red and
+    # cascading into "empty report / stale Mission Control".
+    all_ok = all(s in ("done", "skipped_budget") for s in statuses)
+    got_data = stats.get("mentions_total", 0) > 0 or any(s == "done" for s in statuses)
+    run.status = "completed" if all_ok else ("partial" if got_data else "failed")
+    run.finished_at = datetime.utcnow()
     if settings.socialcrawl_api_key:
         from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
 
@@ -423,6 +448,18 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         from engine.ingestion.wikipedia_connector import WikipediaConnector
 
         connector = WikipediaConnector()
+    elif task.connector == "google_news":
+        from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
+
+        connector = GoogleNewsRssConnector()
+    elif task.connector == "reddit":
+        from engine.ingestion.reddit_connector import RedditConnector
+
+        connector = RedditConnector()
+    elif task.connector == "youtube":
+        from engine.ingestion.youtube_connector import YouTubeConnector
+
+        connector = YouTubeConnector()
     else:
         from engine.ingestion.mock_source import MockIngestionConnector
 
@@ -430,7 +467,7 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
     mentions = connector.fetch(politician.name, politician.aliases or [], run.window_start, run.window_end)
     # Turn headline-only article mentions into full journalism bodies before
     # they're stored, so the corpus (and the LLM digest) reads whole articles.
-    if task.connector in ("gdelt", "wayback", "curated"):
+    if task.connector in ("gdelt", "wayback", "curated", "google_news"):
         from engine.ingestion.article_text import enrich_with_article_text
 
         enrich_with_article_text(mentions)

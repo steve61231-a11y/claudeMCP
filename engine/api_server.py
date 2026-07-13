@@ -1092,6 +1092,65 @@ def admin_timeseries(metric: str = "mentions", days: int = 30, x_api_key: str | 
         db.close()
 
 
+@app.get("/api/admin/source-check")
+def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default=None)):
+    """Live per-source probe: runs EVERY connector against a sample query RIGHT
+    NOW and returns how many items each returned (or the error). This is the
+    single URL that shows production reality — which free sources actually
+    deliver data on this deploy vs. which are down/credit-exhausted/mis-egressed.
+    Never raises; each source is isolated."""
+    _require_api_key(x_api_key)
+    from datetime import datetime, timedelta
+
+    we = datetime.utcnow()
+    ws = we - timedelta(days=365)
+    aliases = [q.strip().split()[-1]] if q.strip() else []
+
+    def _probe(build):
+        try:
+            items = build().fetch(q, aliases, ws, we)
+            sample = items[0].get("text", "")[:120] if items else None
+            return {"items": len(items), "error": None, "sample": sample}
+        except Exception as exc:  # noqa: BLE001
+            return {"items": 0, "error": f"{type(exc).__name__}: {exc}"[:200], "sample": None}
+
+    from engine.ingestion.gdelt_connector import GdeltConnector
+    from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
+    from engine.ingestion.reddit_connector import RedditConnector
+    from engine.ingestion.wikipedia_connector import WikipediaConnector
+    from engine.ingestion.youtube_connector import YouTubeConnector
+
+    probes = {
+        "gdelt": (GdeltConnector, settings.enable_gdelt),
+        "google_news": (GoogleNewsRssConnector, settings.enable_google_news),
+        "reddit": (RedditConnector, settings.enable_reddit),
+        "youtube": (YouTubeConnector, settings.enable_youtube),
+        "wikipedia": (WikipediaConnector, settings.enable_wikipedia),
+    }
+    if settings.enable_scweet:
+        from engine.ingestion.scweet_connector import ScweetConnector
+
+        probes["scweet_x"] = (ScweetConnector, True)
+    if settings.enable_twscrape:
+        from engine.ingestion.twscrape_connector import TwscrapeConnector
+
+        probes["twscrape_x"] = (TwscrapeConnector, True)
+
+    results = {}
+    for name, (cls, enabled) in probes.items():
+        results[name] = {"enabled": enabled, **(_probe(cls) if enabled else {"items": 0, "error": "disabled", "sample": None})}
+
+    total = sum(r["items"] for r in results.values())
+    return {
+        "ok": True,
+        "query": q,
+        "checked_at": str(we),
+        "total_items": total,
+        "working_sources": [n for n, r in results.items() if r["items"] > 0],
+        "sources": results,
+    }
+
+
 @app.get("/api/health")
 def health():
     """Liveness + data-supply state: the operator's one-glance view of
