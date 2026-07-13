@@ -1,6 +1,7 @@
 import re
 
 from engine import llm
+from engine.config import settings
 
 _nlp = None
 
@@ -10,6 +11,13 @@ def get_nlp():
     if _nlp is None:
         import spacy
 
+        # On a memory-constrained instance, skip the full NER model and use a
+        # tiny blank pipeline. extract_people already handles a blank model (no
+        # "ner" pipe) by falling back to a capitalized-name heuristic + the LLM,
+        # so people extraction still works with a much smaller footprint.
+        if settings.low_memory:
+            _nlp = spacy.blank("en")
+            return _nlp
         try:
             _nlp = spacy.load("en_core_web_sm")
         except OSError:
