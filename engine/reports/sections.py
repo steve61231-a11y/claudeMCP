@@ -209,7 +209,10 @@ def enrich_report_payload(
         except Exception:
             return key, fallback
 
-    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+    from engine.config import settings
+
+    _cap = 3 if settings.low_memory else 8
+    with ThreadPoolExecutor(max_workers=min(_cap, len(jobs))) as pool:
         for key, value in pool.map(run, jobs):
             payload[key] = value
 

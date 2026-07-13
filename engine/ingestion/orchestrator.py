@@ -164,6 +164,8 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     """Executes all pending tasks for a run in parallel. Each worker uses its
     own session; pages are committed as they land, so a crash loses at most
     one in-flight page and a re-run resumes from the stored cursors."""
+    if settings.low_memory:
+        max_workers = min(max_workers, 3)  # fewer concurrent scrapers on tiny instances
     session_factory = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)
 
     run = db.get(IngestionRun, run_id)

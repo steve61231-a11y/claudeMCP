@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     # fits free hosting. Set USE_LOCAL_ML=true on a box with >=2GB RAM for the
     # faster/cheaper local models.
     use_local_ml: bool = False
+    # Low-memory mode for tiny (512MB) free instances: caps concurrency, skips
+    # the heaviest steps (YouTube comment extraction) and bounds how many
+    # mentions get per-item LLM work, so a report run can't OOM-kill the worker
+    # (the cause of intermittent 502s on free hosting). Turn OFF on a >=2GB box
+    # for fuller/faster runs.
+    low_memory: bool = True
+    low_memory_max_llm_mentions: int = 140  # cap per-mention LLM work per report
     # Recurring background ingestion for every tracked politician, so mention
     # history accumulates between report requests instead of each report only
     # seeing what one fetch returns. 0 disables (default: off, since each

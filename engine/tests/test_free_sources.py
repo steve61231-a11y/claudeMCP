@@ -97,6 +97,7 @@ class FakeYDL:
 
 
 def test_youtube_maps_videos_and_comments(monkeypatch):
+    monkeypatch.setattr(settings, "low_memory", False, raising=False)  # enable comment fetch
     search_info = {"entries": [
         {"id": "v1", "title": "Mbadi interview", "description": "on the budget",
          "channel": "NTV Kenya", "view_count": 10000, "upload_date": "20260610"},

@@ -21,6 +21,16 @@ MAX_COMMENTS_PER_VIDEO = 20
 COMMENT_VIDEOS = 5  # only fetch comments for the top-N videos (comments are slow)
 
 
+def _max_videos() -> int:
+    return 6 if settings.low_memory else MAX_VIDEOS
+
+
+def _comment_videos() -> int:
+    # Comment extraction is the slowest/heaviest yt-dlp path; skip it entirely
+    # on a memory-constrained instance (video titles/descriptions still ingest).
+    return 0 if settings.low_memory else COMMENT_VIDEOS
+
+
 class YouTubeConnector(IngestionConnector):
     def __init__(self, ydl_factory=None):
         # Injectable for tests; real one builds a yt_dlp.YoutubeDL.
@@ -35,7 +45,7 @@ class YouTubeConnector(IngestionConnector):
 
         mentions: list[IngestedMention] = []
         seen: set[str] = set()
-        for i, entry in enumerate(entries[:MAX_VIDEOS]):
+        for i, entry in enumerate(entries[:_max_videos()]):
             vid = str(entry.get("id") or "")
             title = (entry.get("title") or "").strip()
             if not vid or not title or vid in seen:
@@ -67,7 +77,7 @@ class YouTubeConnector(IngestionConnector):
                 )
             )
             # Grassroots comments for the top few videos only.
-            if i < COMMENT_VIDEOS:
+            if i < _comment_videos():
                 for c in self._comments(vid)[:MAX_COMMENTS_PER_VIDEO]:
                     ctext = (c.get("text") or "").strip()
                     if not ctext:
@@ -98,7 +108,7 @@ class YouTubeConnector(IngestionConnector):
             if ydl is None:
                 return []
             with ydl as y:
-                info = y.extract_info(f"ytsearch{MAX_VIDEOS}:{query} Kenya", download=False)
+                info = y.extract_info(f"ytsearch{_max_videos()}:{query} Kenya", download=False)
             return info.get("entries", []) if info else []
         except Exception:
             return []

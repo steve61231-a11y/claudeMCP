@@ -28,6 +28,12 @@ from engine.reports.sections import enrich_report_payload
 _PER_MENTION_WORKERS = 10
 
 
+def _per_mention_workers() -> int:
+    """Fewer threads on a memory-constrained free instance so concurrent work
+    can't exhaust RAM and get the worker OOM-killed (intermittent 502s)."""
+    return 3 if settings.low_memory else _PER_MENTION_WORKERS
+
+
 def run_pipeline(
     db: Session,
     politician: Politician,
@@ -103,7 +109,7 @@ def run_analysis(
             return None, []
         return link, entities.extract_people(mention.text, politician.name)
 
-    with ThreadPoolExecutor(max_workers=_PER_MENTION_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
         link_results = list(pool.map(link_and_extract, unchecked))
 
     for mention, (link, people) in zip(unchecked, link_results):
@@ -155,7 +161,15 @@ def run_analysis(
         .all()
     }
     needing_sentiment = [m for m in linked_mentions if m.id not in have_sentiment]
-    with ThreadPoolExecutor(max_workers=_PER_MENTION_WORKERS) as pool:
+    if settings.low_memory and len(needing_sentiment) > settings.low_memory_max_llm_mentions:
+        # On a tiny instance, scoring hundreds of mentions with the LLM is what
+        # runs the worker out of time/RAM. Score the highest-engagement ones
+        # (the mentions that actually move sentiment) and leave the long tail.
+        def _eng(m):
+            e = m.engagement_json or {}
+            return sum(int(e.get(k, 0) or 0) for k in ("likes", "shares", "comments", "views"))
+        needing_sentiment = sorted(needing_sentiment, key=_eng, reverse=True)[: settings.low_memory_max_llm_mentions]
+    with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
         sentiment_results = list(pool.map(lambda m: sentiment.analyze_sentiment(m.text), needing_sentiment))
     for mention, sentiment_result in zip(needing_sentiment, sentiment_results):
         db.add(
