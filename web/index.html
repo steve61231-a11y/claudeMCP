@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b12">
+<title>Pulse Intelligence</title>
+<meta name="description" content="Live public-signal intelligence — news, Reddit, YouTube, Wikipedia and X for any person, politician, organization or business.">
+<style>html,body{margin:0;background:#070b12}</style>
+</head>
+<body>
+<style>
+  :root{
+    --bg:#070b12; --bg2:#0a1220; --panel:rgba(255,255,255,.035); --panel2:rgba(255,255,255,.06);
+    --line:rgba(125,211,252,.14); --line2:rgba(255,255,255,.08);
+    --ink:#dbe7f2; --mut:#7f93a8; --mut2:#586a7d;
+    --sky:#38bdf8; --sky2:#7dd3fc; --glow:rgba(56,189,248,.35);
+    --pos:#4ade80; --neu:#94a3b8; --neg:#fb7185; --amber:#fbbf24;
+    --r:16px; --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  #pulse{font-family:var(--sans);color:var(--ink);line-height:1.5;
+    background:radial-gradient(1200px 700px at 15% -10%,#0d2033 0%,transparent 55%),
+               radial-gradient(1000px 600px at 100% 0%,#0a1b2e 0%,transparent 50%),
+               linear-gradient(180deg,var(--bg) 0%,#05080e 100%);
+    min-height:100vh;-webkit-font-smoothing:antialiased}
+  #pulse .wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+  #pulse a{color:var(--sky2);text-decoration:none}
+  #pulse button{font-family:inherit;cursor:pointer}
+  #pulse .tnum{font-variant-numeric:tabular-nums}
+
+  /* nav */
+  #pulse .nav{position:sticky;top:0;z-index:30;backdrop-filter:blur(14px);
+    background:linear-gradient(180deg,rgba(7,11,18,.92),rgba(7,11,18,.62));border-bottom:1px solid var(--line2)}
+  #pulse .nav .wrap{display:flex;align-items:center;gap:6px;height:60px}
+  #pulse .brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:19px;letter-spacing:-.02em;margin-right:14px}
+  #pulse .dot{width:10px;height:10px;border-radius:50%;background:var(--sky2);box-shadow:0 0 0 0 var(--glow);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 var(--glow)}70%{box-shadow:0 0 0 9px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  #pulse .tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none}
+  #pulse .tabs::-webkit-scrollbar{display:none}
+  #pulse .tab{padding:8px 13px;border-radius:10px;color:var(--mut);font-size:14px;font-weight:500;
+    background:none;border:none;white-space:nowrap}
+  #pulse .tab:hover{color:var(--ink);background:var(--panel)}
+  #pulse .tab.on{color:#04121d;background:var(--sky2);font-weight:600}
+  #pulse .status{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);
+    padding:6px 11px;border:1px solid var(--line2);border-radius:999px;white-space:nowrap}
+  #pulse .status .sd{width:7px;height:7px;border-radius:50%;background:var(--mut2)}
+  #pulse .status.live .sd{background:var(--pos);box-shadow:0 0 8px var(--pos)}
+  #pulse .status.demo .sd{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+
+  /* generic */
+  #pulse main{padding:28px 0 90px}
+  #pulse .eyebrow{text-transform:uppercase;letter-spacing:.18em;font-size:11px;color:var(--sky);font-weight:700}
+  #pulse h1{font-size:34px;font-weight:800;letter-spacing:-.03em;margin:6px 0 4px;text-wrap:balance}
+  #pulse h2{font-size:21px;font-weight:700;letter-spacing:-.02em;margin:0}
+  #pulse .sub{color:var(--mut);font-size:15px;max-width:60ch}
+  #pulse .card{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:20px;
+    backdrop-filter:blur(8px)}
+  #pulse .card.glow{border-color:var(--line);box-shadow:0 0 0 1px rgba(56,189,248,.05),0 18px 50px -30px var(--glow)}
+  #pulse .grid{display:grid;gap:14px}
+  #pulse .muted{color:var(--mut)}
+  #pulse .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  #pulse label.fl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin:0 0 7px}
+  #pulse input,#pulse select{width:100%;background:rgba(3,8,14,.6);border:1px solid var(--line2);color:var(--ink);
+    padding:13px 14px;border-radius:12px;font-size:15px;font-family:inherit;outline:none}
+  #pulse input:focus,#pulse select:focus{border-color:var(--sky);box-shadow:0 0 0 3px rgba(56,189,248,.12)}
+  #pulse .btn{background:linear-gradient(180deg,var(--sky2),var(--sky));color:#04121d;font-weight:700;font-size:15px;
+    border:none;padding:13px 22px;border-radius:12px;transition:transform .08s,filter .15s}
+  #pulse .btn:hover{filter:brightness(1.08)}
+  #pulse .btn:active{transform:translateY(1px)}
+  #pulse .btn:disabled{opacity:.5;cursor:default}
+  #pulse .btn.ghost{background:none;border:1px solid var(--line);color:var(--sky2)}
+  #pulse .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;
+    border:1px solid var(--line2);color:var(--mut)}
+  #pulse .pill.pos{color:var(--pos);border-color:rgba(74,222,128,.3);background:rgba(74,222,128,.08)}
+  #pulse .pill.neg{color:var(--neg);border-color:rgba(251,113,133,.3);background:rgba(251,113,133,.08)}
+  #pulse .pill.amber{color:var(--amber);border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.08)}
+  #pulse .pill.sky{color:var(--sky2);border-color:var(--line);background:rgba(56,189,248,.08)}
+  #pulse .chip{font-size:12px;padding:4px 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut)}
+  #pulse .spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--sky2);border-radius:50%;
+    display:inline-block;animation:spin .8s linear infinite;vertical-align:-3px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  #pulse .kpi{font-size:30px;font-weight:800;letter-spacing:-.02em}
+  #pulse .kpi.sm{font-size:22px}
+  #pulse .lbl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
+  #pulse .bar{height:8px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+  #pulse .bar>i{display:block;height:100%;border-radius:99px}
+  #pulse .hero-one{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.35;text-wrap:balance}
+  #pulse .divider{height:1px;background:var(--line2);margin:22px 0}
+  #pulse .empty{text-align:center;padding:46px 20px;color:var(--mut)}
+  #pulse .empty .em{font-size:34px;margin-bottom:10px}
+  #pulse canvas{display:block;width:100%;border-radius:12px;touch-action:none;cursor:grab}
+  #pulse canvas:active{cursor:grabbing}
+  #pulse .mentr{padding:12px 0;border-top:1px solid var(--line2)}
+  #pulse .mentr:first-child{border-top:none}
+  #pulse table{width:100%;border-collapse:collapse;font-size:14px}
+  #pulse th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);padding:9px 10px;border-bottom:1px solid var(--line2)}
+  #pulse td{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+  #pulse .fade{animation:fade .4s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  @media(max-width:640px){#pulse h1{font-size:27px}#pulse .kpi{font-size:24px}}
+</style>
+
+<div id="pulse">
+  <nav class="nav"><div class="wrap">
+    <div class="brand"><span class="dot"></span>Pulse</div>
+    <div class="tabs" id="tabs"></div>
+    <div class="status" id="status"><span class="sd"></span><span id="statusTxt">connecting…</span></div>
+  </div></nav>
+  <main class="wrap"><div id="view"></div></main>
+</div>
+
+<script>
+(function(){
+  const $ = (s,r)=> (r||document).querySelector(s);
+  const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+  const esc = s => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+  const fmt = n => (n==null?'—':Number(n).toLocaleString());
+  const pct = n => (n==null?'—':Math.round(n)+'%');
+
+  const CFG = {
+    base: localStorage.getItem('pulse_base') || 'https://pulse-engine-efnd.onrender.com',
+    key:  localStorage.getItem('pulse_key')  || ''
+  };
+  let LIVE = false;
+
+  async function api(path, opts){
+    opts = opts||{};
+    const h = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
+    if(CFG.key) h['x-api-key']=CFG.key;
+    const ctrl = new AbortController();
+    const to = setTimeout(()=>ctrl.abort(), opts.timeout||90000);
+    try{
+      const r = await fetch(CFG.base.replace(/\/$/,'')+path, {...opts, headers:h, signal:ctrl.signal});
+      clearTimeout(to);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return await r.json();
+    } finally { clearTimeout(to); }
+  }
+  // poll a job endpoint until done
+  async function pollJob(job_id, onTick){
+    for(let i=0;i<120;i++){
+      const j = await api('/api/report/'+job_id);
+      if(j.status==='done') return j;
+      if(onTick) onTick(i);
+      await new Promise(r=>setTimeout(r,2000));
+    }
+    throw new Error('timed out');
+  }
+
+  const TABS=[['search','Search'],['issue','Issue Map'],['network','Network'],['baraza','Baraza'],['mission','Mission Control'],['settings','Settings']];
+  let active='search';
+  function renderTabs(){
+    const t=$('#tabs'); t.innerHTML='';
+    TABS.forEach(([id,label])=>{const b=el('button','tab'+(id===active?' on':''),esc(label));b.onclick=()=>go(id);t.appendChild(b);});
+  }
+  function go(id){active=id;renderTabs();const v=$('#view');v.innerHTML='';v.appendChild(VIEWS[id]());v.firstChild&&v.firstChild.classList.add('fade');}
+
+  function setStatus(state,txt){
+    const s=$('#status');s.className='status '+state;$('#statusTxt').textContent=txt;
+  }
+  async function ping(){
+    try{ await api('/api/health',{timeout:8000}); LIVE=true; setStatus('live','Live · '+hostShort()); }
+    catch(e){ LIVE=false; setStatus('demo','Demo preview — not connected'); }
+  }
+  const hostShort=()=>{try{return new URL(CFG.base).host.replace('www.','');}catch(e){return CFG.base;}};
+
+  /* ---------------- SEARCH / REPORT ---------------- */
+  VIEWS_search: null;
+  function searchView(){
+    const w=el('div','grid');
+    w.appendChild(el('div','',`<div class="eyebrow">Intelligence report</div>
+      <h1>Read anyone's public signal.</h1>
+      <div class="sub">A person, politician, organization, ministry or business. Pulse pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
+    const form=el('div','card glow');
+    form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 190px;gap:12px">
+      <div><label class="fl">Subject</label><input id="q" placeholder="e.g. William Ruto" autocomplete="off"></div>
+      <div><label class="fl">Type</label><select id="qt">
+        <option value="politician">Politician</option><option value="person">Individual</option>
+        <option value="organization">Organization</option><option value="ministry">Ministry</option>
+        <option value="business">Business</option></select></div></div>
+      <div class="row" style="margin-top:14px"><button class="btn" id="grun">Generate report</button>
+      <span class="muted" id="gmsg" style="font-size:14px"></span></div>`;
+    w.appendChild(form);
+    const out=el('div','');w.appendChild(out);
+    const run=async()=>{
+      const name=$('#q',form).value.trim(); if(!name)return;
+      const type=$('#qt',form).value; const btn=$('#grun',form); const msg=$('#gmsg',form);
+      btn.disabled=true; out.innerHTML='';
+      const tick=(m)=>{msg.innerHTML='<span class="spinner"></span> '+m;};
+      try{
+        if(!LIVE) throw new Error('demo');
+        tick('Planning ingestion…');
+        const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type})});
+        tick('Scraping sources & reading every mention…');
+        const done=await pollJob(j.job_id,(i)=>tick('Analysing… ('+(i*2)+'s)'));
+        msg.textContent='';
+        if(done.ok && done.report) renderReport(out,done.report,done);
+        else out.appendChild(errCard(done.error||'Report generation failed.'));
+      }catch(e){
+        msg.textContent='';
+        if(!LIVE){ out.appendChild(noteCard('Demo preview','Showing a sample report. Host this file (or open Settings and point it at your API) to run this live for real.')); renderReport(out,DEMO.report,{live:false}); }
+        else out.appendChild(errCard('Could not reach the engine: '+e.message));
+      } finally{ btn.disabled=false; }
+    };
+    $('#grun',form).onclick=run;
+    $('#q',form).addEventListener('keydown',e=>{if(e.key==='Enter')run();});
+    return w;
+  }
+
+  function renderReport(out,r,meta){
+    out.innerHTML='';
+    const wrap=el('div','grid fade');wrap.style.marginTop='8px';
+    // header
+    const fresh=r.freshness||{}; const live=meta&&meta.live;
+    const head=el('div','card');
+    head.innerHTML=`<div class="row" style="justify-content:space-between">
+      <div><div class="eyebrow">${esc(r.window||'')}</div><h2 style="margin-top:4px">${esc(r.name||'')}</h2></div>
+      <div class="row">
+        ${live?'<span class="pill pos">● Live</span>':'<span class="pill amber">Cached / demo</span>'}
+        ${meta&&meta.stale_fallback?'<span class="pill amber">stale fallback</span>':''}
+      </div></div>
+      <div class="row" style="margin-top:12px;gap:16px">
+        <span class="chip">Updated ${esc((r.generatedAt||'').slice(0,16).replace('T',' '))||'—'}</span>
+        <span class="chip">${fmt(fresh.mentionsLast24h)} new · 24h</span>
+        <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
+      </div>`;
+    wrap.appendChild(head);
+
+    // The One Thing
+    const di=r.deepInsights||{};
+    if(di.the_one_thing){
+      const one=el('div','card glow');
+      one.innerHTML=`<div class="eyebrow">The one thing</div><div class="hero-one" style="margin-top:10px">“${esc(di.the_one_thing)}”</div>`;
+      wrap.appendChild(one);
+    }
+    // exec brief
+    if(r.executiveBrief||r.summary){
+      const b=el('div','card');b.innerHTML=`<div class="lbl">Executive brief</div><p style="margin:10px 0 0;font-size:15.5px">${esc(r.executiveBrief||r.summary)}</p>`;wrap.appendChild(b);
+    }
+    // KPI row
+    const s=r.sentiment||{},v=r.volume||{},cov=r.coverage||{};
+    const kpis=el('div','grid');kpis.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';
+    kpis.appendChild(kpiCard('Mentions',fmt(v.total),(v.platforms||0)+' platforms'));
+    kpis.appendChild(kpiCard('Positive',pct(s.positive),'sky'));
+    kpis.appendChild(kpiCard('Negative',pct(s.negative),'neg'));
+    kpis.appendChild(kpiCard('Analysed',fmt(cov.mentions_analyzed||s.totalAnalyzed),cov.complete?'full coverage':(cov.chunks?cov.chunks+' passes':'')));
+    wrap.appendChild(kpis);
+
+    // sentiment bars
+    if(s.positive!=null){
+      const sc=el('div','card');
+      sc.innerHTML=`<div class="lbl">Sentiment split</div>`+sentBar('Positive',s.positive,'var(--pos)')+sentBar('Neutral',s.neutral,'var(--neu)')+sentBar('Negative',s.negative,'var(--neg)');
+      wrap.appendChild(sc);
+    }
+    // Beneath the surface
+    if((di.insights||[]).length){
+      const ic=el('div','card');ic.innerHTML='<div class="lbl">Beneath the surface</div>';
+      di.insights.forEach(ins=>{
+        const conf=(ins.confidence||'').toLowerCase();
+        ic.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;align-items:flex-start">
+          <b style="font-size:15px;max-width:80%">${esc(ins.headline)}</b>
+          <span class="pill ${conf==='high'?'pos':conf==='low'?'':'sky'}">${esc(ins.confidence||'')}</span></div>
+          <div class="muted" style="font-size:14px;margin-top:5px">${esc(ins.reasoning||'')}</div>
+          ${ins.implication?`<div style="font-size:13px;margin-top:6px;color:var(--sky2)">→ ${esc(ins.implication)}</div>`:''}`));
+      });
+      wrap.appendChild(ic);
+    }
+    // narratives
+    if((r.narratives||[]).length){
+      const nc=el('div','card');nc.innerHTML='<div class="lbl">Narratives</div>';
+      r.narratives.slice(0,6).forEach(n=>{
+        nc.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between"><b>${esc(n.label)}</b>
+          <span class="chip">${fmt(n.mentions)} mentions</span></div>
+          <div class="muted" style="font-size:13.5px;margin-top:4px">${esc(n.description||'')}</div>`));
+      });
+      wrap.appendChild(nc);
+    }
+    // top mentions
+    const tm=(r.volume&&r.volume.topMentions)||r.topComments||[];
+    if(tm.length){
+      const mc=el('div','card');mc.innerHTML='<div class="lbl">Representative mentions</div>';
+      tm.slice(0,6).forEach(m=>{
+        mc.appendChild(el('div','mentr',`<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(m.platform||'')}</span>
+          <span class="muted">@${esc(m.author||m.handle||'')}</span></div>
+          <div style="font-size:14px;margin-top:6px">${esc((m.text||'').slice(0,240))}</div>`));
+      });
+      wrap.appendChild(mc);
+    }
+    out.appendChild(wrap);
+  }
+  const kpiCard=(l,val,note)=>{const isColor=['sky','neg','pos'].includes(note);
+    return el('div','card',`<div class="lbl">${esc(l)}</div><div class="kpi tnum" style="margin-top:6px;${note==='neg'?'color:var(--neg)':note==='sky'?'color:var(--sky2)':''}">${val}</div>
+      ${!isColor&&note?`<div class="muted" style="font-size:12px;margin-top:2px">${esc(note)}</div>`:''}`);};
+  const sentBar=(l,v,c)=>`<div style="margin-top:12px"><div class="row" style="justify-content:space-between;font-size:13px"><span>${l}</span><span class="tnum">${pct(v)}</span></div>
+    <div class="bar" style="margin-top:5px"><i style="width:${Math.max(0,Math.min(100,v||0))}%;background:${c}"></i></div></div>`;
+
+  /* ---------------- ISSUE MAP ---------------- */
+  function issueView(){
+    const w=el('div','grid');
+    w.appendChild(el('div','',`<div class="eyebrow">Issue map</div><h1>Map a principal to an issue.</h1>
+      <div class="sub">Put a person and an institution or issue together — "William Ruto" × "SHA", a CEO × "KRA" — and see exactly how they're connected: involvement, the linking narratives, key actors and a timeline.</div>`));
+    const form=el('div','card glow');
+    form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 1fr 120px;gap:12px">
+      <div><label class="fl">Principal</label><input id="pr" placeholder="William Ruto"></div>
+      <div><label class="fl">Issue / institution</label><input id="is" placeholder="SHA"></div>
+      <div><label class="fl">Look-back (days)</label><input id="dy" value="365" inputmode="numeric"></div></div>
+      <div class="row" style="margin-top:14px"><button class="btn" id="mrun">Map it</button><span class="muted" id="mmsg" style="font-size:14px"></span></div>`;
+    w.appendChild(form);const out=el('div','');w.appendChild(out);
+    const run=async()=>{
+      const principal=$('#pr',form).value.trim(),issue=$('#is',form).value.trim();
+      if(!principal||!issue)return;const days=parseInt($('#dy',form).value)||365;
+      const btn=$('#mrun',form),msg=$('#mmsg',form);btn.disabled=true;out.innerHTML='';
+      const tick=m=>msg.innerHTML='<span class="spinner"></span> '+m;
+      try{
+        if(!LIVE)throw new Error('demo');
+        tick('Building intersection corpus…');
+        const j=await api('/api/issue-map',{method:'POST',body:JSON.stringify({principal,issue,days})});
+        const done=await pollJob(j.job_id,i=>tick('Reading the intersection… ('+(i*2)+'s)'));
+        msg.textContent='';
+        if(done.ok&&done.issue_map)renderIssue(out,done.issue_map);
+        else out.appendChild(errCard(done.error||'Issue map failed.'));
+      }catch(e){msg.textContent='';
+        if(!LIVE){out.appendChild(noteCard('Demo preview','Sample intersection. Host this / connect your API to run live.'));renderIssue(out,DEMO.issue);}
+        else out.appendChild(errCard('Engine error: '+e.message));}
+      finally{btn.disabled=false;}
+    };
+    $('#mrun',form).onclick=run;return w;
+  }
+  function renderIssue(out,m){
+    out.innerHTML='';const it=m.intersection||{};const wrap=el('div','grid fade');
+    if(m.thin){wrap.appendChild(el('div','card',`<div class="empty"><div class="em">🧭</div>
+      <b>Limited public material connects these two right now.</b>
+      <div style="margin-top:6px">We didn't find enough coverage to build a defensible intersection. Try a wider look-back or a related institution.</div></div>`));out.appendChild(wrap);return;}
+    wrap.appendChild(el('div','card glow',`<div class="eyebrow">${esc(m.principal)} × ${esc(m.issue)}</div>
+      <div class="hero-one" style="margin-top:10px">${esc(it.verdict||'')}</div>
+      <div class="row" style="margin-top:12px"><span class="chip">Analysed ${fmt((m.coverage||{}).mentions_analyzed)} of ${fmt((m.coverage||{}).mentions_total)}</span></div>`));
+    if(it.involvement)wrap.appendChild(el('div','card',`<div class="lbl">Involvement</div><p style="margin:8px 0 0">${esc(it.involvement)}</p>`));
+    if((it.linking_narratives||[]).length){const c=el('div','card');c.innerHTML='<div class="lbl">Linking narratives</div>';
+      it.linking_narratives.forEach(n=>c.appendChild(el('div','mentr',`<b>${esc(n.narrative||'')}</b><div class="muted" style="font-size:13.5px;margin-top:4px">${esc(n.framing||'')}${n.pushed_by?' · <span style="color:var(--sky2)">'+esc(n.pushed_by)+'</span>':''}</div>`)));wrap.appendChild(c);}
+    if((it.key_actors||[]).length){const c=el('div','card');c.innerHTML='<div class="lbl">Key actors</div><div class="row" style="margin-top:10px">';
+      c.innerHTML+=it.key_actors.map(a=>`<span class="pill sky">${esc(a.name)}${a.relation?' · '+esc(a.relation):''}</span>`).join('');c.innerHTML+='</div>';wrap.appendChild(c);}
+    if((it.timeline||[]).length){const c=el('div','card');c.innerHTML='<div class="lbl">Timeline</div>';
+      it.timeline.forEach(t=>c.appendChild(el('div','mentr',`<div class="row" style="gap:10px"><span class="chip">${esc(t.when||'')}</span><span>${esc(t.event||'')}</span></div>`)));wrap.appendChild(c);}
+    if(it.tension_or_risk)wrap.appendChild(el('div','card',`<div class="lbl" style="color:var(--amber)">Tension / risk</div><p style="margin:8px 0 0">${esc(it.tension_or_risk)}</p>`));
+    out.appendChild(wrap);
+  }
+
+  /* ---------------- NETWORK (pseudo-3D canvas) ---------------- */
+  function networkView(){
+    const w=el('div','grid');
+    w.appendChild(el('div','',`<div class="eyebrow">Relationship network</div><h1>Who moves around them.</h1>
+      <div class="sub">Drag to rotate, scroll to zoom, click a node for detail. Nodes are people and outlets; size is influence; lines are co-mention.</div>`));
+    const bar=el('div','card');bar.innerHTML=`<div class="row"><div style="flex:1;min-width:180px"><label class="fl">Subject</label><input id="nq" placeholder="William Ruto"></div>
+      <button class="btn" id="nrun" style="align-self:flex-end">Load network</button><span class="muted" id="nmsg" style="align-self:flex-end;font-size:14px"></span></div>`;
+    w.appendChild(bar);
+    const stage=el('div','card');stage.style.padding='10px';
+    const cv=el('canvas');cv.height=460;stage.appendChild(cv);
+    const panel=el('div','',`<div class="muted" style="font-size:13px;padding:8px 4px 2px">Click a node to inspect.</div>`);
+    stage.appendChild(panel);w.appendChild(stage);
+    let graph=null,G=NET();
+    const draw=g=>{graph=g;G.set(cv,g,sel=>{
+      if(!sel){panel.innerHTML='<div class="muted" style="font-size:13px;padding:8px 4px 2px">Click a node to inspect.</div>';return;}
+      panel.innerHTML=`<div class="mentr"><div class="row" style="justify-content:space-between"><b>${esc(sel.label)}</b><span class="pill sky">${esc(sel.group||'')}</span></div>
+        ${sel.role?`<div class="muted" style="font-size:13px;margin-top:4px">${esc(sel.role)}${sel.affiliation?' · '+esc(sel.affiliation):''}</div>`:''}
+        ${sel.co_mentions?`<div class="chip" style="margin-top:8px">${sel.co_mentions} co-mentions</div>`:''}</div>`;
+    });};
+    const run=async()=>{const name=$('#nq',bar).value.trim()||'William Ruto';const msg=$('#nmsg',bar);
+      msg.innerHTML='<span class="spinner"></span>';
+      try{ if(!LIVE)throw 0; const g=await api('/api/network?name='+encodeURIComponent(name)); msg.textContent=''; draw(normNet(g)); }
+      catch(e){ msg.textContent=LIVE?'no network yet':''; draw(DEMO.net); }
+    };
+    $('#nrun',bar).onclick=run; setTimeout(()=>{draw(DEMO.net); if(LIVE)run();},30);
+    return w;
+  }
+  function normNet(g){
+    const nodes=(g.nodes||[]).map(n=>({id:n.id,label:n.label||n.id,group:n.group,val:n.value||n.weight||8,role:n.role,affiliation:n.affiliation,co_mentions:n.co_mentions}));
+    const ids=new Set(nodes.map(n=>n.id));
+    const edges=(g.edges||[]).filter(e=>ids.has(e.from)&&ids.has(e.to)).map(e=>({from:e.from,to:e.to,w:e.weight||1}));
+    return {nodes,edges};
+  }
+  // tiny force + pseudo-3D renderer
+  function NET(){
+    let cv,ctx,g,onSel,W,H,rot=0,tilt=.3,zoom=1,drag=null,sel=null,raf;
+    const colors={core:'#7dd3fc',subject:'#7dd3fc',politician:'#fbbf24',person:'#c4b5fd',influencer:'#86efac',ally:'#86efac',rival:'#fb7185',rival2:'#fb7185'};
+    function layout(){const N=g.nodes;N.forEach((n,i)=>{const a=i/N.length*Math.PI*2;const r=n.id==='subject'?0:120+ (i%3)*40;
+      n.x=Math.cos(a)*r;n.y=(Math.random()-.5)*140;n.z=Math.sin(a)*r;n.vx=n.vy=n.vz=0;});}
+    function sim(){for(let s=0;s<70;s++){const N=g.nodes;
+      for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z;let d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;let f=1400/(d*d);a.vx+=dx/d*f;a.vy+=dy/d*f;a.vz+=dz/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;b.vz-=dz/d*f;}
+      g.edges.forEach(e=>{const a=g.nodes.find(n=>n.id===e.from),b=g.nodes.find(n=>n.id===e.to);if(!a||!b)return;let dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;let d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;let f=(d-150)*.01;a.vx+=dx/d*f;a.vy+=dy/d*f;a.vz+=dz/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;b.vz-=dz/d*f;});
+      N.forEach(n=>{if(n.id==='subject'){n.x*=.8;n.z*=.8;}n.x+=n.vx*.05;n.y+=n.vy*.05;n.z+=n.vz*.05;n.vx*=.8;n.vy*=.8;n.vz*=.8;});}}
+    function proj(n){const cs=Math.cos(rot),sn=Math.sin(rot);let x=n.x*cs-n.z*sn,z=n.x*sn+n.z*cs;let y=n.y*Math.cos(tilt)-z*Math.sin(tilt);let zz=n.y*Math.sin(tilt)+z*Math.cos(tilt);
+      const sc=zoom*(320/(320+zz));return{sx:W/2+x*sc,sy:H/2+y*sc,scale:sc,depth:zz};}
+    function render(){ctx.clearRect(0,0,W,H);const pts=g.nodes.map(n=>({n,p:proj(n)})).sort((a,b)=>a.p.depth-b.p.depth);
+      ctx.lineWidth=1;g.edges.forEach(e=>{const a=g.nodes.find(n=>n.id===e.from),b=g.nodes.find(n=>n.id===e.to);if(!a||!b)return;const pa=proj(a),pb=proj(b);ctx.strokeStyle='rgba(125,211,252,'+(.06+.06*Math.min(1,(e.w||1)/4))+')';ctx.beginPath();ctx.moveTo(pa.sx,pa.sy);ctx.lineTo(pb.sx,pb.sy);ctx.stroke();});
+      pts.forEach(({n,p})=>{const rad=Math.max(4,(n.id==='subject'?16:6+Math.sqrt(n.val||6))*p.scale);const col=colors[n.group]||'#9fb4c7';
+        const fog=Math.max(.35,Math.min(1,(p.depth+220)/440));ctx.globalAlpha=fog;
+        if(n===sel){ctx.beginPath();ctx.arc(p.sx,p.sy,rad+6,0,7);ctx.strokeStyle=col;ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;}
+        ctx.beginPath();ctx.arc(p.sx,p.sy,rad,0,7);ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=n===sel?18:8;ctx.fill();ctx.shadowBlur=0;
+        if(p.scale>.55||n.id==='subject'){ctx.globalAlpha=Math.min(1,fog+.2);ctx.fillStyle='#dbe7f2';ctx.font=(n.id==='subject'?'600 13px ':'500 11px ')+'system-ui';ctx.textAlign='center';ctx.fillText((n.label||'').slice(0,18),p.sx,p.sy+rad+13);}
+        n._p=p;n._r=rad;ctx.globalAlpha=1;});}
+    function loop(){render();raf=requestAnimationFrame(loop);}
+    function resize(){W=cv.clientWidth;H=cv.height;cv.width=W*devicePixelRatio;cv.height=H*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);}
+    function set(canvas,graph,cb){cv=canvas;g=graph;onSel=cb;sel=null;ctx=cv.getContext('2d');resize();layout();sim();cancelAnimationFrame(raf);
+      let auto=setInterval(()=>{if(!drag)rot+=0.0025;},16);
+      cv.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,r:rot,t:tilt,moved:0};cv.setPointerCapture(e.pointerId);};
+      cv.onpointermove=e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.moved+=Math.abs(dx)+Math.abs(dy);rot=drag.r+dx*.008;tilt=Math.max(-1.2,Math.min(1.2,drag.t+dy*.006));};
+      cv.onpointerup=e=>{if(drag&&drag.moved<6){const mx=e.offsetX,my=e.offsetY;let best=null,bd=1e9;g.nodes.forEach(n=>{if(!n._p)return;const d=Math.hypot(n._p.sx-mx,n._p.sy-my);if(d<(n._r+8)&&d<bd){bd=d;best=n;}});sel=best;onSel&&onSel(best);}drag=null;};
+      cv.onwheel=e=>{e.preventDefault();zoom=Math.max(.4,Math.min(2.5,zoom*(e.deltaY<0?1.1:.9)));};
+      window.addEventListener('resize',resize);loop();}
+    return {set};
+  }
+
+  /* ---------------- BARAZA ---------------- */
+  function barazaView(){
+    const w=el('div','grid');
+    w.appendChild(el('div','',`<div class="eyebrow">Baraza index</div><h1>What Kenyans said this week.</h1>
+      <div class="sub">A weekly public leaderboard of leaders by volume and sentiment.</div>`));
+    const out=el('div','card',`<div class="empty"><span class="spinner"></span></div>`);w.appendChild(out);
+    (async()=>{
+      let idx;
+      try{ if(!LIVE)throw 0; const r=await api('/api/baraza'); idx=r.index; }
+      catch(e){ idx=DEMO.baraza; }
+      renderBaraza(out,idx,!LIVE);
+    })();
+    return w;
+  }
+  function renderBaraza(out,idx,demo){
+    out.innerHTML='';const rows=(idx&&(idx.leaders||idx.entries||idx.ranking))||[];
+    if(!rows.length){out.innerHTML=`<div class="empty"><div class="em">📊</div><b>No index yet this week.</b><div style="margin-top:6px">Run a few reports and the leaderboard fills in.</div></div>`;return;}
+    out.innerHTML=(demo?'<div class="pill amber" style="margin-bottom:12px">Demo preview</div>':'')+(idx.week||idx.week_ending?`<div class="chip" style="margin-bottom:12px">Week ending ${esc(idx.week||idx.week_ending)}</div>`:'');
+    const t=el('table');t.innerHTML='<thead><tr><th>#</th><th>Leader</th><th>Mentions</th><th>Sentiment</th></tr></thead>';
+    const tb=el('tbody');rows.slice(0,15).forEach((r,i)=>{const s=r.sentiment||r.net_sentiment;const sc=typeof s==='number'?(s>0?'var(--pos)':s<0?'var(--neg)':'var(--neu)'):'var(--mut)';
+      tb.appendChild(el('tr','',`<td class="tnum muted">${i+1}</td><td><b>${esc(r.name||r.leader||r.label)}</b></td>
+        <td class="tnum">${fmt(r.mentions||r.volume||r.count)}</td>
+        <td style="color:${sc}">${typeof s==='number'?(s>0?'+':'')+Math.round(s*100)/100:esc(s||'—')}</td>`));});
+    t.appendChild(tb);out.appendChild(t);
+  }
+
+  /* ---------------- MISSION CONTROL ---------------- */
+  function missionView(){
+    const w=el('div','grid');
+    w.appendChild(el('div','',`<div class="eyebrow">Mission control</div><h1>Is the machine actually running?</h1>
+      <div class="sub">Live source health and system metrics — the honest view of what's flowing right now.</div>`));
+    const src=el('div','card',`<div class="row" style="justify-content:space-between"><div class="lbl">Source health (live probe)</div>
+      <button class="btn ghost" id="sc" style="padding:8px 14px;font-size:13px">Run source check</button></div><div id="scout" style="margin-top:12px"></div>`);
+    w.appendChild(src);
+    const met=el('div','card',`<div class="lbl">System</div><div id="metout" style="margin-top:12px"><span class="spinner"></span></div>`);
+    w.appendChild(met);
+    const runSC=async()=>{const o=$('#scout',src);o.innerHTML='<span class="spinner"></span> probing every source live…';
+      try{ if(!LIVE)throw 0; const r=await api('/api/admin/source-check?q=William%20Ruto',{timeout:120000}); renderSC(o,r,false);}catch(e){renderSC(o,DEMO.sc,true);}};
+    $('#sc',src).onclick=runSC;
+    (async()=>{const o=$('#metout',met);try{if(!LIVE)throw 0;const m=await api('/api/admin/metrics');renderMetrics(o,m);}catch(e){renderMetrics(o,DEMO.metrics,true);}})();
+    setTimeout(runSC,60);
+    return w;
+  }
+  function renderSC(o,r,demo){o.innerHTML=(demo?'<div class="pill amber" style="margin-bottom:10px">Demo preview</div>':`<div class="row" style="margin-bottom:10px"><span class="pill pos">${fmt(r.total_items)} items live</span><span class="chip">${(r.working_sources||[]).length} sources working</span></div>`);
+    const t=el('table');t.innerHTML='<thead><tr><th>Source</th><th>Status</th><th>Items</th><th>Note</th></tr></thead>';const tb=el('tbody');
+    Object.entries(r.sources||{}).forEach(([k,s])=>{const ok=s.items>0;const st=!s.enabled?'<span class="pill amber">off</span>':ok?'<span class="pill pos">ok</span>':'<span class="pill neg">0</span>';
+      tb.appendChild(el('tr','',`<td><b>${esc(k)}</b></td><td>${st}</td><td class="tnum">${fmt(s.items)}</td><td class="muted" style="font-size:12px">${esc((s.error||s.sample||'').toString().slice(0,60))}</td>`));});
+    t.appendChild(tb);o.appendChild(t);}
+  function renderMetrics(o,m,demo){o.innerHTML='';
+    if(demo){o.appendChild(el('div','pill amber','Demo preview'));}
+    const g=el('div','grid');g.style.gridTemplateColumns='repeat(auto-fit,minmax(130px,1fr))';g.style.marginTop='10px';
+    const d=m.metrics||m;const cards=[['Reports (7d)',d.reports_last_7d||d.reports||'—'],['Mentions',d.mentions_total||d.total_mentions||'—'],['LLM spend',d.llm_spend_usd!=null?'$'+d.llm_spend_usd:(d.spend_usd!=null?'$'+d.spend_usd:'—')],['Ingestion runs',d.ingestion_runs||d.runs||'—']];
+    cards.forEach(([l,v])=>g.appendChild(kpiCard(l,typeof v==='string'?v:fmt(v),'')));o.appendChild(g);}
+
+  /* ---------------- SETTINGS ---------------- */
+  function settingsView(){
+    const w=el('div','grid');
+    w.appendChild(el('div','',`<div class="eyebrow">Settings</div><h1>Connect to your engine.</h1>
+      <div class="sub">Point this app at your Pulse backend. Saved on this device only. When these are set and reachable, everything above goes live.</div>`));
+    const c=el('div','card glow');
+    c.innerHTML=`<label class="fl">API base URL</label><input id="sbase" value="${esc(CFG.base)}" placeholder="https://your-engine.onrender.com">
+      <label class="fl" style="margin-top:16px">API key (x-api-key) — leave blank if none</label><input id="skey" value="${esc(CFG.key)}" placeholder="optional">
+      <div class="row" style="margin-top:16px"><button class="btn" id="ssave">Save & connect</button>
+      <button class="btn ghost" id="stest">Test connection</button><span id="sres" style="font-size:14px"></span></div>
+      <div class="divider"></div>
+      <div class="muted" style="font-size:13px">Host this file free on <b>Cloudflare Pages</b>, <b>Netlify</b> or <b>GitHub Pages</b>. Then add that URL to your engine's <span class="chip">ALLOWED_ORIGINS</span> so the browser is allowed to call it.</div>`;
+    w.appendChild(c);
+    $('#ssave',c).onclick=()=>{CFG.base=$('#sbase',c).value.trim();CFG.key=$('#skey',c).value.trim();
+      localStorage.setItem('pulse_base',CFG.base);localStorage.setItem('pulse_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
+    $('#stest',c).onclick=async()=>{const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';const b=$('#sbase',c).value.trim();
+      try{const resp=await fetch(b.replace(/\/$/,'')+'/api/health');r.innerHTML=resp.ok?'<span style="color:var(--pos)">Reachable ✓</span>':'<span style="color:var(--neg)">HTTP '+resp.status+'</span>';}
+      catch(e){r.innerHTML='<span style="color:var(--neg)">Unreachable (CORS or offline)</span>';}};
+    return w;
+  }
+
+  const errCard=m=>el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>${esc(m)}</span></div>`);
+  const noteCard=(t,m)=>el('div','card',`<div class="row" style="gap:10px"><span class="pill amber">${esc(t)}</span><span class="muted" style="font-size:14px">${esc(m)}</span></div>`);
+
+  const VIEWS={search:searchView,issue:issueView,network:networkView,baraza:barazaView,mission:missionView,settings:settingsView};
+
+  /* ---------------- DEMO DATA (preview only) ---------------- */
+  const DEMO={
+    report:{name:'William Ruto',window:'2025-08-01 – 2026-07-13',generatedAt:new Date().toISOString(),
+      freshness:{mentionsLast24h:37,newestMentionAt:new Date().toISOString()},
+      executiveBrief:'Coverage this window is dominated by the health financing transition (SHA) and new taxation measures. Official messaging frames both as reform; grassroots reaction is sharply cost-of-living framed. Sentiment is net-negative but concentrated among a small set of high-reach accounts rather than broad-based.',
+      deepInsights:{the_one_thing:'The loudest opposition is narrow, not wide — a handful of high-follower accounts generate most negative volume, while ordinary mentions are more ambivalent than hostile.',
+        insights:[{headline:'SHA rollout is the true center of gravity, not taxation',reasoning:'SHA appears in 2.3× more mentions than tax and drives the sharpest sentiment swings across news and Reddit alike.',confidence:'high',implication:'Message discipline on SHA moves the needle more than defending the budget.'},
+          {headline:'Amplification is concentrated',reasoning:'~70% of negative reach traces to under a dozen accounts reposting the same framing.',confidence:'medium',implication:'A few targeted rebuttals reach most of the critical audience.'}]},
+      sentiment:{positive:31,neutral:34,negative:35,totalAnalyzed:612},
+      coverage:{mentions_analyzed:612,mentions_total:612,chunks:5,complete:true},
+      volume:{total:612,platforms:5,topMentions:[{platform:'news',author:'nation.africa',text:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'},{platform:'reddit',author:'r/Kenya',text:'The SHA transition has been rough for anyone with a chronic condition — clinics still asking for cash.'},{platform:'youtube',author:'Citizen TV',text:'Ruto: "No Kenyan will be turned away" — full address on health financing.'}]},
+      narratives:[{label:'SHA rollout pain',mentions:214,description:'Facilities allegedly still charging; delays in registration.'},{label:'Taxation & cost of living',mentions:151,description:'New levies framed against household budgets.'},{label:'Reform defense',mentions:98,description:'Official framing of long-term gains.'}]},
+    issue:{principal:'William Ruto',issue:'SHA',thin:false,coverage:{mentions_analyzed:143,mentions_total:143},
+      intersection:{verdict:'Ruto is the chief architect and public face of SHA — his political capital is directly tied to whether the rollout stabilizes.',
+        involvement:'Positioned as the reform\'s owner: personally launched it, repeatedly defends it, and has staked credibility on its success.',
+        linking_narratives:[{narrative:'Universal coverage promise',framing:'health as a right',pushed_by:'State House / MoH'},{narrative:'Botched rollout',framing:'implementation failure hurting the sick',pushed_by:'opposition + patient advocates'}],
+        key_actors:[{name:'Ministry of Health',relation:'implementer'},{name:'SHA authority',relation:'operator'},{name:'Opposition',relation:'critic'}],
+        timeline:[{when:'2024',event:'SHA replaces NHIF'},{when:'Q1 2026',event:'Registration backlog complaints peak'},{when:'Jul 2026',event:'President promises 90-day fixes'}],
+        tension_or_risk:'If facility-level complaints persist, the reform Ruto personally owns becomes his single largest cost-of-living liability.'}},
+    net:normNet({nodes:[{id:'subject',label:'William Ruto',group:'core',value:20},{id:'moh',label:'Ministry of Health',group:'politician',value:12,role:'Implementer'},{id:'sha',label:'SHA Authority',group:'politician',value:10},{id:'opp',label:'Opposition',group:'rival',value:11},{id:'nation',label:'Nation',group:'influencer',value:9,role:'Outlet'},{id:'citizen',label:'Citizen TV',group:'influencer',value:9},{id:'reddit',label:'r/Kenya',group:'person',value:8},{id:'advoc',label:'Patient advocates',group:'rival',value:7}],
+      edges:[{from:'subject',to:'moh',weight:4},{from:'subject',to:'sha',weight:3},{from:'subject',to:'opp',weight:5},{from:'subject',to:'nation',weight:3},{from:'subject',to:'citizen',weight:2},{from:'moh',to:'sha',weight:4},{from:'opp',to:'advoc',weight:3},{from:'reddit',to:'subject',weight:2},{from:'advoc',to:'sha',weight:2}]}),
+    baraza:{week_ending:'2026-07-12',leaders:[{name:'William Ruto',mentions:612,sentiment:-0.12},{name:'Rigathi Gachagua',mentions:388,sentiment:0.05},{name:'Raila Odinga',mentions:274,sentiment:0.18},{name:'John Mbadi',mentions:141,sentiment:-0.04},{name:'Edwin Sifuna',mentions:120,sentiment:0.09}]},
+    sc:{total_items:0,working_sources:['google_news','reddit','youtube','wikipedia'],sources:{google_news:{enabled:true,items:41,sample:'Ruto defends SHA rollout…'},reddit:{enabled:true,items:18,sample:'r/Kenya thread on SHA'},youtube:{enabled:true,items:12,sample:'Citizen TV address'},wikipedia:{enabled:true,items:9,sample:'William Ruto — background'},gdelt:{enabled:true,items:6},scweet_x:{enabled:false,error:'disabled'}}},
+    metrics:{reports_last_7d:14,mentions_total:5230,llm_spend_usd:2.71,ingestion_runs:22}
+  };
+
+  renderTabs();go('search');ping();
+})();
+</script>
+</body>
+</html>
