@@ -1201,4 +1201,13 @@ def health():
         pass
     finally:
         db.close()
-    return {"ok": True, "data_supply": supply}
+    import os
+
+    commit = os.environ.get("RENDER_GIT_COMMIT", "") or os.environ.get("GIT_COMMIT", "")
+    return {
+        "ok": True,
+        "build": commit[:7] or "local",
+        "local_ml": settings.use_local_ml,
+        "uptime_seconds": int(time.time() - _PROCESS_START),
+        "data_supply": supply,
+    }

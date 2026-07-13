@@ -153,7 +153,8 @@
     const s=$('#status');s.className='status '+state;$('#statusTxt').textContent=txt;
   }
   async function ping(){
-    try{ await api('/api/health',{timeout:8000}); LIVE=true; setStatus('live','Live · '+hostShort()); }
+    try{ const h=await api('/api/health',{timeout:8000}); LIVE=true;
+      setStatus('live','Live · '+hostShort()+(h&&h.build?' · build '+h.build:'')); }
     catch(e){ LIVE=false; setStatus('demo','Demo preview — not connected'); }
   }
   const hostShort=()=>{try{return new URL(CFG.base).host.replace('www.','');}catch(e){return CFG.base;}};

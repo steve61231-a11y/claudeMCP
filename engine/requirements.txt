@@ -6,7 +6,10 @@ pydantic==2.9.2
 pydantic-settings==2.5.2
 neo4j==5.24.0
 anthropic==0.111.0
-sentence-transformers==3.1.1
+# NOTE: transformers + sentence-transformers + torch are intentionally NOT
+# installed — they OOM a 512MB instance and the default (USE_LOCAL_ML=false) uses
+# LLM sentiment + TF-IDF narratives instead. To run local ML on a >=2GB box:
+#   pip install "sentence-transformers==3.1.1"
 hdbscan==0.8.38.post1
 scikit-learn==1.5.2
 spacy==3.7.5
