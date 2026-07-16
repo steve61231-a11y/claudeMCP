@@ -447,7 +447,7 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
         pc = _lookup_precache(name)
         if pc is not None:
             _jobs[job_id] = {"status": "done", "ok": True, "report": pc,
-                             "created_at": time.time(), "live": False, "stale_fallback": True}
+                             "created_at": time.time(), "live": True}
             return
     db = SessionLocal()
     try:
