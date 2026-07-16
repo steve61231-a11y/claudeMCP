@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     pulse_api_key: str = ""
     allowed_origins: str = ""
     report_rate_limit_per_hour: int = 20
+    # Demo/degraded-infra mode: serve the pre-generated report immediately for
+    # matched names instead of running the (currently memory-blocked) live
+    # pipeline. Instant, spends zero LLM credits, and shows the full original
+    # report. Turn OFF (default) once the engine has enough RAM to run live.
+    serve_precache_first: bool = False
     # Local ML models (transformers sentiment + sentence-transformers embeddings)
     # pull PyTorch, which OOM-kills a 512MB free instance. OFF by default so the
     # pipeline uses its LLM-sentiment + TF-IDF-narrative fallbacks (no torch) and

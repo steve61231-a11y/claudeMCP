@@ -427,7 +427,28 @@ _PRECACHED_REPORTS: dict[str, dict] = {
 }
 
 
+def _lookup_precache(name: str):
+    """Find a pre-generated report for `name`, matching leniently so the full
+    name works too ("John Mbadi" -> the "mbadi" entry via surname/substring)."""
+    key = name.strip().lower()
+    if key in _PRECACHED_REPORTS:
+        return _PRECACHED_REPORTS[key]
+    tokens = set(key.replace(",", " ").split())
+    for pk, pv in _PRECACHED_REPORTS.items():
+        if pk in tokens or pk in key:
+            return pv
+    return None
+
+
 def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
+    # Demo / degraded-infra mode: serve the full pre-generated report instantly
+    # for matched names (no live pipeline, zero LLM credits). Off by default.
+    if settings.serve_precache_first:
+        pc = _lookup_precache(name)
+        if pc is not None:
+            _jobs[job_id] = {"status": "done", "ok": True, "report": pc,
+                             "created_at": time.time(), "live": False, "stale_fallback": True}
+            return
     db = SessionLocal()
     try:
         politician = _ensure_politician(db, name, subject_type)
@@ -467,7 +488,7 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
         # Fall back to a pre-generated report if we have one for this name, so a
         # live-path failure degrades to a real-looking report instead of an
         # error — but this is a FALLBACK, never a substitute for fresh data.
-        precached = _PRECACHED_REPORTS.get(name.strip().lower())
+        precached = _lookup_precache(name)
         if precached is not None:
             _jobs[job_id] = {
                 "status": "done", "ok": True, "report": precached,

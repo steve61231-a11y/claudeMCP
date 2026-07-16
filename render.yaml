@@ -27,6 +27,12 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
+      # DEMO MODE: serve the full pre-generated report instantly for matched
+      # names (e.g. "Mbadi"/"John Mbadi") — no live pipeline, zero LLM credits,
+      # works despite the 512MB RAM limit. Set to "false" after upgrading RAM to
+      # run genuinely live reports for any subject.
+      - key: SERVE_PRECACHE_FIRST
+        value: "true"
       - key: INGESTION_REFRESH_HOURS
         value: "6"
       - key: SCHEDULED_CREDIT_BUDGET
