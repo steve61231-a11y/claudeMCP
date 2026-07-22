@@ -13,13 +13,13 @@ services:
     dockerContext: .
     healthCheckPath: /api/health
     envVars:
-      # DATABASE_URL now points to a managed serverless Postgres (Neon) set as a
-      # dashboard secret — more reliable + no 90-day expiry than the free Render
-      # PG. IMPORTANT: set this in the Render dashboard BEFORE redeploying, or
-      # startup (alembic upgrade) can't connect. The pulse-postgres block below
-      # is kept as a rollback fallback (unused while DATABASE_URL is set).
+      # Render fallback keeps its own free Postgres so this deploy always works
+      # for the demo. The high-RAM Hugging Face deploy uses Neon instead (set as
+      # a Space secret) — see README.md.
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: pulse-postgres
+          property: connectionString
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: SOCIALCRAWL_API_KEY
