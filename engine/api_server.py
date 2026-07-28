@@ -177,8 +177,23 @@ def _extract_url(raw_payload: dict) -> str | None:
     fields = raw_payload.get("post") if isinstance(raw_payload.get("post"), dict) else raw_payload
     for key in ("url", "page_url", "link", "permalink"):
         value = fields.get(key) or raw_payload.get(key)
-        if value:
+        if isinstance(value, str) and value:
             return value
+        # Some feeds (RSS/Atom/GDELT) nest the link as {"href": ...} or a list
+        # of such dicts. Never return the dict itself — it's unhashable and
+        # blows up set/dedupe logic downstream.
+        if isinstance(value, dict):
+            href = value.get("href") or value.get("url")
+            if isinstance(href, str) and href:
+                return href
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                if isinstance(item, str) and item:
+                    return item
+                if isinstance(item, dict):
+                    href = item.get("href") or item.get("url")
+                    if isinstance(href, str) and href:
+                        return href
     return None
 
 
@@ -458,7 +473,11 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
         # falling back to a pre-generated report for matched names so a live-path
         # failure degrades to a real-looking report instead of a dead end.
         traceback.print_exc()
-        diag = f"{type(exc).__name__}: {exc}".strip()[:400]
+        tb = traceback.format_exc()
+        frames = [ln.strip() for ln in tb.splitlines()
+                  if ln.strip().startswith('File "') and "/engine/" in ln]
+        where = (" @ " + frames[-1].split("/engine/")[-1]) if frames else ""
+        diag = f"{type(exc).__name__}: {exc}{where}".strip()[:500]
         precached = _lookup_precache(name)
         if precached is not None:
             _jobs[job_id] = {"status": "done", "ok": True, "report": precached,
