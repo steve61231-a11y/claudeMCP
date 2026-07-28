@@ -1,5 +1,12 @@
 from datetime import datetime
 
+import pytest
+
+# AgentReach is an OPTIONAL, off-by-default scraping backend (enable_agentreach)
+# that shells out to the external `agent_reach` package. These tests monkeypatch
+# that module, so skip cleanly when it isn't installed instead of hard-failing.
+pytest.importorskip("agent_reach")
+
 from engine.ingestion.agentreach_connector import AgentReachConnector
 
 SEARCH_MD = """

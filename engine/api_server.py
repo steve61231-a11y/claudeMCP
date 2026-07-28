@@ -541,9 +541,10 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int) -> No
         ws = we - timedelta(days=max(1, days))
         payload = build_issue_map(principal, issue, window_start=ws, window_end=we)
         _jobs[job_id] = {"status": "done", "ok": True, "issue_map": payload, "created_at": time.time()}
-    except Exception:  # surface server-side, don't crash the worker or leak internals
+    except Exception as exc:  # surface server-side; this is an API-key-gated operator tool
         traceback.print_exc()
-        _jobs[job_id] = {"status": "done", "ok": False, "error": "issue map failed — see server logs",
+        diag = f"{type(exc).__name__}: {exc}".strip()[:400]
+        _jobs[job_id] = {"status": "done", "ok": False, "error": f"issue map failed: {diag}",
                          "created_at": time.time()}
 
 

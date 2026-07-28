@@ -8,7 +8,7 @@ services:
   - type: web
     name: pulse-engine
     runtime: docker
-    plan: free
+    plan: standard
     dockerfilePath: ./engine/Dockerfile.render
     dockerContext: .
     healthCheckPath: /api/health
@@ -30,12 +30,14 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-      # DEMO MODE: serve the full pre-generated report instantly for matched
-      # names (e.g. "Mbadi"/"John Mbadi") — no live pipeline, zero LLM credits,
-      # works despite the 512MB RAM limit. Set to "false" after upgrading RAM to
-      # run genuinely live reports for any subject.
+      # 2GB Standard plan: run genuinely live reports for any subject. Precache
+      # remains an automatic FALLBACK if a live run errors (see api_server), so
+      # matched names (e.g. "John Mbadi") always still return something.
       - key: SERVE_PRECACHE_FIRST
-        value: "true"
+        value: "false"
+      # Full-power pipeline (2GB): full concurrency, all sources, no per-run caps.
+      - key: LOW_MEMORY
+        value: "false"
       - key: INGESTION_REFRESH_HOURS
         value: "6"
       - key: SCHEDULED_CREDIT_BUDGET
