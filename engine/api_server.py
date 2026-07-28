@@ -449,60 +449,75 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             _jobs[job_id] = {"status": "done", "ok": True, "report": pc,
                              "created_at": time.time(), "live": True}
             return
-    db = SessionLocal()
-    try:
-        politician = _ensure_politician(db, name, subject_type)
-        window_end = datetime.utcnow()
-        window_start = window_end - timedelta(days=210)
-        # Surface progress to the polling frontend: a full first-time run is
-        # minutes long (fan-out scraping, then LLM analysis), and a silent
-        # spinner reads as broken.
-        _jobs[job_id]["stage"] = f"Scanning social platforms and news for “{name}”…"
-        from engine.pipeline import run_analysis, run_ingestion
+    from sqlalchemy.exc import DBAPIError
 
-        ingestion_run = run_ingestion(db, politician, window_start, window_end, credit_budget=300.0)
-        stats = (ingestion_run.stats or {}) if ingestion_run else {}
-        found = stats.get("mentions_total")
-        _jobs[job_id]["stage"] = (
-            f"Analyzing {found} collected mentions (sentiment, narratives, voices, network)…"
-            if found
-            else "Analyzing collected mentions (sentiment, narratives, voices, network)…"
-        )
-        report = run_analysis(db, politician, "live-demo", window_start, window_end, ingestion_run=ingestion_run)
-        _jobs[job_id] = {
-            "status": "done",
-            "ok": True,
-            "report": _build_frontend_payload(politician, report),
-            "created_at": time.time(),
-            "live": True,
-        }
-    except Exception as exc:  # noqa: BLE001 - demo endpoint must never hard-fail the UI
-        # Log the full traceback server-side...
+    from engine.db.session import engine as _db_engine
+
+    def _fail(exc: Exception) -> None:
+        # Surface a compact diagnostic to the operator's own UI (API-key-gated),
+        # falling back to a pre-generated report for matched names so a live-path
+        # failure degrades to a real-looking report instead of a dead end.
         traceback.print_exc()
-        tb = traceback.format_exc()
-        # ...and surface a compact diagnostic to the operator's own UI so the
-        # failure can be debugged without server-log access. This is an
-        # API-key-gated operator tool, not a public endpoint.
-        last = tb.strip().splitlines()[-1] if tb.strip() else ""
         diag = f"{type(exc).__name__}: {exc}".strip()[:400]
-        # Fall back to a pre-generated report if we have one for this name, so a
-        # live-path failure degrades to a real-looking report instead of an
-        # error — but this is a FALLBACK, never a substitute for fresh data.
         precached = _lookup_precache(name)
         if precached is not None:
-            _jobs[job_id] = {
-                "status": "done", "ok": True, "report": precached,
-                "created_at": time.time(), "live": False, "stale_fallback": True,
-                "error_detail": diag,
-            }
+            _jobs[job_id] = {"status": "done", "ok": True, "report": precached,
+                             "created_at": time.time(), "live": False,
+                             "stale_fallback": True, "error_detail": diag}
         else:
+            _jobs[job_id] = {"status": "done", "ok": False,
+                             "error": f"report generation failed: {diag}",
+                             "created_at": time.time()}
+
+    # Serverless Postgres (Neon) can drop the connection when its compute
+    # suspends, so the query fails. The pipeline is incremental (stored mentions
+    # + link_checked/have_sentiment guards), so retrying with a fresh connection
+    # resumes from progress instead of redoing work.
+    for attempt in range(3):
+        db = SessionLocal()
+        try:
+            politician = _ensure_politician(db, name, subject_type)
+            window_end = datetime.utcnow()
+            window_start = window_end - timedelta(days=210)
+            _jobs[job_id]["stage"] = f"Scanning social platforms and news for “{name}”…"
+            from engine.pipeline import run_analysis, run_ingestion
+
+            ingestion_run = run_ingestion(db, politician, window_start, window_end, credit_budget=300.0)
+            stats = (ingestion_run.stats or {}) if ingestion_run else {}
+            found = stats.get("mentions_total")
+            _jobs[job_id]["stage"] = (
+                f"Analyzing {found} collected mentions (sentiment, narratives, voices, network)…"
+                if found
+                else "Analyzing collected mentions (sentiment, narratives, voices, network)…"
+            )
+            report = run_analysis(db, politician, "live-demo", window_start, window_end, ingestion_run=ingestion_run)
             _jobs[job_id] = {
-                "status": "done", "ok": False,
-                "error": f"report generation failed: {diag or last}",
-                "created_at": time.time(),
+                "status": "done", "ok": True,
+                "report": _build_frontend_payload(politician, report),
+                "created_at": time.time(), "live": True,
             }
-    finally:
-        db.close()
+            return
+        except DBAPIError as exc:
+            if getattr(exc, "connection_invalidated", False) and attempt < 2:
+                traceback.print_exc()
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                _db_engine.dispose()  # drop stale pooled connections, force fresh ones
+                _jobs[job_id]["stage"] = "Reconnecting to the database…"
+                time.sleep(3 * (attempt + 1))
+                continue
+            _fail(exc)
+            return
+        except Exception as exc:  # noqa: BLE001 - never hard-fail the UI
+            _fail(exc)
+            return
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 @app.post("/api/report")
