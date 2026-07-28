@@ -28,11 +28,12 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-      # 2GB Standard plan: run genuinely live reports for any subject. Precache
-      # remains an automatic FALLBACK if a live run errors (see api_server), so
-      # matched names (e.g. "John Mbadi") always still return something.
+      # TEMPORARY (Anthropic credits are depleted): serve the full pre-generated
+      # report instantly for matched names (e.g. "John Mbadi") with ZERO LLM
+      # spend, so the working product is demoable while credits are topped up.
+      # Set back to "false" once Anthropic credit is added to run live for any name.
       - key: SERVE_PRECACHE_FIRST
-        value: "false"
+        value: "true"
       # Full-power pipeline (2GB): full concurrency, all sources, no per-run caps.
       - key: LOW_MEMORY
         value: "false"
