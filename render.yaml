@@ -13,13 +13,11 @@ services:
     dockerContext: .
     healthCheckPath: /api/health
     envVars:
-      # Render fallback keeps its own free Postgres so this deploy always works
-      # for the demo. The high-RAM Hugging Face deploy uses Neon instead (set as
-      # a Space secret) — see README.md.
+      # DATABASE_URL is set in the Render dashboard to the managed Neon Postgres
+      # (serverless, no 90-day expiry). The old pulse-postgres block below is kept
+      # only as a rollback safety net and is no longer wired to the app.
       - key: DATABASE_URL
-        fromDatabase:
-          name: pulse-postgres
-          property: connectionString
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: SOCIALCRAWL_API_KEY
