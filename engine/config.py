@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     # for fuller/faster runs.
     low_memory: bool = True
     low_memory_max_llm_mentions: int = 140  # cap per-mention LLM work per report
+    # Full-power (2GB) cap on per-mention LLM work (entity-linking + sentiment)
+    # per run, so a heavily-covered subject still finishes in a few minutes. The
+    # map-reduce digest reads 100% of the corpus regardless; uncapped mentions
+    # are picked up on the next incremental run. Raise for deeper single-run
+    # analysis at the cost of longer report times.
+    max_llm_mentions: int = 300
     # Recurring background ingestion for every tracked politician, so mention
     # history accumulates between report requests instead of each report only
     # seeing what one fetch returns. 0 disables (default: off, since each

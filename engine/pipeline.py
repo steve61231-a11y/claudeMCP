@@ -79,8 +79,19 @@ def run_analysis(
         RawMention.is_spam == 0,
     )
 
+    def _engagement(m: RawMention) -> int:
+        e = m.engagement_json or {}
+        return sum(int(e.get(k, 0) or 0) for k in ("likes", "shares", "comments", "views"))
+
+    _llm_cap = settings.low_memory_max_llm_mentions if settings.low_memory else settings.max_llm_mentions
+
     people_counts: dict[str, dict] = {}
     unchecked = db.query(RawMention).filter(*window_filter, RawMention.link_checked == 0).all()
+    # Entity-linking + people extraction is one LLM call per mention. Bound it so
+    # a president-scale subject finishes in minutes; the highest-engagement
+    # mentions are analysed first and the rest are picked up on the next run.
+    if len(unchecked) > _llm_cap:
+        unchecked = sorted(unchecked, key=_engagement, reverse=True)[:_llm_cap]
 
     # Sources that fetch BY the subject's name are on-topic by construction —
     # a Google News / GDELT / Reddit / YouTube / Wikipedia / X result returned
@@ -163,14 +174,12 @@ def run_analysis(
         .all()
     }
     needing_sentiment = [m for m in linked_mentions if m.id not in have_sentiment]
-    if settings.low_memory and len(needing_sentiment) > settings.low_memory_max_llm_mentions:
-        # On a tiny instance, scoring hundreds of mentions with the LLM is what
-        # runs the worker out of time/RAM. Score the highest-engagement ones
-        # (the mentions that actually move sentiment) and leave the long tail.
-        def _eng(m):
-            e = m.engagement_json or {}
-            return sum(int(e.get(k, 0) or 0) for k in ("likes", "shares", "comments", "views"))
-        needing_sentiment = sorted(needing_sentiment, key=_eng, reverse=True)[: settings.low_memory_max_llm_mentions]
+    # Cap per-mention LLM sentiment so a heavily-covered subject (e.g. a
+    # president) doesn't take 10+ minutes. Score the highest-engagement mentions
+    # (the ones that actually move sentiment); the map-reduce digest still reads
+    # 100% of the corpus, so nothing is missed in the headline analysis.
+    if len(needing_sentiment) > _llm_cap:
+        needing_sentiment = sorted(needing_sentiment, key=_engagement, reverse=True)[:_llm_cap]
     with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
         sentiment_results = list(pool.map(lambda m: sentiment.analyze_sentiment(m.text), needing_sentiment))
     for mention, sentiment_result in zip(needing_sentiment, sentiment_results):
