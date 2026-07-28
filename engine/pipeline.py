@@ -91,6 +91,8 @@ def run_analysis(
 
     def link_and_extract(mention: RawMention) -> tuple[dict | None, list[dict]]:
         src = (mention.raw_payload or {}).get("source")
+        if not isinstance(src, str):
+            src = ""  # some feeds nest `source` as a dict; never hash a dict
         if src in _TARGETED_SOURCES and mention.source_type != "comment":
             link = {"matched": True, "match_type": f"targeted_{src}", "confidence": 0.75}
             return link, entities.extract_people(mention.text, politician.name)
