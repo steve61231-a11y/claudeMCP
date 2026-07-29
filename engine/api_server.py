@@ -90,8 +90,29 @@ def _scheduled_ingestion_loop() -> None:
 def _start_scheduler() -> None:
     if settings.ingestion_refresh_hours > 0:
         threading.Thread(target=_scheduled_ingestion_loop, daemon=True).start()
+    # Security posture warning: outside local-dev, an unset API key means every
+    # data/admin endpoint is open to anyone who finds the URL.
+    if not settings.pulse_api_key and not settings.is_local_dev:
+        print("SECURITY WARNING: PULSE_API_KEY is not set — the API is UNAUTHENTICATED "
+              "and open to the public. Set PULSE_API_KEY to gate report/network/admin endpoints.")
+    if _cors_origins == ["*"] and not settings.is_local_dev:
+        print("SECURITY NOTE: ALLOWED_ORIGINS is unset (CORS = '*'). Set it to your "
+              "site origin(s) to restrict cross-site browser access.")
+
 
 _cors_origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()] or ["*"]
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Baseline hardening headers (safe for the self-hosted inline frontend)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,
