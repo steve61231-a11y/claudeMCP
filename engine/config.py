@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     internal_api_token: str = ""
     newsapi_key: str = ""
     socialcrawl_api_key: str = ""
+    # SocialCrawl is the SOCIAL-MEDIA backbone: whenever credits are available it
+    # runs as the primary source for TikTok/Instagram/LinkedIn/X/YouTube. The
+    # moment the balance drops below this floor, the run switches immediately to
+    # the free social scrapers instead of burning the run on 402s. (News,
+    # archives and web discovery are separate sources and always run alongside.)
+    socialcrawl_min_credits: float = 1.0
     # Premium (10cr) video transcripts fetched per run, for the most-engaged
     # videos already linked to the politician. 0 disables transcripts.
     transcripts_per_run: int = 15

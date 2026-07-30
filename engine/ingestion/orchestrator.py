@@ -28,6 +28,34 @@ COMMENT_TOP_N_POSTS = 25
 DEFAULT_MAX_WORKERS = 8
 
 
+def resolve_social_tier() -> tuple[str, float | None, str]:
+    """Which social-media backbone can we use right now?
+
+    SocialCrawl is the paid backbone for the social platforms (TikTok,
+    Instagram, LinkedIn, X, YouTube) — it runs whenever credits allow. The
+    instant credits are exhausted we fall back to the free scrapers rather than
+    spending the run on requests that will 402.
+
+    Returns (tier, balance, reason) where tier is "managed" or "free". Balance
+    of None means the meta endpoint was unreachable: we fail OPEN (keep using
+    the richest source) because a transient blip must not silently downgrade
+    the run — genuine exhaustion is still caught per-task during execution.
+    """
+    if not settings.socialcrawl_api_key:
+        return "free", None, "no SocialCrawl key configured"
+    try:
+        from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
+
+        balance = SocialCrawlConnector().check_balance()
+    except Exception:  # noqa: BLE001 — never let a probe failure break planning
+        return "managed", None, "balance probe failed (assuming available)"
+    if balance is None:
+        return "managed", None, "balance unknown (assuming available)"
+    if balance < settings.socialcrawl_min_credits:
+        return "free", balance, f"SocialCrawl credits exhausted ({balance:g})"
+    return "managed", balance, f"SocialCrawl active ({balance:g} credits)"
+
+
 def plan_run(
     db: Session,
     politician: Politician,
@@ -49,7 +77,17 @@ def plan_run(
 
     tasks: list[IngestionTask] = []
 
-    if settings.socialcrawl_api_key:
+    # Social-media tier decision. News, archives and web discovery are separate
+    # sources and always run regardless of this — they are additive, not an
+    # either/or with social.
+    social_tier, sc_balance, social_reason = resolve_social_tier()
+    run.stats = {
+        "social_tier": social_tier,
+        "socialcrawl_balance": sc_balance,
+        "social_tier_reason": social_reason,
+    }
+
+    if social_tier == "managed":
         from engine.ingestion import socialcrawl_connector as sc
 
         text_qs = queries.text_variants(politician)
@@ -113,12 +151,23 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="wayback", platform="news", endpoint="cdx", query=politician.name)
         )
 
-    if settings.enable_twscrape:
+    # Free social scrapers: normally opt-in, but AUTOMATICALLY activated the
+    # moment the paid backbone is unavailable, so a credit-exhausted run still
+    # returns social data instead of nothing. Only worth scheduling when X
+    # credentials exist — both backends need a logged-in account, so without
+    # creds they'd just add empty tasks.
+    social_fallback = social_tier == "free" and bool(settings.x_username and settings.x_password)
+    if social_tier == "free":
+        run.stats["social_fallback_active"] = social_fallback
+        if not social_fallback:
+            run.stats["social_fallback_reason"] = "no X credentials configured (set X_USERNAME/X_PASSWORD)"
+
+    if settings.enable_twscrape or social_fallback:
         tasks.append(
             IngestionTask(run_id=run.id, connector="twscrape", platform="twitter", endpoint="search", query=politician.name)
         )
 
-    if settings.enable_scweet:
+    if settings.enable_scweet or social_fallback:
         tasks.append(
             IngestionTask(run_id=run.id, connector="scweet", platform="x", endpoint="search", query=politician.name)
         )
@@ -186,7 +235,9 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     db.expire_all()
     run = db.get(IngestionRun, run_id)
     statuses = [t.status for t in db.query(IngestionTask).filter_by(run_id=run_id).all()]
-    stats = _run_stats(db, run)
+    # Preserve the tier decision recorded at plan time (which social backbone
+    # served this run, and why) — it explains the coverage in source-check.
+    stats = {**(run.stats or {}), **_run_stats(db, run)}
     # A run is only a real FAILURE when NOTHING worked. If any task succeeded, or
     # any mentions were stored (e.g. the free GDELT/RSS/Wikipedia sources worked
     # while out-of-credit SocialCrawl tasks errored), the run is usable:

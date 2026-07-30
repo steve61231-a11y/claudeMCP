@@ -1233,12 +1233,18 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
         results[name] = {"enabled": enabled, **(_probe(cls) if enabled else {"items": 0, "error": "disabled", "sample": None})}
 
     total = sum(r["items"] for r in results.values())
+    # Which social backbone would serve a run right now, and why. Makes the
+    # paid->free failover visible instead of something you infer from thin data.
+    from engine.ingestion.orchestrator import resolve_social_tier
+
+    tier, balance, reason = resolve_social_tier()
     return {
         "ok": True,
         "query": q,
         "checked_at": str(we),
         "total_items": total,
         "working_sources": [n for n, r in results.items() if r["items"] > 0],
+        "social_tier": {"tier": tier, "socialcrawl_balance": balance, "reason": reason},
         "sources": results,
     }
 
