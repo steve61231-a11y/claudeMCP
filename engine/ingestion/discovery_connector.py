@@ -1,14 +1,17 @@
 """Web discovery via a self-hosted SearXNG metasearch instance.
 
 Fixed connectors answer "what is being said now" on the platforms we wired up.
-Discovery answers the harder due-diligence question — "what exists about this
-subject anywhere on the web, including material nobody links to any more."
+Discovery answers the harder question — "what exists about this subject
+anywhere, across every kind of source and every period" — because the detail
+that reshapes a conclusion can sit anywhere, and comprehensiveness is the whole
+point of due diligence.
 
 SearXNG fans a single query across 200+ engines (Google, Bing, Brave, DDG,
-news verticals, archives) and returns JSON. We expand each subject into
-investigative and era-scoped queries (see `queries.discovery_variants`), collect
-the union of results, then fetch each URL's full body text so an obscure fact
-buried mid-article is stored verbatim and becomes retrievable.
+news verticals, archives) and returns JSON. We expand each subject into queries
+covering every dimension of its public record (see
+`queries.discovery_variants`), collect the union of results, then fetch each
+URL's full body text — never just the snippet — so nothing is summarised away
+before analysis and any passage remains retrievable.
 
 Contract, same as every other connector: bounded, best-effort, never raises.
 No SearXNG instance configured (or unreachable) simply means no discovery.
@@ -22,6 +25,9 @@ from engine.config import settings
 from engine.ingestion import http
 
 _FETCH_WORKERS = 6
+# Metasearch calls are IO-bound and the instance is ours, but stay polite so
+# SearXNG's own upstream engines don't rate-limit it.
+_SEARCH_WORKERS = 5
 
 # Aggregators, social shells and search-engine chrome carry no evidentiary text.
 _SKIP_DOMAINS = {
@@ -88,8 +94,14 @@ class DiscoveryConnector:
         candidates: list[dict] = []
         cap = settings.discovery_max_results_per_query
 
-        for query in queries:
-            for result in self._search(query)[:cap]:
+        # Dozens of probe queries per subject: run them concurrently or discovery
+        # alone would dominate a run. Results are zipped back in submission order
+        # so the dedupe below stays deterministic.
+        with ThreadPoolExecutor(max_workers=_SEARCH_WORKERS) as pool:
+            per_query = list(pool.map(self._search, queries))
+
+        for query, results in zip(queries, per_query):
+            for result in results[:cap]:
                 url = (result.get("url") or "").strip()
                 if not url.startswith("http"):
                     continue

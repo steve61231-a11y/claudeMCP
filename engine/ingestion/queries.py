@@ -54,33 +54,62 @@ def text_variants(politician: Politician) -> list[str]:
     return _dedupe(variants)[:MAX_TEXT_VARIANTS]
 
 
-# Due-diligence probes. A plain name query returns today's news; these are the
-# angles an investigator actually asks about, and they're what surface the old
-# tribunal filing or the forgotten contract award that never trends. Kept as an
-# explicit, auditable list — nothing is invented per-subject at query time.
+# Comprehensive discovery probes.
+#
+# A single name query returns whatever is trending today — a narrow slice of a
+# subject's public footprint. The goal here is COVERAGE: sweep every dimension of
+# a public record, because a decisive detail can sit anywhere, in any kind of
+# source, from any period. These probes are therefore deliberately balanced —
+# background and achievements as much as legal and adverse material — since
+# building only an adverse-media picture is its own way of missing the truth.
+#
+# Kept as an explicit, auditable list: nothing is invented per-subject at query
+# time, so every query that ran can be shown and justified. Genuinely open-ended
+# discovery (following leads found in the data) is the Investigator Agent's job.
 DISCOVERY_PROBES = [
-    "court", "tribunal", "case", "ruling", "judgment",
-    "investigation", "probe", "inquiry", "audit",
-    "contract", "tender", "procurement", "award",
-    "company", "director", "shareholder", "ownership",
-    "wealth", "assets", "property", "land",
-    "corruption", "fraud", "scandal", "allegations",
-    "arrested", "charged", "sued", "petition",
-    "appointment", "resignation", "sacked",
+    # Identity, background, career
+    "profile", "biography", "background", "career", "education", "born",
+    # Roles, institutions, appointments
+    "appointment", "role", "office", "board", "committee", "resignation",
+    # Business and financial interests
+    "company", "director", "shareholder", "ownership", "business",
+    "contract", "tender", "procurement", "funding", "assets", "property",
+    # Legal and regulatory record
+    "court", "tribunal", "case", "ruling", "investigation", "inquiry", "audit",
+    # Adverse signals
+    "allegations", "controversy", "corruption", "fraud", "scandal", "charged",
+    # Public positions and statements
+    "statement", "speech", "interview", "policy", "campaign", "manifesto",
+    # People and affiliations
+    "family", "associates", "allies", "partnership", "network",
+    # Recognition and record
+    "award", "achievement", "record", "criticism", "praise",
 ]
 
-# Decade probes pull archived coverage that recency-ranked search hides.
-DISCOVERY_ERA_PROBES = ["1990s", "2000s", "history", "profile", "biography", "early career"]
+# Search ranks recent material first, so without an explicit nudge the earlier
+# record stays invisible. These are period-neutral: they ask for the whole
+# timeline rather than assuming any particular decade matters.
+DISCOVERY_TIMESPAN_PROBES = [
+    "history", "timeline", "past", "former", "early years", "latest", "recent",
+]
 
-MAX_DISCOVERY_VARIANTS = 40
+# High enough that every probe dimension survives the cap. Truncating here would
+# silently drop whole categories of evidence — the exact failure this layer
+# exists to prevent — so the ceiling is set above the full expansion.
+MAX_DISCOVERY_VARIANTS = 80
 
 
 def discovery_variants(politician: Politician) -> list[str]:
     """Metasearch queries for the discovery layer.
 
-    Layer 1: the identity variants already used everywhere (name/aliases/titles).
-    Layer 2: identity x investigative probe — the due-diligence angles.
-    Layer 3: identity x era probe — deliberately reaching for old material.
+    Built for COVERAGE of a subject's whole public record, since a decisive
+    detail can sit in any kind of source from any period:
+
+      Layer 1: identity variants already used everywhere (name/aliases/titles).
+      Layer 2: identity x probe — every dimension of the record, balanced across
+               background, business, legal, adverse, statements and affiliations.
+      Layer 3: identity x timespan — counteracts recency ranking so the earlier
+               record is reachable too, without assuming any particular period.
 
     The subject phrase is quoted so engines match the person, not the words.
     """
@@ -90,9 +119,9 @@ def discovery_variants(politician: Politician) -> list[str]:
     variants: list[str] = list(identities)
     for probe in DISCOVERY_PROBES:
         variants.append(f'"{primary}" {probe}')
-    for probe in DISCOVERY_ERA_PROBES:
+    for probe in DISCOVERY_TIMESPAN_PROBES:
         variants.append(f'"{primary}" {probe}')
-    # A second identity broadens recall for subjects known by an alias.
+    # A second identity broadens recall for subjects known mainly by an alias.
     if len(identities) > 1:
         for probe in DISCOVERY_PROBES[:6]:
             variants.append(f'"{identities[1]}" {probe}')

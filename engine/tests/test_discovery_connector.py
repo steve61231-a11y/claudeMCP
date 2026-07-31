@@ -21,18 +21,23 @@ def _result(url, title="Title", content="snippet", published=None, engine="googl
     return {"url": url, "title": title, "content": content, "publishedDate": published, "engine": engine}
 
 
-def test_discovery_variants_probe_investigative_angles():
-    """A plain name query returns today's news; due-diligence needs the angles
-    that surface court records, contracts and old history."""
+def test_discovery_variants_cover_the_whole_public_record():
+    """A plain name query returns whatever is trending. Comprehensive discovery
+    has to sweep every dimension of a record — because the detail that changes
+    the conclusion can sit in any of them."""
     subject = Politician(name="Jane Wanjiku", aliases=["JW"], titles=[], swahili_terms=[])
     variants = discovery_variants(subject)
-
     joined = " ".join(variants).lower()
+
     assert '"jane wanjiku" court' in joined
-    assert "tribunal" in joined and "contract" in joined and "corruption" in joined
-    # Reaches deliberately for archived material, not just recent coverage.
-    assert "1990s" in joined or "history" in joined
-    assert len(variants) <= 40
+    # Balanced coverage: background and public record, not only adverse angles.
+    for dimension in ("biography", "career", "company", "contract", "court",
+                      "allegations", "statement", "family", "award"):
+        assert dimension in joined, f"discovery misses the '{dimension}' dimension"
+    # Recency ranking hides the earlier record unless we ask for it — but we do
+    # so period-neutrally, never assuming a particular decade matters.
+    assert "history" in joined and "recent" in joined
+    assert len(variants) <= 80
 
 
 def test_discover_dedupes_the_same_page_across_engines():
