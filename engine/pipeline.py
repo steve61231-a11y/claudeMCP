@@ -1,7 +1,9 @@
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from engine.config import settings
 from engine.db.models import (
@@ -403,6 +405,26 @@ def run_analysis(
     )
     db.add(report)
     db.commit()
+
+    # Audit the finished narrative against the stored corpus. This runs LAST, on
+    # what the report actually says, and records a status + citations for every
+    # factual claim. A claim the evidence can't support is labelled, not deleted:
+    # a thin spot in the file is itself a finding worth seeing.
+    if settings.enable_verification:
+        try:
+            from engine.agents import verify
+
+            audit = verify.verify_payload(db, politician, payload, report_id=report.id)
+            payload["verification"] = {
+                k: audit[k] for k in ("checked", "verified", "unverified", "contradicted")
+            }
+            payload["claims"] = audit["claims"]
+            report.payload = payload
+            flag_modified(report, "payload")
+            db.commit()
+        except Exception:  # noqa: BLE001 — an audit failure must not lose the report
+            traceback.print_exc()
+
     return report
 
 

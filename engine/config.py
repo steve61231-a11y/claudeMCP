@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     anthropic_bulk_model: str = "claude-haiku-4-5-20251001"
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
+    # Post-generation audit: decompose the finished report into atomic claims and
+    # check each against stored evidence, recording status + citations. This is
+    # the guard against a fluent, confident, wrong sentence reaching a client.
+    enable_verification: bool = True
     sentiment_confidence_threshold: float = 0.55
     internal_api_token: str = ""
     newsapi_key: str = ""
