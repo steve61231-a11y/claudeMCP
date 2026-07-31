@@ -129,11 +129,6 @@ def run_analysis(
 
     people_counts: dict[str, dict] = {}
     unchecked = db.query(RawMention).filter(*window_filter, RawMention.link_checked == 0).all()
-    # Entity-linking + people extraction is one LLM call per mention. Bound it so
-    # a president-scale subject finishes in minutes; the highest-engagement
-    # mentions are analysed first and the rest are picked up on the next run.
-    if len(unchecked) > _llm_cap:
-        unchecked = sorted(unchecked, key=_engagement, reverse=True)[:_llm_cap]
 
     # Sources that fetch BY the subject's name are on-topic by construction —
     # a Google News / GDELT / Reddit / YouTube / Wikipedia / X result returned
@@ -142,13 +137,39 @@ def run_analysis(
     # data is thin) is the difference between a real report and "no data yet".
     _TARGETED_SOURCES = {"google_news_rss", "gdelt", "reddit", "youtube", "wikipedia", "scweet", "twscrape"}
 
-    def link_and_extract(mention: RawMention) -> tuple[dict | None, list[dict]]:
+    def _needs_llm_link(mention: RawMention) -> bool:
         src = (mention.raw_payload or {}).get("source")
         if not isinstance(src, str):
             src = ""  # some feeds nest `source` as a dict; never hash a dict
-        if src in _TARGETED_SOURCES and mention.source_type != "comment":
+        return not (src in _TARGETED_SOURCES and mention.source_type != "comment")
+
+    # Linking decides whether a mention is analysed AT ALL, so it must not be
+    # capped wholesale — an unlinked mention is indistinguishable from evidence
+    # that was never collected. For targeted sources linking is free (no model
+    # call), so every one of those is linked, however many there are. Only the
+    # mentions that genuinely need an LLM adjudication are bounded, and the
+    # remainder carry over to the next incremental run.
+    llm_link_needed = [m for m in unchecked if _needs_llm_link(m)]
+    if len(llm_link_needed) > _llm_cap:
+        keep = {m.id for m in sorted(llm_link_needed, key=_engagement, reverse=True)[:_llm_cap]}
+        unchecked = [m for m in unchecked if not _needs_llm_link(m) or m.id in keep]
+
+    # People extraction is enrichment rather than gating, and costs a call per
+    # mention, so it is bounded independently of linking.
+    people_budget = {
+        m.id for m in sorted(unchecked, key=_engagement, reverse=True)[:_llm_cap]
+    }
+
+    def link_and_extract(mention: RawMention) -> tuple[dict | None, list[dict]]:
+        def people(m: RawMention) -> list[dict]:
+            if m.id not in people_budget:
+                return []
+            return entities.extract_people(m.text, politician.name)
+
+        if not _needs_llm_link(mention):
+            src = (mention.raw_payload or {}).get("source")
             link = {"matched": True, "match_type": f"targeted_{src}", "confidence": 0.75}
-            return link, entities.extract_people(mention.text, politician.name)
+            return link, people(mention)
 
         link = entities.detect_entity_link(
             mention.text, politician.name, politician.aliases or [], politician.keywords or []
@@ -162,7 +183,7 @@ def run_analysis(
                 link = {"matched": True, "match_type": "comment_on_linked_post", "confidence": 0.7}
         if not link:
             return None, []
-        return link, entities.extract_people(mention.text, politician.name)
+        return link, people(mention)
 
     with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
         link_results = list(pool.map(link_and_extract, unchecked))
@@ -216,25 +237,40 @@ def run_analysis(
         .all()
     }
     needing_sentiment = [m for m in linked_mentions if m.id not in have_sentiment]
-    # Cap per-mention LLM sentiment so a heavily-covered subject (e.g. a
-    # president) doesn't take 10+ minutes. Score the highest-engagement mentions
-    # (the ones that actually move sentiment); the map-reduce digest still reads
-    # 100% of the corpus, so nothing is missed in the headline analysis.
-    if len(needing_sentiment) > _llm_cap:
-        needing_sentiment = sorted(needing_sentiment, key=_engagement, reverse=True)[:_llm_cap]
-    with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
-        sentiment_results = list(pool.map(lambda m: sentiment.analyze_sentiment(m.text), needing_sentiment))
-    for mention, sentiment_result in zip(needing_sentiment, sentiment_results):
+    # Score EVERY unscored mention. Batching (~25 items per call on the bulk
+    # model) is what makes that affordable — the old one-call-per-mention path
+    # forced a top-N cap that left the long tail unread, and an unread tail is
+    # indistinguishable from evidence that doesn't exist.
+    from engine.agents import score as score_agent
+    from engine.db.models import MentionClassification
+
+    scores = score_agent.score_items(
+        politician.name, [(m.id, m.text or "") for m in needing_sentiment]
+    )
+    for mention in needing_sentiment:
+        scored = scores.get(mention.id)
+        if scored is None:
+            continue  # unscored: a later run retries rather than guessing
         db.add(
             MentionSentiment(
                 mention_id=mention.id,
-                sentiment=sentiment_result["sentiment"],
-                intensity=sentiment_result["intensity"],
-                context_tag=sentiment_result.get("context_tag"),
-                confidence=sentiment_result["confidence"],
-                source=sentiment_result["source"],
+                sentiment=scored["sentiment"],
+                intensity=scored["intensity"],
+                context_tag=scored.get("context_tag"),
+                confidence=scored["confidence"],
+                source=scored["source"],
             )
         )
+        # The same pass yields topic/language, so classification is free.
+        if scored.get("topic") or scored.get("language"):
+            db.add(
+                MentionClassification(
+                    mention_id=mention.id,
+                    topic=scored.get("topic"),
+                    language=scored.get("language"),
+                    confidence=scored["confidence"],
+                )
+            )
     db.flush()
 
     stored_mentions = [
