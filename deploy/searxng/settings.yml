@@ -1,0 +1,41 @@
+# SearXNG configuration for the Zenith discovery layer.
+#
+# Two things matter here and both are non-default upstream:
+#   1. `formats` must include `json` — without it the /search?format=json API
+#      returns 403 and discovery silently finds nothing.
+#   2. `secret_key` must be changed; set SEARXNG_SECRET in the environment.
+#
+# Everything else stays close to upstream defaults so engine updates keep working.
+
+use_default_settings: true
+
+general:
+  instance_name: "Zenith Discovery"
+  # No public UI is needed — this instance exists to serve the engine.
+  enable_metrics: false
+
+search:
+  # JSON is what the DiscoveryConnector consumes.
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ""
+  default_lang: ""
+
+server:
+  secret_key: "change-me-set-SEARXNG_SECRET"
+  limiter: false          # no bot-limiting: the only client is our own engine
+  image_proxy: false
+  method: "GET"
+
+ui:
+  static_use_hash: true
+
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 20.0
+  pool_connections: 100
+  pool_maxsize: 20
+  # Politeness: stagger upstream calls so engines don't rate-limit the instance.
+  enable_http2: true

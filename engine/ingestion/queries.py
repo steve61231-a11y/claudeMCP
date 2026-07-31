@@ -54,6 +54,52 @@ def text_variants(politician: Politician) -> list[str]:
     return _dedupe(variants)[:MAX_TEXT_VARIANTS]
 
 
+# Due-diligence probes. A plain name query returns today's news; these are the
+# angles an investigator actually asks about, and they're what surface the old
+# tribunal filing or the forgotten contract award that never trends. Kept as an
+# explicit, auditable list — nothing is invented per-subject at query time.
+DISCOVERY_PROBES = [
+    "court", "tribunal", "case", "ruling", "judgment",
+    "investigation", "probe", "inquiry", "audit",
+    "contract", "tender", "procurement", "award",
+    "company", "director", "shareholder", "ownership",
+    "wealth", "assets", "property", "land",
+    "corruption", "fraud", "scandal", "allegations",
+    "arrested", "charged", "sued", "petition",
+    "appointment", "resignation", "sacked",
+]
+
+# Decade probes pull archived coverage that recency-ranked search hides.
+DISCOVERY_ERA_PROBES = ["1990s", "2000s", "history", "profile", "biography", "early career"]
+
+MAX_DISCOVERY_VARIANTS = 40
+
+
+def discovery_variants(politician: Politician) -> list[str]:
+    """Metasearch queries for the discovery layer.
+
+    Layer 1: the identity variants already used everywhere (name/aliases/titles).
+    Layer 2: identity x investigative probe — the due-diligence angles.
+    Layer 3: identity x era probe — deliberately reaching for old material.
+
+    The subject phrase is quoted so engines match the person, not the words.
+    """
+    identities = text_variants(politician)[:3]  # most-specific identities only
+    primary = identities[0] if identities else politician.name
+
+    variants: list[str] = list(identities)
+    for probe in DISCOVERY_PROBES:
+        variants.append(f'"{primary}" {probe}')
+    for probe in DISCOVERY_ERA_PROBES:
+        variants.append(f'"{primary}" {probe}')
+    # A second identity broadens recall for subjects known by an alias.
+    if len(identities) > 1:
+        for probe in DISCOVERY_PROBES[:6]:
+            variants.append(f'"{identities[1]}" {probe}')
+
+    return _dedupe(variants)[:MAX_DISCOVERY_VARIANTS]
+
+
 def hashtag_variants(politician: Politician) -> list[str]:
     """Hashtag terms (no leading '#') for hashtag-search endpoints."""
     last = surname(politician.name)

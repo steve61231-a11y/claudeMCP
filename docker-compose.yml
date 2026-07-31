@@ -10,6 +10,20 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  # Web-discovery metasearch: one query fanned across 200+ engines, returning
+  # JSON. This is what reaches archived/obscure pages the fixed connectors never
+  # index. Keyless and self-hosted, so discovery costs nothing per query.
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      # JSON output is off by default upstream; the engine needs it.
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+      BASE_URL: http://localhost:8080/
+    volumes:
+      - ./deploy/searxng:/etc/searxng:ro
+    ports:
+      - "8080:8080"
+
   neo4j:
     image: neo4j:5
     environment:

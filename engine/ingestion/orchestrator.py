@@ -6,6 +6,7 @@ in parallel with pagination, per-page durable upserts (crash-safe/resumable
 via page_cursor), and a client-side credit budget guardrail.
 """
 
+import hashlib
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -16,7 +17,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from engine.config import settings
-from engine.db.models import AuthorProfile, IngestionRun, IngestionTask, Politician, RawMention
+from engine.db.models import (
+    AuthorProfile,
+    Document,
+    IngestionRun,
+    IngestionTask,
+    Politician,
+    RawMention,
+)
 from engine.ingestion import queries
 from engine.ingestion.base import IngestedMention
 from engine.processing import cleaning
@@ -170,6 +178,19 @@ def plan_run(
     if settings.enable_scweet or social_fallback:
         tasks.append(
             IngestionTask(run_id=run.id, connector="scweet", platform="x", endpoint="search", query=politician.name)
+        )
+
+    # Web discovery: one task carrying all metasearch variants. This is the
+    # layer that reaches archived/obscure pages no fixed connector indexes.
+    if settings.enable_discovery and settings.searxng_url:
+        tasks.append(
+            IngestionTask(
+                run_id=run.id,
+                connector="discovery",
+                platform="web",
+                endpoint="searxng",
+                query=politician.name,
+            )
         )
 
     if settings.enable_wikipedia:
@@ -513,6 +534,18 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         from engine.ingestion.youtube_connector import YouTubeConnector
 
         connector = YouTubeConnector()
+    elif task.connector == "discovery":
+        # Discovery yields long-form DOCUMENTS (full page text), not mentions,
+        # so it bypasses the mention path entirely.
+        from engine.ingestion.discovery_connector import DiscoveryConnector
+
+        documents = DiscoveryConnector().fetch_documents(
+            politician.name,
+            politician.aliases or [],
+            queries.discovery_variants(politician),
+        )
+        task.result_count += _store_documents(session, run, politician, documents)
+        return
     else:
         from engine.ingestion.mock_source import MockIngestionConnector
 
@@ -590,6 +623,88 @@ def _store_mentions(
     _upsert_author_profiles(session, task.platform, cleaned)
     session.commit()
     return result.rowcount or 0
+
+
+def _store_documents(
+    session: Session,
+    run: IngestionRun,
+    politician: Politician,
+    documents: list[dict],
+) -> int:
+    """Upsert discovered full-text documents into the evidence store.
+
+    Mirrors _store_mentions' idempotency contract: a content hash plus ON
+    CONFLICT DO NOTHING against uq_document_subject_hash, so re-runs and
+    overlapping queries never duplicate a page. The documents_search_vector
+    trigger builds the full-text index on write.
+    """
+    if not documents:
+        return 0
+
+    now = datetime.utcnow()
+    rows = []
+    seen_hashes: set[str] = set()
+    for item in documents:
+        body = (item.get("body") or "").strip()
+        if not body:
+            continue
+        content_hash = hashlib.sha256(
+            f"{_canonical_doc_key(item)}|{body[:2000]}".encode("utf-8", "ignore")
+        ).hexdigest()
+        if content_hash in seen_hashes:  # dedupe within this batch too
+            continue
+        seen_hashes.add(content_hash)
+        rows.append(
+            {
+                "id": str(uuid.uuid4()),
+                "politician_id": politician.id,
+                "url": item.get("url"),
+                "domain": item.get("domain"),
+                "title": item.get("title"),
+                "body": body,
+                "author": item.get("author"),
+                "published_at": item.get("published_at"),
+                "fetched_at": now,
+                "source": item.get("source") or "searxng",
+                "source_tier": item.get("source_tier") or "free",
+                "doc_type": item.get("doc_type") or "article",
+                "language": queries.detect_language(body),
+                "content_hash": content_hash,
+                "processed_stages": {},
+                "run_id": run.id,
+                "raw_payload": {
+                    "engine": item.get("engine"),
+                    "found_by_query": item.get("found_by_query"),
+                    "full_text": item.get("full_text"),
+                    "snippet": item.get("snippet"),
+                },
+                "created_at": now,
+            }
+        )
+
+    if not rows:
+        return 0
+    stmt = pg_insert(Document).values(rows).on_conflict_do_nothing(
+        constraint="uq_document_subject_hash"
+    )
+    result = session.execute(stmt)
+    session.commit()
+    return result.rowcount or 0
+
+
+def _canonical_doc_key(item: dict) -> str:
+    """Same page found via several engines/URLs hashes to one document."""
+    url = item.get("url") or ""
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return f"{host}{parsed.path.rstrip('/')}"
+    except Exception:  # noqa: BLE001
+        return url
 
 
 def _upsert_author_profiles(session: Session, platform: str, cleaned: list[dict]) -> None:

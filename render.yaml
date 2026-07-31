@@ -37,6 +37,13 @@ services:
       # Full-power pipeline (2GB): full concurrency, all sources, no per-run caps.
       - key: LOW_MEMORY
         value: "false"
+      # Web-discovery metasearch instance (the searxng service below). Internal
+      # URL — Render services reach each other privately, no public exposure.
+      # Leave unset to disable discovery entirely.
+      - key: SEARXNG_URL
+        sync: false
+      - key: ENABLE_DISCOVERY
+        value: "true"
       - key: INGESTION_REFRESH_HOURS
         value: "6"
       - key: SCHEDULED_CREDIT_BUDGET
@@ -54,3 +61,21 @@ services:
         sync: false
       - key: X_PASSWORD
         sync: false
+
+  # Web-discovery metasearch: fans one query across 200+ engines and returns
+  # JSON. Self-hosted so exhaustive discovery costs nothing per query. Only the
+  # engine talks to it, over Render's private network.
+  - type: web
+    name: zenith-searxng
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/searxng/searxng:latest
+    envVars:
+      - key: SEARXNG_BASE_URL
+        value: "http://zenith-searxng:8080/"
+      # Enables the JSON API the engine consumes (off by default upstream).
+      - key: SEARXNG_SETTINGS_PATH
+        value: /etc/searxng/settings.yml
+      - key: SEARXNG_SECRET
+        generateValue: true

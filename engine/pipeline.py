@@ -28,6 +28,48 @@ from engine.reports.sections import enrich_report_payload
 _PER_MENTION_WORKERS = 10
 
 
+def _document_corpus(db: Session, politician: Politician, window_start, window_end) -> list[dict]:
+    """Discovered documents rendered in the same shape as mentions.
+
+    The analysts and the map-reduce digest are dict-driven, so presenting
+    documents this way lets long-form evidence be read alongside social posts
+    with no change to those layers. Off-topic documents (flagged by the
+    disambiguation gate) are excluded. Undated archive material is included —
+    an old page is often exactly the point of due diligence.
+    """
+    from engine.db.models import Document
+
+    rows = (
+        db.query(Document)
+        .filter(
+            Document.politician_id == politician.id,
+            (Document.relevance_verdict.is_(None)) | (Document.relevance_verdict != "off_topic"),
+        )
+        .order_by(Document.published_at.desc().nullslast())
+        .limit(settings.document_corpus_limit)
+        .all()
+    )
+    corpus: list[dict] = []
+    for doc in rows:
+        text = f"{doc.title}\n\n{doc.body}" if doc.title else (doc.body or "")
+        if not text.strip():
+            continue
+        corpus.append(
+            {
+                "id": doc.id,
+                "platform": doc.domain or "web",
+                "source_type": "article",
+                "author_handle": doc.author or doc.domain or "web",
+                "text": text,
+                "posted_at": doc.published_at or doc.fetched_at,
+                "engagement": {},
+                "language": doc.language,
+                "source_url": doc.url,
+            }
+        )
+    return corpus
+
+
 def _per_mention_workers() -> int:
     """Fewer threads on a memory-constrained free instance so concurrent work
     can't exhaust RAM and get the worker OOM-killed (intermittent 502s)."""
@@ -268,12 +310,19 @@ def run_analysis(
         influence_ranking,
         network_snapshot,
     )
+    # Discovered documents (full-text articles/archived pages) are evidence too.
+    # They feed the DEEP-READING layer — map-reduce digest, analysts, grounding —
+    # where a fact buried mid-article can surface. They are deliberately kept out
+    # of generate_report_payload above so mention-volume and per-mention
+    # sentiment statistics keep their existing meaning.
+    corpus = stored_mentions + _document_corpus(db, politician, window_start, window_end)
+
     payload = enrich_report_payload(
         politician.name,
         window_start,
         window_end,
         payload,
-        mentions=stored_mentions,
+        mentions=corpus,
         narratives=built_narratives,
     )
     if ingestion_run is not None:

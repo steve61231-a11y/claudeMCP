@@ -122,6 +122,18 @@ class Settings(BaseSettings):
     # Genuinely-free, keyless, Kenya-relevant sources — the real fix for data
     # starvation when SocialCrawl credits are exhausted. All ON by default: no
     # key, no login, no credits; only need open egress.
+    # Discovery layer: a self-hosted SearXNG metasearch instance fanning one
+    # query across 200+ engines. This is how obscure and archived pages — the
+    # buried 1992 article a fixed connector never sees — enter the corpus.
+    # Empty URL disables discovery entirely (graceful, like every other source).
+    enable_discovery: bool = True
+    searxng_url: str = ""                     # e.g. http://searxng:8080
+    discovery_max_results_per_query: int = 30
+    discovery_max_fetch: int = 80             # bounded full-text fetches per run
+    discovery_timeout: int = 20
+    # Documents fed into the deep-reading layer per report. The map-reduce
+    # digest chunks whatever it is given, so this bounds run time, not coverage.
+    document_corpus_limit: int = 400
     enable_google_news: bool = True   # Google News RSS (Nation/Standard/Citizen/Star)
     enable_reddit: bool = True        # Reddit public JSON search (+ r/Kenya)
     enable_youtube: bool = True       # YouTube via yt-dlp (search + top comments)

@@ -1238,6 +1238,28 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
     from engine.ingestion.orchestrator import resolve_social_tier
 
     tier, balance, reason = resolve_social_tier()
+
+    # Discovery is probed separately: it returns documents, not mentions, and
+    # its health (is SearXNG reachable? is the JSON API enabled?) is the single
+    # biggest factor in how much archived/obscure material a run can find.
+    discovery: dict = {"enabled": bool(settings.enable_discovery and settings.searxng_url)}
+    if discovery["enabled"]:
+        try:
+            from engine.ingestion.discovery_connector import DiscoveryConnector
+
+            found = DiscoveryConnector().discover([q])
+            discovery.update(
+                {"results": len(found), "error": None,
+                 "sample": found[0]["url"] if found else None,
+                 "searxng_url": settings.searxng_url}
+            )
+            if not found:
+                discovery["hint"] = "0 results — check the instance is up and `json` is in its search.formats"
+        except Exception as exc:  # noqa: BLE001
+            discovery.update({"results": 0, "error": f"{type(exc).__name__}: {exc}"[:200]})
+    else:
+        discovery["hint"] = "set SEARXNG_URL to enable web discovery"
+
     return {
         "ok": True,
         "query": q,
@@ -1245,6 +1267,7 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
         "total_items": total,
         "working_sources": [n for n, r in results.items() if r["items"] > 0],
         "social_tier": {"tier": tier, "socialcrawl_balance": balance, "reason": reason},
+        "discovery": discovery,
         "sources": results,
     }
 
