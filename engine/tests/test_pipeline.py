@@ -19,7 +19,7 @@ REPORT_SECTIONS = [
 ]
 
 
-def fake_call_json(prompt: str, max_tokens: int = 1024):
+def fake_call_json(prompt: str, max_tokens: int = 1024, model: str | None = None):
     if "refer to the politician above" in prompt:
         matched = "Governor" in prompt and "Nakuru" in prompt
         return {"matched": matched, "confidence": 0.85 if matched else 0.1}

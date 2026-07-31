@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
+    # Cheap/fast model for the high-volume mechanical stages (classification,
+    # disambiguation, per-item sentiment, map-step digestion). Running those on
+    # the strong model is what makes whole-corpus coverage unaffordable; running
+    # them here is what makes "analyse everything" practical. Reasoning and
+    # verification stay on anthropic_model. Empty = use anthropic_model.
+    anthropic_bulk_model: str = "claude-haiku-4-5-20251001"
+    # Items per batched LLM call for those bulk stages.
+    agent_batch_size: int = 25
     sentiment_confidence_threshold: float = 0.55
     internal_api_token: str = ""
     newsapi_key: str = ""

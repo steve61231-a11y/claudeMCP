@@ -315,6 +315,17 @@ def run_analysis(
     # where a fact buried mid-article can surface. They are deliberately kept out
     # of generate_report_payload above so mention-volume and per-mention
     # sentiment statistics keep their existing meaning.
+    # Gate discovered documents before they are read. Discovery is deliberately
+    # broad, so this is what stops a same-named person/company/acronym from
+    # contaminating the conclusions. Verdicts are stored, so it runs once per
+    # document and a re-run resumes rather than re-paying.
+    try:
+        from engine.agents import disambiguate
+
+        gate_stats = disambiguate.gate_documents(db, politician)
+    except Exception:  # noqa: BLE001 — gating must never break a report
+        gate_stats = {"error": "disambiguation gate failed; documents kept unfiltered"}
+
     corpus = stored_mentions + _document_corpus(db, politician, window_start, window_end)
 
     payload = enrich_report_payload(
@@ -333,6 +344,10 @@ def run_analysis(
             **(ingestion_run.stats or {}),
         }
         payload["data_coverage"] = _coverage_summary(ingestion_run.stats or {})
+
+    # What the disambiguation gate did. Filtering that nobody can see is
+    # indistinguishable from data loss, so the counts travel with the report.
+    payload["evidence_gate"] = gate_stats
 
     # Report-over-report change tracking (computed before this report is
     # stored, so "previous" is genuinely the prior report).

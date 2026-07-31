@@ -31,7 +31,7 @@ def test_detect_entity_link_direct_skips_llm(monkeypatch):
 
 
 def test_detect_entity_link_escalates_to_llm_for_indirect_mention(monkeypatch):
-    monkeypatch.setattr(llm, "call_json", lambda prompt, max_tokens=256: {"matched": True, "confidence": 0.85})
+    monkeypatch.setattr(llm, "call_json", lambda prompt, max_tokens=256, model=None: {"matched": True, "confidence": 0.85})
     link = detect_entity_link(
         "The Governor from Nakuru really delivered on the new market stalls.",
         "Wanjiru Kamau",
@@ -44,7 +44,7 @@ def test_detect_entity_link_escalates_to_llm_for_indirect_mention(monkeypatch):
 
 
 def test_detect_entity_link_no_match_when_llm_says_no(monkeypatch):
-    monkeypatch.setattr(llm, "call_json", lambda prompt, max_tokens=256: {"matched": False, "confidence": 0.1})
+    monkeypatch.setattr(llm, "call_json", lambda prompt, max_tokens=256, model=None: {"matched": False, "confidence": 0.1})
     link = detect_entity_link(
         "The Governor of a different county spoke today.", "Wanjiru Kamau", [], ["Governor", "Nakuru"]
     )
