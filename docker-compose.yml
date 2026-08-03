@@ -14,13 +14,12 @@ services:
   # JSON. This is what reaches archived/obscure pages the fixed connectors never
   # index. Keyless and self-hosted, so discovery costs nothing per query.
   searxng:
-    image: searxng/searxng:latest
+    # Same image as production (settings with the JSON API enabled are baked in),
+    # so local behaviour matches the deploy.
+    build: ./deploy/searxng
     environment:
-      # JSON output is off by default upstream; the engine needs it.
-      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
-      BASE_URL: http://localhost:8080/
-    volumes:
-      - ./deploy/searxng:/etc/searxng:ro
+      SEARXNG_BASE_URL: http://localhost:8080/
+      SEARXNG_SECRET: local-dev-secret
     ports:
       - "8080:8080"
 

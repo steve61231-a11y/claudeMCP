@@ -65,17 +65,18 @@ services:
   # Web-discovery metasearch: fans one query across 200+ engines and returns
   # JSON. Self-hosted so exhaustive discovery costs nothing per query. Only the
   # engine talks to it, over Render's private network.
+  # Built from deploy/searxng/Dockerfile rather than the stock image: our
+  # settings.yml (which turns the JSON API on) has to be baked in, since a
+  # hosted image deploy cannot mount local files.
   - type: web
     name: zenith-searxng
-    runtime: image
+    runtime: docker
     plan: starter
-    image:
-      url: docker.io/searxng/searxng:latest
+    dockerfilePath: ./deploy/searxng/Dockerfile
+    dockerContext: ./deploy/searxng
+    healthCheckPath: /healthz
     envVars:
       - key: SEARXNG_BASE_URL
         value: "http://zenith-searxng:8080/"
-      # Enables the JSON API the engine consumes (off by default upstream).
-      - key: SEARXNG_SETTINGS_PATH
-        value: /etc/searxng/settings.yml
       - key: SEARXNG_SECRET
         generateValue: true
