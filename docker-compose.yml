@@ -16,7 +16,9 @@ services:
   searxng:
     # Same image as production (settings with the JSON API enabled are baked in),
     # so local behaviour matches the deploy.
-    build: ./deploy/searxng
+    build:
+      context: .
+      dockerfile: ./deploy/searxng/Dockerfile
     environment:
       SEARXNG_BASE_URL: http://localhost:8080/
       SEARXNG_SECRET: local-dev-secret
