@@ -143,7 +143,8 @@ def _confidence(verdict: str, independent_sources: int) -> float:
     return {0: 0.5, 1: 0.6, 2: 0.75}.get(independent_sources, 0.9)
 
 
-def _judge(section: str, claim_text: str, found: list[dict]) -> dict:
+def _judge(section: str, claim_text: str, found: list[dict],
+           credibility: dict[str, float] | None = None) -> dict:
     """Adjudicate one already-retrieved claim. Pure LLM work, so it is safe to
     run concurrently — database access happens on the caller's session."""
     outcome = adjudicate(claim_text, found)
@@ -151,6 +152,14 @@ def _judge(section: str, claim_text: str, found: list[dict]) -> dict:
         found[:2] if outcome["verdict"] == VERIFIED else []
     )
     independent = evidence_store.independent_source_count(supporting)
+    confidence = _confidence(outcome["verdict"], independent)
+    # Corroboration count says HOW MANY sources; credibility says how much each
+    # is worth. Three weak sources should not outrank two strong ones.
+    if credibility:
+        from engine.agents.credibility import weighted_confidence
+
+        keys = [e.get("source") or e.get("url") or "" for e in supporting]
+        confidence = weighted_confidence(confidence, [k for k in keys if k], credibility)
     return {
         "section": section,
         "text": claim_text,
@@ -158,7 +167,7 @@ def _judge(section: str, claim_text: str, found: list[dict]) -> dict:
         "reason": outcome["reason"],
         "evidence": supporting,
         "independent_sources": independent,
-        "confidence": _confidence(outcome["verdict"], independent),
+        "confidence": confidence,
     }
 
 
@@ -193,9 +202,21 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
         (section, text, evidence_store.retrieve_for_claim(db, politician.id, text))
         for section, text in claims
     ]
+
+    # Look up how much each backing source is actually worth, once, on the
+    # caller's session — the judging threads then work from plain data.
+    from engine.agents.credibility import credibility_for
+
+    source_keys = {
+        (e.get("source") or e.get("url") or "")
+        for _, _, found in retrieved
+        for e in found
+    }
+    credibility = credibility_for(db, [k for k in source_keys if k])
+
     workers = min(_WORKERS, len(retrieved))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(lambda c: _judge(c[0], c[1], c[2]), retrieved))
+        results = list(pool.map(lambda c: _judge(c[0], c[1], c[2], credibility), retrieved))
 
     counts = {VERIFIED: 0, UNVERIFIED: 0, CONTRADICTED: 0}
     for result in results:

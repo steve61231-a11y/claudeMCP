@@ -395,6 +395,14 @@ def run_analysis(
             from engine.agents import resolve as resolve_agent
 
             payload["resolution"] = resolve_agent.resolve_corpus(db, politician, corpus)
+
+            # Score the sources behind that evidence. Runs after resolution
+            # because corroboration is measured through shared events, and it
+            # must precede verification so claim confidence reflects source
+            # quality rather than raw count.
+            from engine.agents import credibility as credibility_agent
+
+            payload["source_credibility"] = credibility_agent.score_sources(db, politician)
         except Exception:  # noqa: BLE001 — resolution must never break a report
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}
