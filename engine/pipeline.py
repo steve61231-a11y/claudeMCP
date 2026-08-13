@@ -403,6 +403,13 @@ def run_analysis(
             from engine.agents import credibility as credibility_agent
 
             payload["source_credibility"] = credibility_agent.score_sources(db, politician)
+
+            # Extend the knowledge graph. It persists between runs, so each
+            # report leaves the picture of the subject's world richer than it
+            # found it — connections are what single documents can't show.
+            from engine.agents import knowledge_graph as kg_agent
+
+            payload["knowledge_graph"] = kg_agent.build_graph(db, politician, corpus)
         except Exception:  # noqa: BLE001 — resolution must never break a report
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}

@@ -889,6 +889,68 @@ def network(name: str, x_api_key: str | None = Header(default=None)):
     return {"ok": True, "graph": graph, "cached": False}
 
 
+@app.get("/api/graph/connections")
+def graph_connections(
+    name: str,
+    entity: str,
+    to: str | None = None,
+    x_api_key: str | None = Header(default=None),
+):
+    """Traverse the knowledge graph around an entity.
+
+    Without `to`: everything directly connected, strongest first.
+    With `to`: how the two are connected — including indirect routes through
+    intermediaries, which is the question a document search cannot answer and
+    is often the finding itself.
+    """
+    _require_api_key(x_api_key)
+    from sqlalchemy import func
+
+    from engine.agents import knowledge_graph as kg
+    from engine.db.models import Entity
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter_by(name=name.strip()).first()
+        if not politician:
+            raise HTTPException(status_code=404, detail="unknown subject — generate a report first")
+
+        def _find(label: str) -> Entity | None:
+            needle = label.strip().lower()
+            return (
+                db.query(Entity)
+                .filter(func.lower(Entity.name) == needle)
+                .first()
+            )
+
+        start = _find(entity)
+        if start is None:
+            raise HTTPException(status_code=404, detail=f"entity not found: {entity}")
+
+        if to:
+            target = _find(to)
+            if target is None:
+                raise HTTPException(status_code=404, detail=f"entity not found: {to}")
+            paths = kg.find_paths(db, start.id, target.id)
+            return {
+                "ok": True,
+                "from": start.name,
+                "to": target.name,
+                "connected": bool(paths),
+                "paths": paths,
+            }
+
+        return {
+            "ok": True,
+            "entity": start.name,
+            "type": start.type,
+            "first_seen": str(start.first_seen) if start.first_seen else None,
+            "connections": kg.neighbours(db, start.id),
+        }
+    finally:
+        db.close()
+
+
 @app.get("/api/network/edge")
 def network_edge(name: str, a: str, b: str, x_api_key: str | None = Header(default=None)):
     """The receipts: actual mentions where both names co-occur."""
