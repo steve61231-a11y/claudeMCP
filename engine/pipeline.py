@@ -387,6 +387,18 @@ def run_analysis(
     # indistinguishable from data loss, so the counts travel with the report.
     payload["evidence_gate"] = gate_stats
 
+    # Resolve the corpus into entities and events: many reports of one happening
+    # become ONE event carrying its evidence, so repetition stops masquerading
+    # as significance. Runs on the gated corpus and is idempotent across runs.
+    if settings.enable_resolution:
+        try:
+            from engine.agents import resolve as resolve_agent
+
+            payload["resolution"] = resolve_agent.resolve_corpus(db, politician, corpus)
+        except Exception:  # noqa: BLE001 — resolution must never break a report
+            traceback.print_exc()
+            payload["resolution"] = {"error": "entity/event resolution failed"}
+
     # Report-over-report change tracking (computed before this report is
     # stored, so "previous" is genuinely the prior report).
     from engine.reports.deltas import compute_deltas, sentiment_history

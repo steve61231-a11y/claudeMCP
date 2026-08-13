@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # check each against stored evidence, recording status + citations. This is
     # the guard against a fluent, confident, wrong sentence reaching a client.
     enable_verification: bool = True
+    # Entity/event resolution: how many corpus items get the extraction pass per
+    # run. Bounded because it is the richest (and priciest) per-item call; the
+    # rest carry over to the next incremental run.
+    enable_resolution: bool = True
+    resolution_max_items: int = 300
     sentiment_confidence_threshold: float = 0.55
     internal_api_token: str = ""
     newsapi_key: str = ""
