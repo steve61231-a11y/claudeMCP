@@ -410,6 +410,17 @@ def run_analysis(
             from engine.agents import knowledge_graph as kg_agent
 
             payload["knowledge_graph"] = kg_agent.build_graph(db, politician, corpus)
+
+            # What moved since last time, and what deserves attention before it
+            # becomes obvious. Both run after resolution/graph so they can see
+            # events, entities and relationships — the things that change.
+            from engine.agents import anomaly as anomaly_agent
+            from engine.agents import temporal as temporal_agent
+
+            payload["temporal"] = temporal_agent.temporal_summary(
+                db, politician, run_id=ingestion_run.id if ingestion_run else None
+            )
+            payload["signals"] = anomaly_agent.detect_all(db, politician)
         except Exception:  # noqa: BLE001 — resolution must never break a report
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}
