@@ -457,6 +457,20 @@ def run_analysis(
                 k: audit[k] for k in ("checked", "verified", "unverified", "contradicted")
             }
             payload["claims"] = audit["claims"]
+
+            # Finally, refuse to call the file finished: name what is missing and
+            # turn those gaps into concrete queries for the NEXT run. This runs
+            # after verification because unverified claims are the richest source
+            # of "what still needs establishing".
+            if settings.enable_investigator:
+                from engine.agents import investigator
+
+                agenda = investigator.build_agenda(db, politician)
+                investigator.store_follow_up_queries(
+                    db, politician, agenda.get("follow_up_queries") or []
+                )
+                payload["investigation"] = agenda
+
             report.payload = payload
             flag_modified(report, "payload")
             db.commit()

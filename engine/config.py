@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # rest carry over to the next incremental run.
     enable_resolution: bool = True
     resolution_max_items: int = 300
+    # Investigator: after the report, name what is missing and turn those gaps
+    # into queries the next run chases. This is what makes successive runs an
+    # investigation rather than a repeated sweep.
+    enable_investigator: bool = True
     sentiment_confidence_threshold: float = 0.55
     internal_api_token: str = ""
     newsapi_key: str = ""

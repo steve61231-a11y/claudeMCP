@@ -39,6 +39,10 @@ class Politician(Base):
     titles = Column(ARRAY(String), default=list)  # "CS", "Waziri wa Fedha" — combined with surname in queries
     swahili_terms = Column(ARRAY(String), default=list)  # operator-approved Swahili/Sheng query terms
     tracked_hashtags = Column(ARRAY(String), default=list)  # without leading '#'
+    # Follow-up search queries raised by the investigator agent, chased on the
+    # next run. Kept separate from `keywords` because those are matching terms —
+    # a lead is a question to ask, not a phrase to match on.
+    investigation_leads = Column(ARRAY(String), default=list)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -117,6 +117,14 @@ def discovery_variants(politician: Politician) -> list[str]:
     primary = identities[0] if identities else politician.name
 
     variants: list[str] = list(identities)
+
+    # Leads the investigator raised last run come FIRST: they are the specific
+    # questions this file actually needs answered, whereas the probe list below
+    # is what we ask about everyone. Chasing found leads is what makes
+    # successive runs an investigation rather than a repeated sweep.
+    for lead in _pending_leads(politician):
+        variants.append(lead)
+
     for probe in DISCOVERY_PROBES:
         variants.append(f'"{primary}" {probe}')
     for probe in DISCOVERY_TIMESPAN_PROBES:
@@ -136,6 +144,14 @@ def hashtag_variants(politician: Politician) -> list[str]:
     variants.append(politician.name.replace(" ", ""))
     variants.append(last)
     return _dedupe(variants)[:MAX_HASHTAG_VARIANTS]
+
+
+def _pending_leads(politician: Politician) -> list[str]:
+    """Follow-up queries a previous investigator pass recorded on the subject.
+
+    Held in their own column so they never leak into keyword MATCHING.
+    """
+    return [str(q) for q in (getattr(politician, "investigation_leads", None) or [])]
 
 
 def _dedupe(items: list[str]) -> list[str]:
