@@ -162,6 +162,7 @@ class IssueMapRequest(BaseModel):
     principal: str          # the person/organisation (e.g. "William Ruto")
     issue: str              # the issue/institution (e.g. "forestry", "SHA", "KRA")
     days: int = 365         # look-back window
+    desired_outcome: str | None = None   # INPUT 2 of the issue framework; optional by design
 
 
 _PERSON_SUBJECT_TYPES = {"person", "politician", "individual"}
@@ -586,7 +587,8 @@ def get_report(job_id: str, x_api_key: str | None = Header(default=None)):
     return job
 
 
-def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int) -> None:
+def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
+                       desired_outcome: str | None = None) -> None:
     from datetime import datetime, timedelta
 
     from engine.reports.issue_map import build_issue_map
@@ -594,7 +596,8 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int) -> No
     try:
         we = datetime.utcnow()
         ws = we - timedelta(days=max(1, days))
-        payload = build_issue_map(principal, issue, window_start=ws, window_end=we)
+        payload = build_issue_map(principal, issue, window_start=ws, window_end=we,
+                                  desired_outcome=desired_outcome)
         _jobs[job_id] = {"status": "done", "ok": True, "issue_map": payload, "created_at": time.time()}
     except Exception as exc:  # surface server-side; this is an API-key-gated operator tool
         traceback.print_exc()
@@ -618,7 +621,7 @@ def create_issue_map(req: IssueMapRequest, request: Request, x_api_key: str | No
         raise HTTPException(status_code=400, detail="principal and issue are both required")
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {"status": "running", "created_at": time.time()}
-    thread = threading.Thread(target=_run_issue_map_job, args=(job_id, principal, issue, req.days), daemon=True)
+    thread = threading.Thread(target=_run_issue_map_job, args=(job_id, principal, issue, req.days, (req.desired_outcome or "").strip() or None), daemon=True)
     thread.start()
     return {"ok": True, "job_id": job_id}
 

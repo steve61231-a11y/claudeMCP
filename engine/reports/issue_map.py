@@ -121,6 +121,7 @@ def build_issue_map(
     window_start: datetime | None = None,
     window_end: datetime | None = None,
     mentions: list[dict] | None = None,
+    desired_outcome: str | None = None,
 ) -> dict:
     """Produce the issue-map payload for principal × issue.
 
@@ -152,7 +153,7 @@ def build_issue_map(
         for m in mentions[:15]
     ]
 
-    return {
+    payload = {
         "principal": principal,
         "issue": issue,
         "window": {"start": ws, "end": we},
@@ -162,3 +163,57 @@ def build_issue_map(
         "evidence_sample": sample,
         "thin": digest["coverage"]["mentions_total"] == 0,
     }
+    payload["issue_framework"] = _issue_framework(principal, issue, payload, analysis,
+                                                  desired_outcome=desired_outcome)
+    return payload
+
+
+def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
+                     desired_outcome: str | None = None) -> dict | None:
+    """Render the intersection to the client's Issue Analysis & Mapping Framework.
+
+    The framework is a presentation of what the analysis already found — the
+    actors become stakeholders, the intersection timeline becomes the background
+    record. Nothing is invented here: an actor with no stated stance stays
+    neutral, and an undated moment simply carries no date. A failure to render
+    the framework must not cost the caller the issue map itself.
+    """
+    from engine.reports import issue_framework as ifw
+
+    try:
+        stakeholders = []
+        for actor in analysis.get("key_actors") or []:
+            name = (actor.get("name") or "").strip()
+            if not name:
+                continue
+            position = actor.get("position")
+            stakeholders.append({
+                "name": name,
+                "position": position if position in ("for", "against", "neutral") else "neutral",
+                "segment": ifw.segment_stakeholder(actor.get("entity_type") or "organization", name),
+                "influence": actor.get("influence") if isinstance(actor.get("influence"), (int, float)) else 0,
+                "rationale": actor.get("relation") or "",
+                "position_on_issue": actor.get("relation") or "",
+            })
+
+        events = []
+        for moment in analysis.get("timeline") or []:
+            title = moment.get("event")
+            if not title:
+                continue
+            events.append({
+                "title": title,
+                "occurred_at": moment.get("date") or None,
+                "event_type": "intersection",
+                "independent_domains": moment.get("sources"),
+            })
+
+        framework_payload = dict(payload)
+        framework_payload["issue_outline"] = analysis.get("involvement") or ""
+        return ifw.build(
+            issue=issue, principal=principal, payload=framework_payload,
+            stakeholders=stakeholders, relationships=[], events=events,
+            desired_outcome=desired_outcome,
+        )
+    except Exception:  # the framework is a view; never let it take the map down
+        return None

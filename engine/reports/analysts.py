@@ -377,8 +377,8 @@ ISSUE_MAP_PROMPT = """You are an intelligence analyst mapping the relationship b
 Map the intersection precisely:
 - involvement: what is {principal}'s actual role, stance, action or exposure regarding {issue}? (supporter/architect/critic/implicated/absent — say which, with evidence.)
 - linking_narratives: the distinct storylines connecting {principal} to {issue}, each with its framing and who pushes it.
-- key_actors: other people/organisations that appear at this intersection and how they relate to {principal} on {issue}.
-- timeline: the sequence of notable moments linking them, oldest to newest.
+- key_actors: other people/organisations that appear at this intersection and how they relate to {principal} on {issue}. For each, also give: entity_type (person/organization/company), position on the issue ("for", "against" or "neutral" — use "neutral" unless the digest actually shows a stance), and influence 0-100 for how much they shape the outcome.
+- timeline: the sequence of notable moments linking them, oldest to newest. Give `date` as ISO (YYYY-MM-DD) when the digest states or clearly implies one, otherwise null — never guess a date.
 - tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict.
 - verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines.
 
@@ -388,7 +388,7 @@ COMPLETE INTERSECTION DIGEST:
 {digest}
 
 Respond with ONLY this JSON:
-{{"involvement":"...","linking_narratives":[{{"narrative":"...","framing":"...","pushed_by":"..."}}],"key_actors":[{{"name":"...","relation":"..."}}],"timeline":[{{"when":"...","event":"..."}}],"tension_or_risk":"...","verdict":"..."}}"""
+{{"involvement":"...","linking_narratives":[{{"narrative":"...","framing":"...","pushed_by":"..."}}],"key_actors":[{{"name":"...","relation":"...","entity_type":"person|organization|company","position":"for|against|neutral","influence":0}}],"timeline":[{{"when":"...","date":"YYYY-MM-DD or null","event":"..."}}],"tension_or_risk":"...","verdict":"..."}}"""
 
 
 def analyze_issue_intersection(principal: str, issue: str, corpus_digest: dict) -> dict:

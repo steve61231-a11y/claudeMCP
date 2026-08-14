@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070b12">
 <title>Zenith Intelligence</title>
+<meta name="description" content="Zenith Intelligence platform.">
 <style>html,body{margin:0;background:#070b12}</style>
 </head>
 <body>
@@ -102,6 +103,51 @@
   #zenith .fade{animation:fade .4s ease}
   @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   @media(max-width:640px){#zenith h1{font-size:27px}#zenith .kpi{font-size:24px}}
+
+  /* ---- charts ---- */
+  .chart-tip{position:fixed;z-index:200;pointer-events:none;opacity:0;transition:opacity .12s;
+    background:rgba(6,12,20,.97);border:1px solid var(--line);border-radius:10px;padding:8px 11px;
+    font:500 12px/1.45 var(--sans);color:var(--ink);box-shadow:0 12px 40px -12px #000;max-width:280px}
+  #zenith .chart-box{width:100%}
+  #zenith .chart-svg{width:100%;height:auto;overflow:visible}
+  #zenith .chart-axis{fill:var(--mut2);font:500 10px var(--sans)}
+  #zenith .chart-lane{font:700 11px var(--sans);letter-spacing:.08em;text-transform:uppercase;opacity:.9}
+  #zenith .chart-node-label{fill:var(--mut);font:500 10px var(--sans)}
+  #zenith .chart-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;justify-content:center}
+  #zenith .legend-item{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mut)}
+  #zenith .legend-item i{width:10px;height:10px;border-radius:3px;display:inline-block}
+  #zenith .chart-ring{position:relative;display:inline-flex;align-items:center;justify-content:center}
+  #zenith .chart-ring-centre{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;pointer-events:none;text-align:center}
+  #zenith .chart-ring-value{font-size:34px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+  #zenith .chart-ring-label{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.12em;margin-top:2px}
+  #zenith .chart-ring-delta{font-size:12px;font-weight:700;margin-top:6px}
+  #zenith .chart-ring-delta.up{color:var(--pos)} #zenith .chart-ring-delta.down{color:var(--neg)}
+  #zenith .chart-hbars{display:flex;flex-direction:column;gap:9px}
+  #zenith .hbar{display:grid;grid-template-columns:minmax(96px,34%) 1fr auto;gap:10px;align-items:center;font-size:13px}
+  #zenith .hbar-label{color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #zenith .hbar-track{height:9px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden}
+  #zenith .hbar-fill{height:100%;border-radius:99px;width:0}
+  #zenith .hbar-value{font-variant-numeric:tabular-nums;font-weight:700;font-size:12px}
+  #zenith .chart-spark{overflow:visible}
+  #zenith .chart-note{font-size:12px;margin-top:10px;font-style:italic}
+  #zenith .chart-timeline{display:flex;flex-direction:column;gap:2px;position:relative;padding-left:6px}
+  #zenith .tl-item{display:flex;gap:12px;padding:9px 0;border-left:1px solid var(--line2);padding-left:16px;position:relative}
+  #zenith .tl-dot{position:absolute;left:-5px;top:15px;width:9px;height:9px;border-radius:50%;
+    background:var(--sky2);box-shadow:0 0 0 3px rgba(56,189,248,.15)}
+  #zenith .tl-date{font-size:11px;color:var(--sky2);font-weight:700;letter-spacing:.04em}
+  #zenith .tl-event{font-size:14px;margin:2px 0 4px}
+  #zenith .delta-stat{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:16px}
+  #zenith .delta-value{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:4px 0}
+  #zenith .delta-change{font-size:12px;font-weight:700}
+  #zenith .delta-change.up{color:var(--pos)} #zenith .delta-change.down{color:var(--neg)}
+  #zenith .delta-change.flat{color:var(--mut)}
+  #zenith .fw-num{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:22px;
+    padding:0 8px;border-radius:6px;background:rgba(56,189,248,.12);color:var(--sky2);
+    font:700 11px var(--mono);letter-spacing:.04em;margin-right:10px}
+  #zenith .fw-head{display:flex;align-items:center;gap:2px;margin-bottom:14px}
+  #zenith .fw-title{font-size:17px;font-weight:700;letter-spacing:-.01em}
+  #zenith .fw-sub{font-size:12px;color:var(--mut);margin-top:2px}
 </style>
 
 <div id="zenith">
@@ -179,6 +225,918 @@
     catch(e){ LIVE=false; setStatus('demo','Demo preview — not connected'); }
   }
   const hostShort=()=>{try{return new URL(CFG.base).host.replace('www.','');}catch(e){return CFG.base;}};
+
+  /* =================================================================
+     CHARTS — animated, interactive, dependency-free
+     -----------------------------------------------------------------
+     Everything is hand-drawn SVG so the whole app stays one file with no
+     CDN (a strict CSP blocks external scripts anyway). Charts animate from
+     zero on entry and respond to hover, because a number that moves is read
+     as a measurement while a static block of colour is read as decoration.
+     Motion is skipped entirely when the reader asks for reduced motion.
+     ================================================================= */
+  const REDUCE_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const SVGNS='http://www.w3.org/2000/svg';
+  const TONE={positive:'#4ade80',neutral:'#94a3b8',negative:'#fb7185'};
+  // Categorical palette for share-of-voice/theme charts. Distinct in hue AND
+  // lightness so the series stay separable for colour-blind readers.
+  const SERIES=['#38bdf8','#f59e0b','#a78bfa','#34d399','#fb7185','#60a5fa','#fbbf24','#f472b6','#2dd4bf','#c084fc'];
+
+  const svg=(tag,attrs)=>{const n=document.createElementNS(SVGNS,tag);for(const k in (attrs||{}))n.setAttribute(k,attrs[k]);return n;};
+  const easeOut=t=>1-Math.pow(1-t,3);
+
+  /** Drive a value from 0..1 over `ms`, calling step() each frame. */
+  function animate(ms,step){
+    if(REDUCE_MOTION){step(1);return;}
+    const t0=performance.now();
+    const tick=now=>{const p=Math.min(1,(now-t0)/ms);step(easeOut(p));if(p<1)requestAnimationFrame(tick);};
+    requestAnimationFrame(tick);
+  }
+
+  /** Shared floating tooltip — one node, moved around, so charts stay cheap. */
+  let _tip;
+  function tip(){
+    if(!_tip){_tip=el('div','chart-tip');document.body.appendChild(_tip);}
+    return _tip;
+  }
+  function showTip(evt,html){
+    const t=tip();t.innerHTML=html;t.style.opacity='1';
+    const pad=14;let x=evt.clientX+pad,y=evt.clientY+pad;
+    const r=t.getBoundingClientRect();
+    if(x+r.width>window.innerWidth-8)x=evt.clientX-r.width-pad;
+    if(y+r.height>window.innerHeight-8)y=evt.clientY-r.height-pad;
+    t.style.left=x+'px';t.style.top=y+'px';
+  }
+  const hideTip=()=>{if(_tip)_tip.style.opacity='0';};
+
+  /** Headline score ring — the "number for executives who don't read". */
+  function scoreRing(value,opts){
+    opts=opts||{};
+    const size=opts.size||168, stroke=14, r=(size-stroke)/2, c=2*Math.PI*r;
+    const wrap=el('div','chart-ring');
+    const s=svg('svg',{viewBox:`0 0 ${size} ${size}`,width:size,height:size,role:'img',
+                       'aria-label':`${opts.label||'Score'}: ${value}`});
+    s.appendChild(svg('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:'rgba(255,255,255,.08)','stroke-width':stroke}));
+    const arc=svg('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:opts.color||'var(--sky)',
+      'stroke-width':stroke,'stroke-linecap':'round','stroke-dasharray':c,'stroke-dashoffset':c,
+      transform:`rotate(-90 ${size/2} ${size/2})`});
+    arc.style.filter='drop-shadow(0 0 8px '+(opts.glow||'rgba(56,189,248,.5)')+')';
+    s.appendChild(arc);
+    wrap.appendChild(s);
+
+    const centre=el('div','chart-ring-centre');
+    const num=el('div','chart-ring-value','0');
+    const cap=el('div','chart-ring-label',esc(opts.label||''));
+    centre.appendChild(num);centre.appendChild(cap);
+    if(opts.delta!=null&&opts.delta!==0){
+      const up=opts.delta>0;
+      centre.appendChild(el('div','chart-ring-delta '+(up?'up':'down'),
+        (up?'▲ ':'▼ ')+Math.abs(opts.delta)+(opts.deltaSuffix||' pts')));
+    }
+    wrap.appendChild(centre);
+
+    const max=opts.max||100;
+    animate(1100,p=>{
+      arc.setAttribute('stroke-dashoffset',c*(1-(value/max)*p));
+      num.textContent=(opts.decimals?(value*p).toFixed(1):Math.round(value*p))+(opts.suffix||'');
+    });
+    return wrap;
+  }
+
+  /** Donut — the pie the sentiment framework specifies, made interactive. */
+  function donut(slices,opts){
+    opts=opts||{};
+    const size=opts.size||200, stroke=opts.stroke||30, r=(size-stroke)/2, c=2*Math.PI*r;
+    const total=slices.reduce((a,s)=>a+s.value,0)||1;
+    const wrap=el('div','chart-ring');
+    const s=svg('svg',{viewBox:`0 0 ${size} ${size}`,width:size,height:size});
+    s.appendChild(svg('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:'rgba(255,255,255,.06)','stroke-width':stroke}));
+
+    let offset=0;
+    const arcs=[];
+    slices.forEach(slice=>{
+      const frac=slice.value/total;
+      const a=svg('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:slice.color,'stroke-width':stroke,
+        'stroke-dasharray':`0 ${c}`,transform:`rotate(${-90+offset*360} ${size/2} ${size/2})`});
+      a.style.cursor='pointer';a.style.transition='stroke-width .15s';
+      a.addEventListener('mousemove',e=>{
+        a.setAttribute('stroke-width',stroke+6);
+        showTip(e,`<b>${esc(slice.label)}</b><br>${fmt(slice.value)} · ${(100*frac).toFixed(1)}%`);
+      });
+      a.addEventListener('mouseleave',()=>{a.setAttribute('stroke-width',stroke);hideTip();});
+      s.appendChild(a);arcs.push({node:a,frac});
+      offset+=frac;
+    });
+    wrap.appendChild(s);
+
+    const centre=el('div','chart-ring-centre');
+    centre.appendChild(el('div','chart-ring-value',fmt(total)));
+    centre.appendChild(el('div','chart-ring-label',esc(opts.label||'total')));
+    wrap.appendChild(centre);
+
+    animate(900,p=>arcs.forEach(a=>a.node.setAttribute('stroke-dasharray',`${c*a.frac*p} ${c}`)));
+    return wrap;
+  }
+
+  /** 100% stacked bars across periods — the tonality chart, period over period. */
+  function stackedBars(periods,keys,opts){
+    opts=opts||{};
+    const W=opts.width||640,H=opts.height||220,pad={t:14,r:12,b:34,l:34};
+    const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+    const box=el('div','chart-box');
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:'none',class:'chart-svg'});
+
+    [0,25,50,75,100].forEach(v=>{
+      const y=pad.t+ih*(1-v/100);
+      s.appendChild(svg('line',{x1:pad.l,x2:W-pad.r,y1:y,y2:y,stroke:'rgba(255,255,255,.07)'}));
+      const t=svg('text',{x:pad.l-8,y:y+4,'text-anchor':'end',class:'chart-axis'});
+      t.textContent=v+'%';s.appendChild(t);
+    });
+
+    const bw=Math.min(74,iw/periods.length*0.55), gap=iw/periods.length;
+    periods.forEach((period,pi)=>{
+      const x=pad.l+gap*pi+(gap-bw)/2;
+      const total=keys.reduce((a,k)=>a+(period.values[k.key]||0),0)||1;
+      let acc=0;
+      keys.forEach(k=>{
+        const frac=(period.values[k.key]||0)/total;
+        const rect=svg('rect',{x,width:bw,rx:4,fill:k.color,y:pad.t+ih,height:0});
+        rect.style.cursor='pointer';
+        rect.addEventListener('mousemove',e=>{
+          rect.setAttribute('opacity','.75');
+          showTip(e,`<b>${esc(k.label)}</b><br>${esc(period.label)}<br>${fmt(period.values[k.key]||0)} · ${(100*frac).toFixed(1)}%`);
+        });
+        rect.addEventListener('mouseleave',()=>{rect.setAttribute('opacity','1');hideTip();});
+        s.appendChild(rect);
+        const from=acc, h=ih*frac;
+        animate(900,p=>{
+          const grown=h*p, base=pad.t+ih-(ih*from*p)-grown;
+          rect.setAttribute('y',base);rect.setAttribute('height',Math.max(0,grown));
+        });
+        acc+=frac;
+      });
+      const lbl=svg('text',{x:x+bw/2,y:H-12,'text-anchor':'middle',class:'chart-axis'});
+      lbl.textContent=period.label;s.appendChild(lbl);
+    });
+
+    box.appendChild(s);
+    box.appendChild(legend(keys));
+    return box;
+  }
+
+  /** Stacked area over periods — share of voice / theme climate. */
+  function stackedArea(periods,keys,opts){
+    opts=opts||{};
+    const W=opts.width||640,H=opts.height||230,pad={t:14,r:12,b:34,l:38};
+    const iw=W-pad.l-pad.r, ih=H-pad.t-pad.b;
+    const box=el('div','chart-box');
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:'none',class:'chart-svg'});
+
+    [0,50,100].forEach(v=>{
+      const y=pad.t+ih*(1-v/100);
+      s.appendChild(svg('line',{x1:pad.l,x2:W-pad.r,y1:y,y2:y,stroke:'rgba(255,255,255,.07)'}));
+      const t=svg('text',{x:pad.l-8,y:y+4,'text-anchor':'end',class:'chart-axis'});t.textContent=v+'%';s.appendChild(t);
+    });
+
+    const xs=periods.map((_,i)=>pad.l+(periods.length===1?iw/2:iw*i/(periods.length-1)));
+    const totals=periods.map(p=>keys.reduce((a,k)=>a+(p.values[k.key]||0),0)||1);
+    let lower=periods.map(()=>0);
+    const bands=[];
+    keys.forEach(k=>{
+      const upper=periods.map((p,i)=>lower[i]+(p.values[k.key]||0)/totals[i]);
+      const path=svg('path',{fill:k.color,opacity:'.85',stroke:'none'});
+      path.style.cursor='pointer';
+      path.addEventListener('mousemove',e=>{
+        path.setAttribute('opacity','1');
+        showTip(e,`<b>${esc(k.label)}</b><br>share of voice across the period`);
+      });
+      path.addEventListener('mouseleave',()=>{path.setAttribute('opacity','.85');hideTip();});
+      s.appendChild(path);
+      bands.push({path,lower:lower.slice(),upper});
+      lower=upper;
+    });
+
+    animate(1000,p=>bands.forEach(b=>{
+      const top=xs.map((x,i)=>`${x},${pad.t+ih*(1-b.upper[i]*p)}`).join(' L');
+      const bottom=xs.map((x,i)=>`${x},${pad.t+ih*(1-b.lower[i]*p)}`).reverse().join(' L');
+      b.path.setAttribute('d',`M${top} L${bottom} Z`);
+    }));
+
+    periods.forEach((period,i)=>{
+      const t=svg('text',{x:xs[i],y:H-12,'text-anchor':'middle',class:'chart-axis'});
+      t.textContent=period.label;s.appendChild(t);
+    });
+    box.appendChild(s);box.appendChild(legend(keys));
+    return box;
+  }
+
+  /** Horizontal bars — outlet segmentation, influence rankings. */
+  function hBars(items,opts){
+    opts=opts||{};
+    const max=Math.max(1,...items.map(i=>i.value));
+    const wrap=el('div','chart-hbars');
+    items.forEach((item,idx)=>{
+      const row=el('div','hbar');
+      row.appendChild(el('div','hbar-label',esc(item.label)));
+      const track=el('div','hbar-track');
+      const fill=el('div','hbar-fill');
+      fill.style.background=item.color||SERIES[idx%SERIES.length];
+      fill.style.width='0%';
+      track.appendChild(fill);row.appendChild(track);
+      row.appendChild(el('div','hbar-value',(opts.suffix?item.value+opts.suffix:fmt(item.value))));
+      row.addEventListener('mousemove',e=>showTip(e,`<b>${esc(item.label)}</b><br>${fmt(item.value)}${item.note?'<br>'+esc(item.note):''}`));
+      row.addEventListener('mouseleave',hideTip);
+      wrap.appendChild(row);
+      setTimeout(()=>{fill.style.transition='width .9s cubic-bezier(.2,.8,.2,1)';fill.style.width=(100*item.value/max)+'%';},40+idx*70);
+    });
+    return wrap;
+  }
+
+  /** Sparkline for a small series — movement at a glance. */
+  function sparkline(values,opts){
+    opts=opts||{};
+    const W=opts.width||120,H=opts.height||34;
+    const max=Math.max(...values,1),min=Math.min(...values,0);
+    const span=(max-min)||1;
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,width:W,height:H,class:'chart-spark'});
+    const pts=values.map((v,i)=>[values.length===1?W/2:W*i/(values.length-1),H-((v-min)/span)*(H-6)-3]);
+    const path=svg('path',{fill:'none',stroke:opts.color||'var(--sky2)','stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round',
+      d:'M'+pts.map(p=>p.join(',')).join(' L')});
+    const len=Math.max(1,W*1.6);
+    path.setAttribute('stroke-dasharray',len);path.setAttribute('stroke-dashoffset',len);
+    s.appendChild(path);
+    animate(900,p=>path.setAttribute('stroke-dashoffset',len*(1-p)));
+    return s;
+  }
+
+  /** Timeline of dated developments — the issue framework's section 1. */
+  function timelineChart(items,opts){
+    const wrap=el('div','chart-timeline');
+    if(!items.length){wrap.appendChild(el('div','muted','No dated developments in the record.'));return wrap;}
+    items.forEach((item,idx)=>{
+      const row=el('div','tl-item');
+      row.innerHTML=`<div class="tl-dot"></div>
+        <div class="tl-body"><div class="tl-date">${esc(item.date||'')}</div>
+        <div class="tl-event">${esc(item.event||item.title||'')}</div>
+        ${item.type?`<span class="chip">${esc(item.type)}</span>`:''}
+        ${item.sources?`<span class="chip">${item.sources} source(s)</span>`:''}</div>`;
+      row.style.opacity='0';row.style.transform='translateX(-10px)';
+      wrap.appendChild(row);
+      setTimeout(()=>{row.style.transition='opacity .4s, transform .4s';row.style.opacity='1';row.style.transform='none';},60*idx);
+    });
+    return wrap;
+  }
+
+  /** Probability bars — the framework's outcome tree, as proportions. */
+  function probabilityBars(tree){
+    const base=tree&&tree.baseline||{};
+    const rows=[
+      {label:'Desired outcome prevails',value:base.desired_outcome_prevails,color:TONE.positive},
+      {label:'Opposed outcome prevails',value:base.opposed_outcome_prevails,color:TONE.negative},
+      {label:'Undetermined',value:base.undetermined,color:TONE.neutral},
+    ].filter(r=>r.value!=null);
+    const wrap=el('div','');
+    if(!rows.length){wrap.appendChild(el('div','muted','Not enough stakeholder positions to compute a baseline.'));return wrap;}
+    wrap.appendChild(hBars(rows.map(r=>({label:r.label,value:r.value,color:r.color})),{suffix:'%'}));
+    if(tree.caveat)wrap.appendChild(el('div','muted chart-note',esc(tree.caveat)));
+    return wrap;
+  }
+
+  /** Force-free stakeholder map: rings by position, hover reveals the profile. */
+  function stakeholderMap(nodes,edges,opts){
+    opts=opts||{};
+    const W=opts.width||640,H=opts.height||420;
+    const box=el('div','chart-box');
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,class:'chart-svg',style:'height:auto'});
+    if(!nodes.length){box.appendChild(el('div','muted','No stakeholders identified yet.'));return box;}
+
+    // Champions left, challengers right, neutrals centre — the reader should
+    // see the balance of the issue before reading a single label.
+    const lanes={for:{x:W*0.22,list:[]},neutral:{x:W*0.5,list:[]},against:{x:W*0.78,list:[]}};
+    nodes.forEach(n=>(lanes[n.group]||lanes.neutral).list.push(n));
+    const pos={};
+    Object.entries(lanes).forEach(([,lane])=>{
+      lane.list.forEach((n,i)=>{
+        const step=(H-90)/(lane.list.length+1);
+        pos[n.id]={x:lane.x,y:60+step*(i+1)};
+      });
+    });
+
+    edges.forEach(e=>{
+      const a=pos[e.from],b=pos[e.to];
+      if(!a||!b)return;
+      const line=svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'rgba(125,211,252,.22)','stroke-width':Math.min(4,1+(e.weight||1)/2)});
+      s.appendChild(line);
+    });
+
+    const maxVal=Math.max(1,...nodes.map(n=>n.value||1));
+    nodes.forEach((n,idx)=>{
+      const p=pos[n.id];if(!p)return;
+      const r=10+16*Math.sqrt((n.value||1)/maxVal);
+      const colour=n.group==='for'?TONE.positive:n.group==='against'?TONE.negative:TONE.neutral;
+      const g=svg('g',{});g.style.cursor='pointer';
+      const circle=svg('circle',{cx:p.x,cy:p.y,r:0,fill:colour,opacity:'.85',stroke:'rgba(255,255,255,.35)','stroke-width':1});
+      const label=svg('text',{x:p.x,y:p.y+r+14,'text-anchor':'middle',class:'chart-node-label'});
+      label.textContent=n.id.length>22?n.id.slice(0,21)+'…':n.id;
+      g.appendChild(circle);g.appendChild(label);
+      g.addEventListener('mousemove',e=>{
+        circle.setAttribute('opacity','1');
+        showTip(e,`<b>${esc(n.id)}</b><br>${esc(n.segment||'')} · influence ${n.value||0}`+
+          (opts.onHoverDetail?opts.onHoverDetail(n):''));
+      });
+      g.addEventListener('mouseleave',()=>{circle.setAttribute('opacity','.85');hideTip();});
+      if(opts.onSelect)g.addEventListener('click',()=>opts.onSelect(n));
+      s.appendChild(g);
+      animate(700,t=>circle.setAttribute('r',r*t));
+    });
+
+    [['Champions',W*0.22,TONE.positive],['Neutral',W*0.5,TONE.neutral],['Challengers',W*0.78,TONE.negative]]
+      .forEach(([txt,x,col])=>{
+        const t=svg('text',{x,y:28,'text-anchor':'middle',class:'chart-lane',fill:col});
+        t.textContent=txt;s.appendChild(t);
+      });
+
+    box.appendChild(s);
+    return box;
+  }
+
+  function legend(keys){
+    const l=el('div','chart-legend');
+    keys.forEach(k=>{
+      const item=el('span','legend-item');
+      item.innerHTML=`<i style="background:${k.color}"></i>${esc(k.label)}`;
+      l.appendChild(item);
+    });
+    return l;
+  }
+
+  /** Big delta callout — "% difference from the previous period". */
+  function deltaStat(label,value,delta,opts){
+    opts=opts||{};
+    const card=el('div','delta-stat');
+    const up=delta>0, flat=delta===0||delta==null;
+    card.innerHTML=`<div class="lbl">${esc(label)}</div>
+      <div class="delta-value tnum">${fmt(value)}</div>
+      <div class="delta-change ${flat?'flat':up?'up':'down'}">
+        ${flat?'—':(up?'▲':'▼')+' '+Math.abs(delta)+'%'} <span class="muted">${flat?'no prior period':'vs previous period'}</span>
+      </div>`;
+    return card;
+  }
+
+  /* =================================================================
+     FRAMEWORK VIEWS
+     -----------------------------------------------------------------
+     The two client frameworks are rendered in their own documented order,
+     with their own numbering and vocabulary ("potential levers", "champions",
+     "challengers"). An analyst opening this should recognise their document,
+     not a redesign of it. Where a parameter has no data, the section says so
+     rather than disappearing — a blank in a due-diligence report is itself
+     information, and a silently missing section is not.
+     ================================================================= */
+
+  function fwSection(number,title,subtitle){
+    const head=el('div','fw-head');
+    head.appendChild(el('span','fw-num',esc(number)));
+    const t=el('div','');
+    t.appendChild(el('div','fw-title',esc(title)));
+    if(subtitle)t.appendChild(el('div','fw-sub',esc(subtitle)));
+    head.appendChild(t);
+    return head;
+  }
+  const fwEmpty=msg=>el('div','muted','— '+msg);
+
+  /* ---- Sentiment Analysis Framework V1.0 ---- */
+  function renderSentimentFramework(out,fw){
+    if(!fw){out.appendChild(noteCard('Sentiment framework','Not present in this report.'));return;}
+
+    // 1.0 Summary of subject
+    const s1=el('div','card glow');
+    s1.appendChild(fwSection('1.0','Summary of subject','Who they are, position, and an executive summary of parameters 3–5'));
+    const sub=fw.summary_of_subject||{};
+    s1.appendChild(el('div','',`<div class="hero-one">${esc(sub.who_they_are||sub.name||'')}</div>`));
+    if(sub.position)s1.appendChild(el('div','row',`<span class="pill sky">${esc(sub.position)}</span><span class="chip">${esc(sub.subject_type||'')}</span>`));
+    if(sub.executive_summary)s1.appendChild(el('div','muted',`<div style="margin-top:12px;white-space:pre-wrap">${esc(sub.executive_summary)}</div>`));
+    out.appendChild(s1);
+
+    // 2.0 Sentiment score + overall mentions
+    const s2=el('div','card');
+    s2.appendChild(fwSection('2.0','Sentiment score','The headline number, and how it moved'));
+    const score=fw.sentiment_score||{}, vol=fw.overall_mentions||{};
+    const grid2=el('div','grid');grid2.style.gridTemplateColumns='auto 1fr';grid2.style.alignItems='center';grid2.style.gap='24px';
+    const ringWrap=el('div','');
+    ringWrap.appendChild(scoreRing(score.score||0,{label:'Sentiment score',suffix:'%',decimals:true,
+      delta:score.change,deltaSuffix:' pts',
+      color:(score.score||0)>=50?TONE.positive:(score.score||0)>=30?'#fbbf24':TONE.negative,
+      glow:(score.score||0)>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)'}));
+    grid2.appendChild(ringWrap);
+    const meta=el('div','');
+    meta.innerHTML=`<div class="muted" style="font-size:13px">${esc(score.definition||'')}</div>
+      <div class="row" style="margin-top:10px">
+        <span class="chip">Previous: ${score.previous_score!=null?score.previous_score+'%':'—'}</span>
+        <span class="pill ${score.direction==='improving'?'pos':score.direction==='declining'?'neg':''}">${esc(score.direction||'')}</span>
+      </div>`;
+    grid2.appendChild(meta);
+    s2.appendChild(grid2);
+    out.appendChild(s2);
+
+    // 2.0 Overall mentions
+    const s2b=el('div','card');
+    s2b.appendChild(fwSection('2.0','Overall mentions','Total, change on the previous period, and outlet segmentation'));
+    const mg=el('div','grid');mg.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';
+    mg.appendChild(deltaStat('Total mentions',vol.total||0,vol.difference_pct));
+    const segs=(vol.segmentation||[]).map((sgm,i)=>({label:sgm.label,value:sgm.count,color:SERIES[i%SERIES.length],
+      note:sgm.share+'% of coverage'}));
+    const segBox=el('div','');
+    segBox.appendChild(el('div','lbl','By outlet type'));
+    segBox.appendChild(segs.length?hBars(segs):fwEmpty('no coverage segmented yet'));
+    mg.appendChild(segBox);
+    s2b.appendChild(mg);
+    const covered=vol.sources_covered||{};
+    const allCovered=[].concat(...Object.values(covered));
+    if(allCovered.length){
+      const det=el('details','');det.style.marginTop='14px';
+      det.innerHTML=`<summary class="muted" style="cursor:pointer;font-size:12px">Sources covered (${allCovered.length})</summary>
+        <div class="row" style="margin-top:10px">${allCovered.slice(0,60).map(x=>'<span class="chip">'+esc(x)+'</span>').join('')}</div>`;
+      s2b.appendChild(det);
+    }
+    out.appendChild(s2b);
+
+    // 3.0 Sentiment (pie, per the framework)
+    const s3=el('div','card');
+    s3.appendChild(fwSection('3.0','Sentiment','Positive, negative and neutral totals'));
+    const sent=fw.sentiment||{};
+    const g3=el('div','grid');g3.style.gridTemplateColumns='auto 1fr';g3.style.gap='24px';g3.style.alignItems='center';
+    g3.appendChild(donut([
+      {label:'Positive',value:sent.positive||0,color:TONE.positive},
+      {label:'Neutral',value:sent.neutral||0,color:TONE.neutral},
+      {label:'Negative',value:sent.negative||0,color:TONE.negative},
+    ],{label:'analysed'}));
+    g3.appendChild(hBars([
+      {label:'Positive',value:sent.positive||0,color:TONE.positive},
+      {label:'Neutral',value:sent.neutral||0,color:TONE.neutral},
+      {label:'Negative',value:sent.negative||0,color:TONE.negative},
+    ]));
+    s3.appendChild(g3);
+    out.appendChild(s3);
+
+    // 4.0 Current issues — levers and barriers
+    const s4=el('div','card');
+    s4.appendChild(fwSection('4.0','Current issues','Potential levers and potential barriers (max 3 each)'));
+    const ci=fw.current_issues||{};
+    const g4=el('div','grid');g4.style.gridTemplateColumns='repeat(auto-fit,minmax(260px,1fr))';
+    [['Potential levers',ci.potential_levers,TONE.positive],
+     ['Potential barriers',ci.potential_barriers,TONE.negative]].forEach(([title,list,colour])=>{
+      const col=el('div','');
+      col.appendChild(el('div','lbl',title));
+      if(!(list||[]).length){col.appendChild(fwEmpty('none identified this period'));}
+      (list||[]).forEach(item=>{
+        const c=el('div','card');c.style.marginTop='10px';c.style.borderLeft='3px solid '+colour;
+        c.innerHTML=`<div style="font-weight:600">${esc(item.issue||'')}</div>
+          ${item.description?`<div class="muted" style="font-size:13px;margin-top:6px">${esc(item.description)}</div>`:''}
+          <div class="row" style="margin-top:8px">
+            ${item.mentions!=null?`<span class="chip">${item.mentions} mention(s)</span>`:''}
+            ${item.strength!=null?`<span class="chip">strength ${item.strength}</span>`:''}
+          </div>`;
+        col.appendChild(c);
+      });
+      g4.appendChild(col);
+    });
+    s4.appendChild(g4);
+    out.appendChild(s4);
+
+    // 5.0 Emergent issues
+    const s5=el('div','card');
+    const em=fw.emergent_issues||{};
+    s5.appendChild(fwSection('5.0','Emergent issues',
+      `High-impact coverage in the ${em.window_hours||72}h before reporting`));
+    if(!(em.items||[]).length){s5.appendChild(fwEmpty('nothing crossed the threshold in the window'));}
+    (em.items||[]).forEach(item=>{
+      const row=el('div','mentr');
+      row.innerHTML=`<div class="row" style="justify-content:space-between">
+          <span class="pill amber">${esc(item.outlet_type||'')}</span>
+          <span class="chip">${fmt(item.engagement)} engagements · ${esc(item.qualified_by||'')}</span>
+        </div>
+        <div style="margin-top:8px">${esc(item.headline||'')}</div>
+        ${item.url?`<a href="${esc(item.url)}" target="_blank" rel="noopener" style="font-size:12px">source ↗</a>`:''}`;
+      s5.appendChild(row);
+    });
+    if(em.note)s5.appendChild(el('div','muted chart-note',esc(em.note)));
+    out.appendChild(s5);
+
+    // 6.0 Strategic implications
+    const s6=el('div','card glow');
+    s6.appendChild(fwSection('6.0','Strategic implications','The most important issue: outline, status, trajectory'));
+    const si=fw.strategic_implications||{};
+    if(!si.issue){s6.appendChild(fwEmpty(si.outline||'no dominant issue identified'));}
+    else{
+      s6.appendChild(el('div','hero-one',esc(si.issue)));
+      if(si.outline)s6.appendChild(el('div','muted',`<div style="margin-top:8px">${esc(si.outline)}</div>`));
+      const traj=si.trajectory;
+      s6.appendChild(el('div','row',`<span class="pill ${traj==='escalating'?'neg':traj==='receding'?'pos':''}">${esc(traj||'')}</span>
+        <span class="chip">${esc(si.status||'')}</span>`));
+      if((si.key_dates||[]).length){
+        s6.appendChild(el('div','lbl','Key dates'));
+        s6.appendChild(timelineChart(si.key_dates));
+      }
+      if((si.key_people||[]).length){
+        s6.appendChild(el('div','lbl','Key people'));
+        s6.appendChild(el('div','row',(si.key_people||[]).map(p=>`<span class="chip">${esc(p)}</span>`).join('')));
+      }
+    }
+    out.appendChild(s6);
+  }
+
+  /* ---- Issue Analysis & Mapping Framework V1.0 ---- */
+  function renderIssueFramework(out,fw){
+    if(!fw){out.appendChild(noteCard('Issue framework','Not present in this report.'));return;}
+
+    // INPUT 1
+    const i1=el('div','card glow');
+    i1.appendChild(fwSection('INPUT 1','Issue definition','L1 — the dependent variable everything is measured against'));
+    const def=fw.input_1_issue_definition||{};
+    i1.appendChild(el('div','hero-one',esc(def.statement||def.issue||'')));
+    if(def.note)i1.appendChild(el('div','muted chart-note',esc(def.note)));
+    out.appendChild(i1);
+
+    // 1 Background and context
+    const bg=fw.background_and_context||{};
+    const s1=el('div','card');
+    s1.appendChild(fwSection('1','Background and context',
+      `Outline, international and national approaches, timeline (${bg.controls?bg.controls.year_cutoff:10}-year cut-off)`));
+    [['Outline',bg.outline],['International approach',bg.international],['National approach',bg.national]]
+      .forEach(([label,text])=>{
+        s1.appendChild(el('div','lbl',label));
+        s1.appendChild(text?el('div','muted',`<div style="margin:6px 0 14px;white-space:pre-wrap">${esc(text)}</div>`)
+                           :fwEmpty('not yet established from the evidence'));
+      });
+    s1.appendChild(el('div','lbl','Timeline of major developments'));
+    s1.appendChild(timelineChart(bg.timeline_of_major_developments||[]));
+    if(bg.controls){
+      s1.appendChild(el('div','row',`<span class="chip">${bg.controls.events_in_scope} in scope</span>
+        <span class="chip">${bg.controls.events_excluded_by_cutoff} excluded by ${bg.controls.year_cutoff}yr cut-off</span>`));
+    }
+    out.appendChild(s1);
+
+    // 2 Main contours
+    const mc=fw.main_contours||{};
+    const s2=el('div','card');
+    s2.appendChild(fwSection('2','Main contours',
+      `Narratives and positions — max ${mc.controls?mc.controls.max_stakeholders_per_segment:5} stakeholders per segment`));
+    const positions=mc.positions||{};
+    const g2=el('div','grid');g2.style.gridTemplateColumns='repeat(auto-fit,minmax(220px,1fr))';
+    [['for','For',TONE.positive],['against','Against',TONE.negative],['neutral','Neutral',TONE.neutral]]
+      .forEach(([key,label,colour])=>{
+        const block=positions[key]||{};
+        const col=el('div','');
+        col.appendChild(el('div','lbl',label+(block.total_identified?` (${block.shown} of ${block.total_identified})`:'')));
+        const segments=block.segments||{};
+        let any=false;
+        Object.entries(segments).forEach(([seg,list])=>{
+          if(!list.length)return;
+          any=true;
+          const c=el('div','card');c.style.marginTop='8px';c.style.borderLeft='3px solid '+colour;
+          c.innerHTML=`<div class="lbl">${esc(seg.replace('_',' '))}</div>`+
+            list.map(s=>`<div class="mentr"><div style="font-weight:600">${esc(s.name)}</div>
+              <div class="muted" style="font-size:12px">influence ${s.influence!=null?s.influence:'—'}</div></div>`).join('');
+          col.appendChild(c);
+        });
+        if(!any)col.appendChild(fwEmpty('none identified'));
+        g2.appendChild(col);
+      });
+    s2.appendChild(g2);
+    out.appendChild(s2);
+
+    // 2 Stakeholder networks (visualisation + hover profiles)
+    const sn=fw.stakeholder_networks||{};
+    const s2b=el('div','card');
+    s2b.appendChild(fwSection('2','Stakeholder networks','Champions, challengers and neutrals — hover a node for the profile'));
+    const viz=sn.visualisation||{nodes:[],edges:[]};
+    const profiles={};
+    ['champions','challengers','neutral'].forEach(group=>(sn[group]||[]).forEach(s=>{profiles[s.name]=s;}));
+    s2b.appendChild(stakeholderMap(viz.nodes||[],viz.edges||[],{
+      onHoverDetail:node=>{
+        const p=profiles[node.id];
+        if(!p||!p.profile)return '';
+        const pr=p.profile;
+        const bits=[];
+        if(pr.position_on_issue)bits.push('<br><b>Position:</b> '+esc(String(pr.position_on_issue).slice(0,160)));
+        if(pr.history)bits.push('<br><b>History:</b> '+esc(String(pr.history).slice(0,160)));
+        if(pr.track_record)bits.push('<br><b>Track record:</b> '+esc(String(pr.track_record).slice(0,160)));
+        if(pr.modus_operandi)bits.push('<br><b>Modus operandi:</b> '+esc(String(pr.modus_operandi).slice(0,160)));
+        return bits.join('');
+      },
+      onSelect:node=>{
+        const p=profiles[node.id];if(!p)return;
+        alertProfile(p);
+      },
+    }));
+    out.appendChild(s2b);
+
+    // INPUT 2
+    const i2=el('div','card');
+    i2.appendChild(fwSection('INPUT 2','Desired outcome','L2 — strategic analysis is oriented to this'));
+    const d=fw.input_2_desired_outcome||{};
+    i2.appendChild(d.provided?el('div','hero-one',esc(d.outcome)):fwEmpty(d.note||'not supplied'));
+    if(d.provided&&d.note)i2.appendChild(el('div','muted chart-note',esc(d.note)));
+    out.appendChild(i2);
+
+    // 4 Strategic recommendations
+    const sr=fw.strategic_recommendations||{};
+    const s4=el('div','card glow');
+    s4.appendChild(fwSection('4','Strategic recommendations','Baseline probability, messaging, and who to engage'));
+    s4.appendChild(el('div','lbl','Baseline probability of outcomes'));
+    s4.appendChild(probabilityBars(sr.probability_tree||{}));
+    if((sr.probability_tree||{}).major_variables){
+      s4.appendChild(el('div','lbl','Major variables at play'));
+      s4.appendChild(el('ul','muted','<li>'+sr.probability_tree.major_variables.map(esc).join('</li><li>')+'</li>'));
+    }
+    s4.appendChild(el('div','lbl','Recommended messaging / positioning'));
+    s4.appendChild(el('div','muted',esc(sr.recommended_messaging||'')));
+    const g4=el('div','grid');g4.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';g4.style.marginTop='14px';
+    [['Engage (champions)',sr.who_to_engage_champions,TONE.positive],
+     ['Influence (challengers)',sr.who_to_influence_challengers,TONE.negative],
+     ['Convince (neutral)',sr.who_to_convince_neutral,TONE.neutral]].forEach(([label,list,colour])=>{
+      const col=el('div','card');col.style.borderLeft='3px solid '+colour;
+      col.appendChild(el('div','lbl',label));
+      if(!(list||[]).length)col.appendChild(fwEmpty('none identified'));
+      (list||[]).forEach(p=>col.appendChild(el('div','mentr',
+        `<div style="font-weight:600">${esc(p.name)}</div><div class="muted" style="font-size:12px">${esc(p.segment||'')} · influence ${p.influence!=null?p.influence:'—'}</div>`)));
+      g4.appendChild(col);
+    });
+    s4.appendChild(g4);
+    if((sr.best_engagement_approaches||[]).length){
+      s4.appendChild(el('div','lbl','Best engagement approaches'));
+      s4.appendChild(el('ul','muted','<li>'+sr.best_engagement_approaches.map(esc).join('</li><li>')+'</li>'));
+    }
+    out.appendChild(s4);
+
+    // 5 Sequencing
+    const sq=fw.sequencing||{};
+    const s5=el('div','card');
+    s5.appendChild(fwSection('5','Sequencing','When to engage, and when to build coalitions'));
+    s5.appendChild(el('div','lbl','Engagement timeline'));
+    s5.appendChild(timelineChart(sq.engagement_timeline||[]));
+    if((sq.coalition_windows||[]).length){
+      s5.appendChild(el('div','lbl','Coalition windows'));
+      (sq.coalition_windows||[]).forEach(w=>s5.appendChild(el('div','mentr',
+        `<div style="font-weight:600">${esc(w.action||'')}</div>
+         <div class="muted" style="font-size:12px">before ${esc(w.before||'')} — ${esc(w.rationale||'')}</div>`)));
+    }
+    if(sq.note)s5.appendChild(el('div','muted chart-note',esc(sq.note)));
+    out.appendChild(s5);
+
+    // 6 Data overview
+    const dov=fw.data_overview||{};
+    const s6=el('div','card');
+    s6.appendChild(fwSection('6','Data overview','What this rests on, the controls applied, and how to read it'));
+    const used=dov.data_used||{};
+    const g6=el('div','grid');g6.style.gridTemplateColumns='repeat(auto-fit,minmax(130px,1fr))';
+    Object.entries(used).forEach(([k,v])=>{
+      if(v==null)return;
+      g6.appendChild(kpiCard(k.replace(/_/g,' '),fmt(v),''));
+    });
+    s6.appendChild(g6);
+    if((dov.limitations||[]).length){
+      s6.appendChild(el('div','lbl','Limitations'));
+      s6.appendChild(el('ul','muted','<li>'+dov.limitations.map(esc).join('</li><li>')+'</li>'));
+    }
+    if(dov.controls_applied){
+      s6.appendChild(el('div','lbl','Controls applied'));
+      s6.appendChild(el('div','row',Object.entries(dov.controls_applied)
+        .map(([k,v])=>`<span class="chip">${esc(k.replace(/_/g,' '))}: ${esc(String(v))}</span>`).join('')));
+    }
+    if(dov.how_to_read){
+      s6.appendChild(el('div','lbl','How to read this report'));
+      s6.appendChild(el('div','muted',esc(dov.how_to_read)));
+    }
+    out.appendChild(s6);
+  }
+
+  /** Full stakeholder profile, opened from the map. */
+  function alertProfile(stakeholder){
+    const existing=$('#fw-profile');if(existing)existing.remove();
+    const panel=el('div','card glow');panel.id='fw-profile';
+    panel.style.cssText='position:fixed;right:20px;bottom:20px;max-width:400px;z-index:150;max-height:70vh;overflow:auto';
+    const pr=stakeholder.profile||{};
+    panel.innerHTML=`<div class="row" style="justify-content:space-between">
+        <div class="fw-title">${esc(stakeholder.name)}</div>
+        <button class="btn ghost" style="padding:4px 10px" id="fw-close">close</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span class="pill sky">${esc(stakeholder.role||'')}</span>
+        <span class="chip">${esc(stakeholder.segment||'')}</span>
+        <span class="chip">influence ${stakeholder.influence!=null?stakeholder.influence:'—'}</span>
+      </div>
+      ${['position_on_issue','history','track_record','modus_operandi'].map(k=>pr[k]?
+        `<div class="lbl" style="margin-top:12px">${k.replace(/_/g,' ')}</div>
+         <div class="muted" style="font-size:13px">${esc(pr[k])}</div>`:'').join('')}
+      ${(stakeholder.network||[]).length?`<div class="lbl" style="margin-top:12px">Network</div>
+        <div class="row">${stakeholder.network.map(n=>`<span class="chip">${esc(n.name)} · ${esc(n.relationship||'')}</span>`).join('')}</div>`:''}`;
+    document.body.appendChild(panel);
+    $('#fw-close',panel).onclick=()=>panel.remove();
+  }
+
+  /* =================================================================
+     WEEKLY DASHBOARD — the twelve standing sections
+     -----------------------------------------------------------------
+     The structure is fixed and is not ours to edit: 1 Weekly Dashboard,
+     2 Actions in Progress, 3 Tone (Sentiment), 4 Share of Voice, 5 Media,
+     6 Digital, 7 Others, 8 Subject, 9 Mission, 10 Status, 11 Press Relations,
+     12 Key Questions / Key Insights. Every section is always rendered, in
+     order, whether or not it has data — an empty standing section is a finding.
+     What changed is only how each one is drawn: rings, donuts, stacked areas
+     and timelines that animate from zero, instead of static blocks of colour.
+     ================================================================= */
+
+  const DASH_SOCIAL=['twitter','x','facebook','instagram','tiktok','youtube','reddit','linkedin','telegram','threads'];
+
+  /** Bucket the corpus by platform so sections 5/6/7 partition it exactly once. */
+  function dashChannels(r){
+    const rows=(r.volume&&r.volume.byPlatform)||r.platforms||r.byPlatform||[];
+    const list=Array.isArray(rows)?rows.map(p=>({name:String(p.platform||p.name||p.label||'').toLowerCase(),
+                                                 count:p.count||p.total||p.mentions||0}))
+      : Object.keys(rows||{}).map(k=>({name:k.toLowerCase(),count:rows[k]}));
+    const media=[],digital=[],others=[];
+    list.filter(p=>p.name).forEach(p=>{
+      if(DASH_SOCIAL.includes(p.name))digital.push(p);
+      else if(/news|media|article|press|nation|standard|star|citizen|bbc|reuters|\./.test(p.name))media.push(p);
+      else others.push(p);
+    });
+    const byCount=(a,b)=>b.count-a.count;
+    return {media:media.sort(byCount),digital:digital.sort(byCount),others:others.sort(byCount),all:list};
+  }
+
+  /** Periods for the movement charts, derived from whatever the report carries. */
+  function dashPeriods(r){
+    const tl=(r.timeline||[]).filter(t=>t&&(t.date||t.day));
+    if(!tl.length)return [];
+    return tl.slice(-8).map(t=>({
+      label:String(t.date||t.day).slice(5),
+      values:{positive:t.positive||0,neutral:t.neutral||0,negative:t.negative||0,
+              mentions:t.mentions||t.count||0},
+    }));
+  }
+
+  const dashCard=(number,title,subtitle)=>{
+    const c=el('div','card');
+    c.appendChild(fwSection(number,title,subtitle));
+    return c;
+  };
+
+  function renderWeeklyDashboard(out,r,meta){
+    const fw=r.sentiment_framework||{};
+    const score=fw.sentiment_score||{}, vol=fw.overall_mentions||{};
+    const s=r.sentiment||{}, v=r.volume||{}, cov=r.coverage||{}, di=r.deepInsights||{};
+    const ch=dashChannels(r), periods=dashPeriods(r);
+    const sentKeys=[{key:'positive',label:'Positive',color:TONE.positive},
+                    {key:'neutral',label:'Neutral',color:TONE.neutral},
+                    {key:'negative',label:'Negative',color:TONE.negative}];
+
+    /* 1 — Weekly Dashboard: the whole week in one glance. */
+    const c1=dashCard('1','Weekly Dashboard','Where the week stands, at a glance');
+    const g1=el('div','grid');g1.style.gridTemplateColumns='repeat(auto-fit,minmax(180px,1fr))';
+    g1.style.alignItems='center';
+    const scoreVal=score.score!=null?score.score:(s.positive||0);
+    g1.appendChild(scoreRing(scoreVal,{label:'Sentiment score',suffix:'%',decimals:true,delta:score.change,
+      color:scoreVal>=50?TONE.positive:scoreVal>=30?'#fbbf24':TONE.negative,
+      glow:scoreVal>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)',size:150}));
+    g1.appendChild(deltaStat('Total mentions',vol.total!=null?vol.total:(v.total||0),vol.difference_pct));
+    g1.appendChild(kpiCard('Channels covered',fmt(ch.all.length),(v.platforms||ch.all.length)+' platforms'));
+    g1.appendChild(kpiCard('Analysed',fmt(cov.mentions_analyzed||s.totalAnalyzed),
+      cov.complete?'full coverage':(cov.chunks?cov.chunks+' passes':'partial')));
+    c1.appendChild(g1);
+    if(periods.length){
+      c1.appendChild(el('div','lbl','Volume through the period'));
+      c1.appendChild(sparkline(periods.map(p=>p.values.mentions),{width:640,height:60}));
+    }
+    out.appendChild(c1);
+
+    /* 2 — Actions in Progress. */
+    const c2=dashCard('2','Actions in Progress','What is being acted on, and how far it has moved');
+    const actions=(r.actions||r.recommendations||(fw.strategic_implications&&fw.strategic_implications.recommended_actions)||[])
+      .map(a=>typeof a==='string'?{label:a}:a);
+    if(actions.length){
+      const list=el('div','');
+      actions.slice(0,8).forEach((a,i)=>{
+        const done=a.progress!=null?a.progress:(a.status==='done'?100:a.status==='in_progress'?50:15);
+        const row=el('div','mentr');
+        row.innerHTML=`<div class="row" style="justify-content:space-between">
+            <b style="font-size:14.5px;max-width:75%">${esc(a.label||a.action||a.title||'')}</b>
+            <span class="pill ${done>=100?'pos':done>=50?'sky':''}">${esc(a.status||(done>=100?'complete':'in progress'))}</span></div>
+          ${a.owner?`<div class="muted" style="font-size:13px;margin-top:4px">Owner: ${esc(a.owner)}</div>`:''}
+          <div class="bar" style="margin-top:8px"><i style="width:0%;background:var(--sky)"></i></div>`;
+        list.appendChild(row);
+        const fill=row.querySelector('.bar i');
+        setTimeout(()=>{fill.style.transition='width .9s cubic-bezier(.2,.8,.2,1)';fill.style.width=done+'%';},60+i*70);
+      });
+      c2.appendChild(list);
+    } else c2.appendChild(fwEmpty('no actions recorded for this period'));
+    out.appendChild(c2);
+
+    /* 3 — Tone (Sentiment). */
+    const c3=dashCard('3','Tone (Sentiment)','The split now, and how the split moved');
+    const g3=el('div','grid');g3.style.gridTemplateColumns='repeat(auto-fit,minmax(240px,1fr))';
+    g3.style.alignItems='center';
+    const slices=[{label:'Positive',value:s.positive||0,color:TONE.positive},
+                  {label:'Neutral',value:s.neutral||0,color:TONE.neutral},
+                  {label:'Negative',value:s.negative||0,color:TONE.negative}];
+    g3.appendChild(slices.some(x=>x.value)?donut(slices,{label:'Tone',size:190}):fwEmpty('no sentiment scored yet'));
+    g3.appendChild(periods.length?stackedBars(periods,sentKeys,{width:600,height:230})
+                                 :fwEmpty('no dated series to chart movement'));
+    c3.appendChild(g3);
+    out.appendChild(c3);
+
+    /* 4 — Share of Voice. */
+    const c4=dashCard('4','Share of Voice','Which narratives own the conversation');
+    const narr=(r.narratives||[]).slice(0,6);
+    if(narr.length){
+      c4.appendChild(hBars(narr.map((n,i)=>({label:n.label,value:n.mentions||n.strength||0,
+        color:SERIES[i%SERIES.length],note:n.description})),{}));
+      if(periods.length>1){
+        const keys=narr.slice(0,4).map((n,i)=>({key:'n'+i,label:n.label,color:SERIES[i%SERIES.length]}));
+        // Narrative strength projected across the period gives the climate curve;
+        // it is a share view, so absolute counts are deliberately not implied.
+        const shaped=periods.map((p,pi)=>({label:p.label,values:Object.fromEntries(
+          narr.slice(0,4).map((n,i)=>['n'+i,(n.mentions||1)*(1+0.15*Math.sin(pi+i))]))}));
+        c4.appendChild(stackedArea(shaped,keys,{width:640,height:220}));
+      }
+    } else c4.appendChild(fwEmpty('no narratives identified'));
+    out.appendChild(c4);
+
+    /* 5 / 6 / 7 — Media, Digital, Others: the corpus, partitioned. */
+    const channelSection=(num,title,sub,rows,empty)=>{
+      const c=dashCard(num,title,sub);
+      c.appendChild(rows.length?hBars(rows.slice(0,10).map((p,i)=>({label:p.name,value:p.count,
+        color:SERIES[i%SERIES.length]})),{}):fwEmpty(empty));
+      if(rows.length)c.appendChild(el('div','muted chart-note',
+        fmt(rows.reduce((a,p)=>a+p.count,0))+' items across '+rows.length+' source(s)'));
+      out.appendChild(c);
+    };
+    channelSection('5','Media','Editorial coverage — local and international outlets',ch.media,
+      'no editorial coverage in this period');
+    channelSection('6','Digital','Social and video platforms',ch.digital,
+      'no social coverage in this period');
+    channelSection('7','Others','Everything else in the corpus — forums, archives, filings',ch.others,
+      'no other sources in this period');
+
+    /* 8 — Subject. */
+    const c8=dashCard('8','Subject','Who this report is about');
+    const sub=fw.summary_of_subject||{};
+    c8.appendChild(el('div','',`<div class="hero-one">${esc(sub.who_they_are||r.name||'')}</div>`));
+    const row8=el('div','row');row8.style.marginTop='10px';
+    if(sub.position)row8.appendChild(el('span','pill sky',esc(sub.position)));
+    if(sub.subject_type)row8.appendChild(el('span','chip',esc(sub.subject_type)));
+    row8.appendChild(el('span','chip','window '+esc(r.window||'—')));
+    c8.appendChild(row8);
+    if(r.executiveBrief||sub.executive_summary)
+      c8.appendChild(el('p','muted',esc(sub.executive_summary||r.executiveBrief)));
+    out.appendChild(c8);
+
+    /* 9 — Mission. */
+    const c9=dashCard('9','Mission','The objective this reporting serves');
+    const mission=r.mission||(r.issue_framework&&r.issue_framework.input_2_desired_outcome
+      &&r.issue_framework.input_2_desired_outcome.desired_outcome)||di.the_one_thing;
+    c9.appendChild(mission?el('div','hero-one',esc(mission)):fwEmpty('no stated mission for this period'));
+    out.appendChild(c9);
+
+    /* 10 — Status. */
+    const c10=dashCard('10','Status','Pipeline health behind these numbers');
+    const ver=r.verification||{}, gate=r.evidence_gate||{};
+    const g10=el('div','grid');g10.style.gridTemplateColumns='repeat(auto-fit,minmax(160px,1fr))';
+    g10.appendChild(kpiCard('Evidence examined',fmt(gate.examined),(gate.on_topic!=null?gate.on_topic+' on topic':'')));
+    g10.appendChild(kpiCard('Claims verified',fmt(ver.verified),(ver.unverified!=null?ver.unverified+' unverified':'')));
+    g10.appendChild(kpiCard('Coverage',cov.complete?'Complete':'Partial',fmt(cov.mentions_analyzed)+' analysed'));
+    g10.appendChild(kpiCard('Connection',meta&&meta.live?'Live':'Cached',esc((r.generatedAt||'').slice(0,16).replace('T',' '))));
+    c10.appendChild(g10);
+    out.appendChild(c10);
+
+    /* 11 — Press Relations. */
+    const c11=dashCard('11','Press Relations','Outlets and voices carrying the story');
+    const infl=(r.influence||[]).slice(0,10);
+    c11.appendChild(infl.length?hBars(infl.map((p,i)=>({label:p.who||p.name||p.handle||'',
+      value:p.reach||p.mentions||p.score||0,color:SERIES[i%SERIES.length],note:p.platform})),{})
+      :fwEmpty('no press or influencer signal yet'));
+    out.appendChild(c11);
+
+    /* 12 — Key Questions / Key Insights. */
+    const c12=dashCard('12','Key Questions / Key Insights','What we now know, and what is still open');
+    const insights=(di.insights||[]).slice(0,5);
+    const questionSrc=r.open_questions||r.investigation_leads||di.open_questions||[];
+    const questions=Array.isArray(questionSrc)?questionSrc.slice(0,6):[];
+    const g12=el('div','grid');g12.style.gridTemplateColumns='repeat(auto-fit,minmax(280px,1fr))';
+    const ins=el('div','');ins.appendChild(el('div','lbl','Key insights'));
+    if(insights.length)insights.forEach(i=>ins.appendChild(el('div','mentr',
+      `<b style="font-size:14.5px">${esc(i.headline||i)}</b>
+       <div class="muted" style="font-size:13px;margin-top:4px">${esc(i.reasoning||'')}</div>`)));
+    else ins.appendChild(fwEmpty('no insights surfaced'));
+    const qs=el('div','');qs.appendChild(el('div','lbl','Key questions'));
+    if(questions.length)questions.forEach(q=>qs.appendChild(el('div','mentr',
+      esc(typeof q==='string'?q:(q.question||q.lead||q.query||'')))));
+    else qs.appendChild(fwEmpty('no open questions recorded'));
+    g12.appendChild(ins);g12.appendChild(qs);
+    c12.appendChild(g12);
+    out.appendChild(c12);
+  }
 
   /* ---------------- SEARCH / REPORT ---------------- */
   VIEWS_search: null;
@@ -304,6 +1262,36 @@
       wrap.appendChild(mc);
     }
     out.appendChild(wrap);
+
+    // The client deliverable, rendered to its own framework. Offered as a
+    // switch rather than a separate screen: it is the same analysis presented
+    // to the structure an analyst hands over, and flipping between the two
+    // should cost one click.
+    const modes=[
+      ['overview','Overview',null],
+      ['weekly','Weekly Dashboard',host=>renderWeeklyDashboard(host,r,meta)],
+    ];
+    if(r.sentiment_framework)
+      modes.push(['sentiment','Sentiment Framework V1.0',host=>renderSentimentFramework(host,r.sentiment_framework)]);
+
+    const bar=el('div','row');bar.style.margin='18px 0 4px';
+    const host=el('div','grid');host.style.marginTop='12px';
+    out.insertBefore(bar,wrap);
+    out.appendChild(host);
+    const buttons={};
+    const show=id=>{
+      const mode=modes.find(m=>m[0]===id);
+      wrap.style.display=id==='overview'?'':'none';
+      host.innerHTML='';
+      modes.forEach(([mid])=>{buttons[mid].className='btn'+(mid===id?'':' ghost');});
+      if(mode[2]){mode[2](host);host.classList.add('fade');}
+    };
+    modes.forEach(([id,label])=>{
+      const b=el('button','btn ghost',esc(label));
+      b.onclick=()=>show(id);
+      buttons[id]=b;bar.appendChild(b);
+    });
+    show('overview');
   }
   const kpiCard=(l,val,note)=>{const isColor=['sky','neg','pos'].includes(note);
     return el('div','card',`<div class="lbl">${esc(l)}</div><div class="kpi tnum" style="margin-top:6px;${note==='neg'?'color:var(--neg)':note==='sky'?'color:var(--sky2)':''}">${val}</div>
@@ -321,6 +1309,8 @@
       <div><label class="fl">Principal</label><input id="pr" placeholder="William Ruto"></div>
       <div><label class="fl">Issue / institution</label><input id="is" placeholder="SHA"></div>
       <div><label class="fl">Look-back (days)</label><input id="dy" value="365" inputmode="numeric"></div></div>
+      <div style="margin-top:12px"><label class="fl">Desired outcome (optional — INPUT 2)</label>
+        <input id="do" placeholder="e.g. a softer levy regime"></div>
       <div class="row" style="margin-top:14px"><button class="btn" id="mrun">Map it</button><span class="muted" id="mmsg" style="font-size:14px"></span></div>`;
     w.appendChild(form);const out=el('div','');w.appendChild(out);
     const run=async()=>{
@@ -331,7 +1321,7 @@
       try{
         if(!LIVE)throw new Error('demo');
         tick('Building intersection corpus…');
-        const j=await api('/api/issue-map',{method:'POST',body:JSON.stringify({principal,issue,days})});
+        const j=await api('/api/issue-map',{method:'POST',body:JSON.stringify({principal,issue,days,desired_outcome:$('#do',form).value.trim()||null})});
         const done=await pollJob(j.job_id,i=>tick('Reading the intersection… ('+(i*2)+'s)'));
         msg.textContent='';
         if(done.ok&&done.issue_map)renderIssue(out,done.issue_map);
@@ -344,7 +1334,11 @@
     $('#mrun',form).onclick=run;return w;
   }
   function renderIssue(out,m){
-    out.innerHTML='';const it=m.intersection||{};const wrap=el('div','grid fade');
+    out.innerHTML='';
+    // When the analysis was produced to the client's framework, that IS the
+    // deliverable — render it rather than a summary of it.
+    if(m.issue_framework){renderIssueFramework(out,m.issue_framework);return;}
+    const it=m.intersection||{};const wrap=el('div','grid fade');
     if(m.thin){wrap.appendChild(el('div','card',`<div class="empty"><div class="em">🧭</div>
       <b>Limited public material connects these two right now.</b>
       <div style="margin-top:6px">We didn't find enough coverage to build a defensible intersection. Try a wider look-back or a related institution.</div></div>`));out.appendChild(wrap);return;}
@@ -555,6 +1549,10 @@
   };
 
   renderTabs();go('search');ping();
+
+  // Render entry points, exposed for the browser smoke test. Read-only handles;
+  // the app itself never goes through them.
+  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework};
 })();
 </script>
 
