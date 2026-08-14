@@ -434,6 +434,28 @@ def run_analysis(
         payload["since_last_report"] = deltas
     payload["sentiment_history"] = sentiment_history(db, politician)
 
+    # Client-facing deliverable, shaped to the Sentiment Analysis Framework
+    # V1.0 exactly — same parameter numbering, ordering and terminology, so an
+    # analyst reads their own structure rather than our interpretation of it.
+    try:
+        from engine.reports import sentiment_framework
+
+        previous_report = (
+            db.query(IntelligenceReport)
+            .filter(IntelligenceReport.politician_id == politician.id)
+            .order_by(IntelligenceReport.generated_at.desc())
+            .first()
+        )
+        payload["sentiment_framework"] = sentiment_framework.build(
+            politician,
+            payload,
+            corpus,
+            previous=(previous_report.payload if previous_report else None),
+            sentiments=sentiments_by_mention,
+        )
+    except Exception:  # noqa: BLE001 — the framework view must not break a report
+        traceback.print_exc()
+
     report = IntelligenceReport(
         politician_id=politician.id,
         period=period,
