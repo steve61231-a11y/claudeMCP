@@ -1193,6 +1193,7 @@
       <div class="row">
         ${live?'<span class="pill pos">● Live</span>':'<span class="pill amber">Cached / demo</span>'}
         ${meta&&meta.stale_fallback?'<span class="pill amber">stale fallback</span>':''}
+        ${r.grade&&r.grade.production===false?`<span class="pill neg" title="${esc(r.grade.warning||'')}">⚠ Test-grade · ${esc(r.grade.backend||'')}</span>`:''}
       </div></div>
       <div class="row" style="margin-top:12px;gap:16px">
         <span class="chip">Updated ${esc((r.generatedAt||'').slice(0,16).replace('T',' '))||'—'}</span>
@@ -1200,6 +1201,20 @@
         <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
       </div>`;
     wrap.appendChild(head);
+    if(r.grade&&r.grade.production===false){
+      // A cheap run must never read as a client deliverable. The pill above is
+      // easy to miss; this is not.
+      const warn=el('div','card');
+      warn.style.cssText='border-color:var(--neg);background:rgba(251,113,133,.08)';
+      warn.innerHTML=`<div class="row" style="gap:10px;align-items:flex-start">
+        <div style="font-size:20px">⚠</div>
+        <div><b>Test-grade run — not for a client.</b>
+        <div class="muted" style="font-size:13.5px;margin-top:4px">${esc(r.grade.warning||'')}</div>
+        <div class="row" style="margin-top:8px"><span class="chip">backend ${esc(r.grade.backend||'')}</span>
+        ${r.grade.model?`<span class="chip">${esc(r.grade.model)}</span>`:''}</div></div></div>`;
+      wrap.appendChild(warn);
+    }
+
 
     // The One Thing
     const di=r.deepInsights||{};

@@ -29,6 +29,24 @@ class Settings(BaseSettings):
     # them here is what makes "analyse everything" practical. Reasoning and
     # verification stay on anthropic_model. Empty = use anthropic_model.
     anthropic_bulk_model: str = "claude-haiku-4-5-20251001"
+    # Which backend serves LLM calls. "anthropic" is the only one fit for a
+    # client report; the others exist so testing does not have to be paid for
+    # at production rates:
+    #   anthropic         — the real thing (default)
+    #   openai_compatible — any provider speaking OpenAI's /chat/completions
+    #                       (DeepSeek, Qwen/DashScope, GLM/Zhipu, Kimi, a local
+    #                       Ollama). Set llm_base_url + llm_api_key + the model
+    #                       names. Cheap or free, and good enough to prove the
+    #                       pipeline runs — see the warning on `is_test_grade`.
+    #   stub              — no network, no cost, deterministic canned JSON. For
+    #                       exercising connectors, the database, orchestration
+    #                       and the frontend, where the model's answer is not
+    #                       what is under test.
+    llm_provider: str = "anthropic"
+    llm_base_url: str = ""       # e.g. https://api.deepseek.com/v1
+    llm_api_key: str = ""
+    llm_model: str = ""          # strong-tier model name on that provider
+    llm_bulk_model: str = ""     # bulk-tier model name; empty = llm_model
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
     # Post-generation audit: decompose the finished report into atomic claims and

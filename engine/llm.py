@@ -68,6 +68,30 @@ def get_client() -> Anthropic:
     return _client
 
 
+def provider() -> str:
+    return (settings.llm_provider or "anthropic").strip().lower()
+
+
+def is_test_grade() -> bool:
+    """True when calls are NOT being served by the production model.
+
+    A run on a stand-in backend proves the pipeline executes; it does not prove
+    the analysis is sound. The prompts, the JSON contracts and above all the
+    anti-hallucination guarantees are tuned against the production model, so a
+    report produced on a stand-in must never reach a client unlabelled. The API
+    stamps this onto the payload so a cheap run cannot be mistaken for a real
+    one — see `report_grade()`.
+    """
+    return provider() != "anthropic"
+
+
+def strong_model() -> str:
+    """Model for reasoning stages: insight, synthesis, verification."""
+    if provider() == "anthropic":
+        return settings.anthropic_model
+    return settings.llm_model or settings.anthropic_model
+
+
 def bulk_model() -> str:
     """Model for high-volume mechanical stages (classification, disambiguation,
     per-item sentiment, map-step digestion).
@@ -77,7 +101,9 @@ def bulk_model() -> str:
     Reasoning stages (insight, synthesis, verification) keep the stronger model.
     Falls back to the main model when no bulk model is configured.
     """
-    return settings.anthropic_bulk_model or settings.anthropic_model
+    if provider() == "anthropic":
+        return settings.anthropic_bulk_model or settings.anthropic_model
+    return settings.llm_bulk_model or strong_model()
 
 
 def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> dict | list:
@@ -89,11 +115,19 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     When LLM_CACHE_DIR is set, an identical previous call is replayed from disk
     instead of being paid for again — see the cache section above.
     """
-    resolved_model = model or settings.anthropic_model
+    resolved_model = model or strong_model()
     key = _cache_key(prompt, max_tokens, resolved_model)
     cached = _cache_read(key)
     if cached is not None:
         return cached
+
+    backend = provider()
+    if backend == "stub":
+        return _stub_json(prompt)
+    if backend == "openai_compatible":
+        parsed = _openai_compatible_json(prompt, max_tokens, resolved_model)
+        _cache_write(key, parsed)
+        return parsed
 
     response = get_client().messages.create(
         model=resolved_model,
@@ -103,12 +137,84 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     _record_usage(response)
     if response.stop_reason == "max_tokens" and max_tokens < 8000:
         return call_json(prompt, max_tokens=min(8000, max_tokens * 2), model=model)
-    text = response.content[0].text
-    start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
-    end = max(text.rfind("}"), text.rfind("]"))
-    parsed = json.loads(text[start : end + 1])
+    parsed = _extract_json(response.content[0].text)
     _cache_write(key, parsed)
     return parsed
+
+
+def _extract_json(text: str):
+    """Pull the JSON object/array out of a model's reply.
+
+    Stand-in providers are chattier than Claude — they wrap JSON in ```json
+    fences or add a sentence of preamble — so strip fences before scanning.
+    """
+    body = text.strip()
+    if body.startswith("```"):
+        body = body.split("```")[1] if body.count("```") >= 2 else body[3:]
+        if body.lstrip().lower().startswith("json"):
+            body = body.lstrip()[4:]
+    start = min((i for i in (body.find("{"), body.find("[")) if i != -1), default=-1)
+    end = max(body.rfind("}"), body.rfind("]"))
+    if start == -1 or end <= start:
+        raise ValueError(f"no JSON found in model reply: {text[:200]!r}")
+    return json.loads(body[start : end + 1])
+
+
+def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
+    """Call any provider speaking OpenAI's /chat/completions.
+
+    Covers DeepSeek, Qwen/DashScope, GLM/Zhipu, Kimi and a local Ollama with one
+    code path, because they all implement the same wire format. Uses `requests`,
+    already a dependency — no new package, and nothing to install on Render.
+    """
+    import requests
+
+    base = (settings.llm_base_url or "").rstrip("/")
+    if not base:
+        raise RuntimeError("llm_provider=openai_compatible requires llm_base_url")
+
+    response = requests.post(
+        f"{base}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {settings.llm_api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            # Every provider here honours this and it removes the fenced-code
+            # and preamble habits that break JSON parsing.
+            "response_format": {"type": "json_object"},
+        },
+        timeout=180,
+    )
+    response.raise_for_status()
+    return _extract_json(response.json()["choices"][0]["message"]["content"])
+
+
+# Canned replies for the stub backend, keyed by a phrase unique to each prompt.
+# Deliberately minimal: the stub exists to prove the pipeline runs end to end
+# without a network call, not to simulate analysis. Anything unrecognised
+# returns an empty object, which every caller already treats as "no result"
+# because that is what a failed real call gives them.
+_STUB_REPLIES: list[tuple[str, dict]] = [
+    ("\"digest\"", {"digest": {"claims": [], "themes": [], "notable_quotes": [],
+                               "entities": [], "sentiment_read": {}, "anomalies": []}}),
+    ("sentiment", {"results": []}),
+    ("relevance", {"results": []}),
+    ("claims", {"claims": []}),
+    ("relationships", {"relationships": []}),
+    ("summary", {"summary": "Stub backend — no analysis was performed."}),
+]
+
+
+def _stub_json(prompt: str) -> dict:
+    lowered = prompt.lower()
+    for marker, reply in _STUB_REPLIES:
+        if marker.strip('"') in lowered:
+            return dict(reply)
+    return {}
 
 
 def _record_usage(response) -> None:
@@ -190,3 +296,28 @@ def call_json_untrusted(
     if not isinstance(result, dict) or not expected_keys.issubset(result.keys()):
         raise ValueError(f"LLM response missing expected keys {expected_keys}: got {result!r}")
     return result
+
+
+def report_grade() -> dict:
+    """Provenance stamp for a report payload.
+
+    `production` means the report was produced by the model the prompts and the
+    verification layer were built for. Anything else is a pipeline test: usable
+    for checking that a run completes and the sections populate, not for a
+    judgement about a real person or company.
+    """
+    backend = provider()
+    if backend == "anthropic":
+        return {"backend": "anthropic", "production": True,
+                "model": strong_model(), "bulk_model": bulk_model()}
+    return {
+        "backend": backend,
+        "production": False,
+        "model": strong_model() if backend != "stub" else None,
+        "bulk_model": bulk_model() if backend != "stub" else None,
+        "warning": (
+            "Test-grade run: served by a stand-in model, not the production one. "
+            "Section structure and pipeline behaviour are meaningful; the analysis "
+            "is not, and must not be shown to a client."
+        ),
+    }

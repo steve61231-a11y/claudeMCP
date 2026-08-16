@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from engine import llm as _llm
 from engine.config import settings
 from engine.db.models import MentionSentiment, Politician, RawMention
 from engine.db.session import SessionLocal
@@ -391,6 +392,11 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "window": f"{report.window_start.date()} – {report.window_end.date()}",
         "generated": datetime.utcnow().date().isoformat(),
         "generatedAt": datetime.utcnow().isoformat(),
+        # Which backend produced this. A run served by a stand-in model proves
+        # the pipeline works, not that the analysis is sound — so it is labelled
+        # in the payload and on screen rather than left to look like the real
+        # thing. See engine/llm.py::is_test_grade.
+        "grade": _llm.report_grade(),
         "freshness": _freshness(politician.id),
         "summary": payload["executive_summary"],
         "sentiment": {
