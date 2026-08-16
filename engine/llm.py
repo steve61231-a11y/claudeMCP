@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import os
@@ -213,7 +214,12 @@ def _stub_json(prompt: str) -> dict:
     lowered = prompt.lower()
     for marker, reply in _STUB_REPLIES:
         if marker.strip('"') in lowered:
-            return dict(reply)
+            # Deep copy, not dict(): callers annotate the *nested* structures
+            # they get back (the digest step writes a chunk index into them).
+            # Handing out a shared object lets one caller's bookkeeping
+            # overwrite another's, which silently corrupts the coverage record
+            # — exactly the signal stub mode exists to let us check.
+            return copy.deepcopy(reply)
     return {}
 
 

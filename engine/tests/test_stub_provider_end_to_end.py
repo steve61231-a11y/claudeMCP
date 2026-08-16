@@ -112,3 +112,40 @@ def test_openai_compatible_names_exactly_what_is_missing():
     for required in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL"):
         assert required in message
     assert "ANTHROPIC_API_KEY" not in message  # not needed on this provider
+
+
+def test_stub_replies_are_independent_objects(monkeypatch):
+    """Each call must get its own object.
+
+    The digest step writes a chunk index into the structure it gets back. When
+    the stub handed out one shared object, the last chunk's bookkeeping
+    overwrote every other chunk's and the coverage record under-reported — a
+    corpus of 60 read as 8 analysed. Coverage is the one number that proves we
+    read everything, so a stub that quietly falsifies it is worse than no stub.
+    """
+    monkeypatch.setattr(llm.settings, "llm_provider", "stub")
+
+    first = llm.call_json('produce a "digest" of this batch', max_tokens=100)
+    second = llm.call_json('produce a "digest" of this batch', max_tokens=100)
+
+    first["digest"]["_chunk"] = 0
+    second["digest"]["_chunk"] = 1
+
+    assert first["digest"]["_chunk"] == 0, "stub replies share nested state"
+
+
+def test_stub_run_still_proves_full_corpus_coverage(monkeypatch):
+    """The claim stub mode is actually useful for checking."""
+    monkeypatch.setattr(llm.settings, "llm_provider", "stub")
+    from engine.reports import digest as digest_module
+
+    mentions = [{"id": f"m{i}", "platform": "x", "source_type": "post",
+                 "text": "some text about the subject " * 20,
+                 "author_handle": "a", "posted_at": None, "engagement": {}}
+                for i in range(60)]
+
+    coverage = digest_module.build_corpus_digest("Subject", mentions)["coverage"]
+
+    assert coverage["mentions_total"] == 60
+    assert coverage["mentions_analyzed"] == 60
+    assert coverage["complete"] is True
