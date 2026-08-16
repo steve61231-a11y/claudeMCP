@@ -65,6 +65,8 @@ def test_bulk_falls_back_to_the_strong_model_when_unset(monkeypatch):
 
 def _fake_post(captured, content):
     class _Resp:
+        status_code = 200
+
         def raise_for_status(self):
             pass
 
@@ -113,8 +115,15 @@ def test_fenced_and_chatty_replies_still_parse(monkeypatch):
 
 
 def test_a_reply_with_no_json_is_an_error_not_a_silent_empty(monkeypatch):
+    """A model that answers in prose is retried — one rambling reply is often
+    followed by a compliant one. If it never complies the call raises, naming
+    the cause: a section that silently returns nothing reads as "no findings",
+    which in a due-diligence report is the most dangerous failure there is."""
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
     _use_openai_compatible(monkeypatch, "I cannot help with that request.")
-    with pytest.raises(ValueError, match="no JSON found"):
+
+    with pytest.raises(RuntimeError, match="no JSON found"):
         llm.call_json("p", max_tokens=100)
 
 
@@ -143,3 +152,90 @@ def test_stub_makes_no_network_call_and_returns_usable_shapes(monkeypatch):
     # An unrecognised prompt returns an empty object — the same thing every
     # caller already handles when a real call fails.
     assert llm.call_json("something unrecognised", max_tokens=100) == {}
+
+
+# --- DeepSeek-specific behaviour --------------------------------------------
+
+def test_output_budget_is_capped_to_the_provider_ceiling(monkeypatch):
+    """DeepSeek hard-400s above 8192 output tokens. The truncation retry doubles
+    max_tokens, so an uncapped request would fail the whole section."""
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+
+    llm.call_json("give me json", max_tokens=100000)
+
+    assert captured["body"]["max_tokens"] == llm.OPENAI_COMPATIBLE_MAX_TOKENS
+
+
+def test_json_mode_requested_only_when_the_prompt_says_json(monkeypatch):
+    """DeepSeek rejects response_format=json_object unless the prompt contains
+    the word 'json'. Asking for it unconditionally would fail every call."""
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    llm.call_json("Respond with ONLY this JSON: {...}", max_tokens=100)
+    assert captured["body"]["response_format"] == {"type": "json_object"}
+
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    llm.call_json("Summarise the following.", max_tokens=100)
+    assert "response_format" not in captured["body"]
+
+
+def _flaky_post(monkeypatch, statuses, content):
+    """Answers with the given status codes in order, then succeeds."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://api.deepseek.com/v1")
+    monkeypatch.setattr(llm.settings, "llm_model", "deepseek-chat")
+    monkeypatch.setattr(llm, "OPENAI_COMPATIBLE_RETRIES", 4)
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, status):
+            self.status_code = status
+            self.text = "throttled"
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+        def json(self):
+            return {"choices": [{"message": {"content": content}}]}
+
+    def post(url, headers=None, json=None, timeout=None):
+        i = calls["n"]
+        calls["n"] += 1
+        return _Resp(statuses[i] if i < len(statuses) else 200)
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(llm.time if hasattr(llm, "time") else __import__("time"), "sleep", lambda s: None)
+    return calls
+
+
+def test_throttling_is_retried_not_dropped(monkeypatch):
+    """Free tiers throttle hard and the map step fires several requests at once.
+    A 429 must not cost us a chunk of the corpus."""
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    calls = _flaky_post(monkeypatch, [429, 429], json.dumps({"ok": True}))
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+    assert calls["n"] == 3, "did not retry through the throttling"
+
+
+def test_server_errors_are_retried(monkeypatch):
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    calls = _flaky_post(monkeypatch, [503], json.dumps({"ok": True}))
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+    assert calls["n"] == 2
+
+
+def test_persistent_failure_raises_with_the_cause(monkeypatch):
+    """A section that silently returns nothing looks like 'no findings', which
+    for a due-diligence report is the most dangerous possible failure."""
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    _flaky_post(monkeypatch, [429, 429, 429, 429], json.dumps({"ok": True}))
+
+    with pytest.raises(RuntimeError, match="failed after"):
+        llm.call_json("give me json", max_tokens=100)

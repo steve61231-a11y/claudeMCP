@@ -161,6 +161,15 @@ def _extract_json(text: str):
     return json.loads(body[start : end + 1])
 
 
+# Limits for the OpenAI-compatible path. DeepSeek's ceiling is the binding one
+# (8192 output tokens); it also throttles free tiers, and the map step fires
+# several requests at once, so transient failures are retried rather than
+# costing us a chunk of the corpus.
+OPENAI_COMPATIBLE_MAX_TOKENS = 8000
+OPENAI_COMPATIBLE_RETRIES = 4
+OPENAI_COMPATIBLE_TIMEOUT = 180
+
+
 def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     """Call any provider speaking OpenAI's /chat/completions.
 
@@ -168,30 +177,58 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     code path, because they all implement the same wire format. Uses `requests`,
     already a dependency — no new package, and nothing to install on Render.
     """
+    import random
+    import time
+
     import requests
 
     base = (settings.llm_base_url or "").rstrip("/")
     if not base:
         raise RuntimeError("llm_provider=openai_compatible requires llm_base_url")
 
-    response = requests.post(
-        f"{base}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {settings.llm_api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-            # Every provider here honours this and it removes the fenced-code
-            # and preamble habits that break JSON parsing.
-            "response_format": {"type": "json_object"},
-        },
-        timeout=180,
-    )
-    response.raise_for_status()
-    return _extract_json(response.json()["choices"][0]["message"]["content"])
+    body = {
+        "model": model,
+        # DeepSeek caps output at 8192; asking for more is a hard 400. Our
+        # largest request is 8000 (the truncation retry), so this only ever
+        # bites if a caller raises that.
+        "max_tokens": min(max_tokens, OPENAI_COMPATIBLE_MAX_TOKENS),
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    # JSON mode removes the fenced-code and preamble habits that break parsing.
+    # DeepSeek rejects the request unless the word "json" appears in the prompt,
+    # so only ask for it when that holds — every prompt in this codebase says
+    # "Respond with ONLY this JSON", but a future one might not, and silently
+    # failing every call would be a miserable thing to debug.
+    if "json" in prompt.lower():
+        body["response_format"] = {"type": "json_object"}
+
+    last_error: Exception | None = None
+    for attempt in range(OPENAI_COMPATIBLE_RETRIES):
+        try:
+            response = requests.post(
+                f"{base}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.llm_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+                timeout=OPENAI_COMPATIBLE_TIMEOUT,
+            )
+            # Rate limits and server errors are transient — the map step fires
+            # several requests in parallel and free tiers throttle hard, so a
+            # single 429 must not lose a whole chunk of the corpus.
+            if response.status_code == 429 or response.status_code >= 500:
+                raise requests.HTTPError(f"HTTP {response.status_code}: {response.text[:200]}")
+            response.raise_for_status()
+            return _extract_json(response.json()["choices"][0]["message"]["content"])
+        except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
+            last_error = exc
+            if attempt == OPENAI_COMPATIBLE_RETRIES - 1:
+                break
+            time.sleep(min(2 ** attempt, 8) + random.random())
+
+    raise RuntimeError(f"{settings.llm_provider} call failed after "
+                       f"{OPENAI_COMPATIBLE_RETRIES} attempts: {last_error}") from last_error
 
 
 # Canned replies for the stub backend, keyed by a phrase unique to each prompt.
