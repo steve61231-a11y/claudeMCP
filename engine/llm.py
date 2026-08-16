@@ -1,10 +1,64 @@
+import hashlib
 import json
+import os
+import threading
 
 from anthropic import Anthropic
 
 from engine.config import settings
 
 _client = None
+
+# ---------------------------------------------------------------------------
+# Response cache — for testing, not production
+#
+# During testing the same subject is re-run many times over a corpus that has
+# barely changed, and every run pays full price for identical prompts. When
+# LLM_CACHE_DIR is set, a response is stored on disk under a hash of
+# (model, max_tokens, prompt) and replayed on the next identical call. A
+# re-run of a subject already tested costs nothing.
+#
+# Off unless the environment variable is set, so production is never served a
+# stale answer. Only successful, parsed responses are cached — a failure is
+# never remembered as an answer.
+# ---------------------------------------------------------------------------
+_CACHE_LOCK = threading.Lock()
+
+
+def _cache_dir() -> str | None:
+    return os.environ.get("LLM_CACHE_DIR") or None
+
+
+def _cache_key(prompt: str, max_tokens: int, model: str) -> str:
+    digest = hashlib.sha256(f"{model}\x00{max_tokens}\x00{prompt}".encode()).hexdigest()
+    return digest[:32]
+
+
+def _cache_read(key: str):
+    directory = _cache_dir()
+    if not directory:
+        return None
+    path = os.path.join(directory, key + ".json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)["result"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _cache_write(key: str, result) -> None:
+    directory = _cache_dir()
+    if not directory:
+        return
+    try:
+        with _CACHE_LOCK:
+            os.makedirs(directory, exist_ok=True)
+            tmp = os.path.join(directory, key + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump({"result": result}, handle)
+            os.replace(tmp, os.path.join(directory, key + ".json"))
+    except OSError:
+        pass  # a cache that cannot be written must never fail the run
 
 
 def get_client() -> Anthropic:
@@ -31,9 +85,18 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
 
     If the response was cut off at max_tokens (truncated JSON), retries once
     with double the budget rather than failing the whole section.
+
+    When LLM_CACHE_DIR is set, an identical previous call is replayed from disk
+    instead of being paid for again — see the cache section above.
     """
+    resolved_model = model or settings.anthropic_model
+    key = _cache_key(prompt, max_tokens, resolved_model)
+    cached = _cache_read(key)
+    if cached is not None:
+        return cached
+
     response = get_client().messages.create(
-        model=model or settings.anthropic_model,
+        model=resolved_model,
         max_tokens=max_tokens,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -43,7 +106,9 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     text = response.content[0].text
     start = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
     end = max(text.rfind("}"), text.rfind("]"))
-    return json.loads(text[start : end + 1])
+    parsed = json.loads(text[start : end + 1])
+    _cache_write(key, parsed)
+    return parsed
 
 
 def _record_usage(response) -> None:

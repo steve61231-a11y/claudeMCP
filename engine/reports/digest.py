@@ -89,6 +89,11 @@ def _digest_chunk(name: str, chunk: list[dict], index: int) -> dict:
         result = llm.call_json(
             MAP_PROMPT.format(name=name, grounding=GROUNDING_RULES, batch=batch[:CHUNK_CHARS + 4000]),
             max_tokens=MAP_MAX_TOKENS,
+            # The map step is the highest-volume call in the system — one per
+            # chunk of the whole corpus — and it is mechanical extraction, which
+            # is exactly what the bulk tier is for. The reduce step and the
+            # analysts that read this digest keep the strong model.
+            model=llm.bulk_model(),
         )
         digest = result.get("digest", {})
     except Exception:
