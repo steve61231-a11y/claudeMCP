@@ -206,8 +206,18 @@ class Settings(BaseSettings):
         """Fail-closed startup checks: outside local-dev, refuse to run with
         missing shared secrets or credential fallbacks."""
         problems = []
-        if not self.anthropic_api_key:
+        provider = (self.llm_provider or "anthropic").strip().lower()
+        if provider == "anthropic" and not self.anthropic_api_key:
             problems.append("ANTHROPIC_API_KEY is not set")
+        # The stub backend makes no calls at all, so it needs no credential;
+        # requiring one would defeat the point of a zero-cost test mode.
+        if provider == "openai_compatible":
+            if not self.llm_base_url:
+                problems.append("LLM_BASE_URL is required when LLM_PROVIDER=openai_compatible")
+            if not self.llm_api_key:
+                problems.append("LLM_API_KEY is required when LLM_PROVIDER=openai_compatible")
+            if not self.llm_model:
+                problems.append("LLM_MODEL is required when LLM_PROVIDER=openai_compatible")
         if not self.is_local_dev:
             if not self.internal_api_token:
                 problems.append("INTERNAL_API_TOKEN is not set (required outside local-dev)")
