@@ -105,7 +105,7 @@ def score_items(subject: str, items: list[tuple[str, str]]) -> dict[str, dict]:
     batches = [items[i : i + size] for i in range(0, len(items), size)]
 
     scored: dict[str, dict] = {}
-    workers = min(_BATCH_WORKERS, len(batches))
+    workers = llm.concurrency(min(_BATCH_WORKERS, len(batches)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for partial in pool.map(lambda b: _score_batch(subject, b), batches):
             scored.update(partial)

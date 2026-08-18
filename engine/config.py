@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""          # strong-tier model name on that provider
     llm_bulk_model: str = ""     # bulk-tier model name; empty = llm_model
+    # Ceiling on parallel LLM calls. Free tiers cap requests-per-minute far
+    # below what the map step wants, and a 429 storm looks like a broken run.
+    # 0 = no ceiling (the default, for Anthropic).
+    llm_max_concurrency: int = 0
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
     # Post-generation audit: decompose the finished report into atomic claims and

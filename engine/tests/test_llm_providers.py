@@ -239,3 +239,42 @@ def test_persistent_failure_raises_with_the_cause(monkeypatch):
 
     with pytest.raises(RuntimeError, match="failed after"):
         llm.call_json("give me json", max_tokens=100)
+
+
+# --- free-tier rate limits --------------------------------------------------
+
+def test_no_concurrency_ceiling_by_default(monkeypatch):
+    """The paid path should keep its parallelism."""
+    monkeypatch.setattr(llm.settings, "llm_max_concurrency", 0)
+    assert llm.concurrency(6) == 6
+
+
+def test_concurrency_is_clamped_for_free_tiers(monkeypatch):
+    """Free tiers cap requests-per-minute well below what the map step wants.
+    Firing six at once turns a throttled run into what looks like a broken one."""
+    monkeypatch.setattr(llm.settings, "llm_max_concurrency", 2)
+    assert llm.concurrency(6) == 2
+    assert llm.concurrency(1) == 1, "never raises a caller's own lower limit"
+
+
+def test_concurrency_never_drops_below_one(monkeypatch):
+    monkeypatch.setattr(llm.settings, "llm_max_concurrency", 1)
+    assert llm.concurrency(6) == 1
+
+
+def test_every_parallel_stage_respects_the_ceiling(monkeypatch):
+    """A ceiling honoured by the map step but ignored by scoring or verification
+    still produces the 429 storm it exists to prevent."""
+    import inspect
+
+    from engine.agents import disambiguate, resolve, score, verify
+    from engine.reports import digest
+
+    for module in (digest, disambiguate, score, verify, resolve):
+        source = inspect.getsource(module)
+        pools = source.count("ThreadPoolExecutor(")
+        guarded = source.count("llm.concurrency(")
+        assert guarded >= pools, (
+            f"{module.__name__}: {pools} thread pool(s) but only {guarded} "
+            "guarded by llm.concurrency()"
+        )

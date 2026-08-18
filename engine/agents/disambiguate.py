@@ -243,7 +243,7 @@ def gate_documents(db, politician: Politician, limit: int | None = None) -> dict
     if undecided:
         size = max(1, settings.agent_batch_size)
         batches = [undecided[i : i + size] for i in range(0, len(undecided), size)]
-        workers = min(4, len(batches))
+        workers = llm.concurrency(min(4, len(batches)))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for verdicts in pool.map(lambda b: _adjudicate_batch(profile, b), batches):
                 for index, verdict in verdicts.items():

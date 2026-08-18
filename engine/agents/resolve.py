@@ -164,7 +164,7 @@ def resolve_corpus(db, politician, corpus: list[dict], limit: int | None = None)
 
     size = max(1, settings.agent_batch_size // 3)  # richer output per item
     batches = [items[i : i + size] for i in range(0, len(items), size)]
-    with ThreadPoolExecutor(max_workers=min(_WORKERS, len(batches))) as pool:
+    with ThreadPoolExecutor(max_workers=llm.concurrency(min(_WORKERS, len(batches)))) as pool:
         extracted = list(pool.map(lambda b: _extract_batch(politician.name, b), batches))
 
     now = datetime.utcnow()

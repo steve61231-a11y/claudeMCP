@@ -214,7 +214,7 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
     }
     credibility = credibility_for(db, [k for k in source_keys if k])
 
-    workers = min(_WORKERS, len(retrieved))
+    workers = llm.concurrency(min(_WORKERS, len(retrieved)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(lambda c: _judge(c[0], c[1], c[2], credibility), retrieved))
 

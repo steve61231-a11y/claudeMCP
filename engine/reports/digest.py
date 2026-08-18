@@ -112,7 +112,7 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
 
     from engine.config import settings
 
-    workers = 2 if settings.low_memory else MAP_WORKERS
+    workers = llm.concurrency(2 if settings.low_memory else MAP_WORKERS)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         digests = list(pool.map(lambda ic: _digest_chunk(name, ic[1], ic[0]), enumerate(chunks)))
 

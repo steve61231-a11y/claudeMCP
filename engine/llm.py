@@ -107,6 +107,18 @@ def bulk_model() -> str:
     return settings.llm_bulk_model or strong_model()
 
 
+def concurrency(default: int) -> int:
+    """How many LLM calls may run at once.
+
+    Free tiers cap requests-per-minute well below what the map step would like,
+    and hitting that cap looks like a broken run rather than a throttled one.
+    LLM_MAX_CONCURRENCY clamps every parallel stage at once; unset means no
+    clamp, which is what the paid Anthropic path wants.
+    """
+    ceiling = settings.llm_max_concurrency or 0
+    return max(1, min(default, ceiling)) if ceiling > 0 else default
+
+
 def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> dict | list:
     """Calls Claude and parses a JSON object/array from the response text.
 
