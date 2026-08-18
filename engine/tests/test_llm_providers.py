@@ -232,10 +232,13 @@ def test_server_errors_are_retried(monkeypatch):
 
 def test_persistent_failure_raises_with_the_cause(monkeypatch):
     """A section that silently returns nothing looks like 'no findings', which
-    for a due-diligence report is the most dangerous possible failure."""
+    for a due-diligence report is the most dangerous possible failure.
+
+    Uses 500s, not 429s: a rate limit means the request was never served, so it
+    has its own budget and its own test (see the rate-limiting section)."""
     import time as _time
     monkeypatch.setattr(_time, "sleep", lambda s: None)
-    _flaky_post(monkeypatch, [429, 429, 429, 429], json.dumps({"ok": True}))
+    _flaky_post(monkeypatch, [503, 503, 503, 503], json.dumps({"ok": True}))
 
     with pytest.raises(RuntimeError, match="failed after"):
         llm.call_json("give me json", max_tokens=100)
@@ -491,3 +494,106 @@ def test_chunk_size_is_configurable_to_fit_a_daily_request_cap(monkeypatch):
     assert big_chunks < default_chunks, "raising the budget did not reduce calls"
     # Coverage is the guarantee that must survive any chunk size.
     assert sum(len(c) for c in digest_module._chunk_mentions(mentions)) == 80
+
+
+# --- rate limiting ----------------------------------------------------------
+
+def _rate_limited(monkeypatch, statuses, content, retry_after=None):
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://api.z.ai/api/paas/v4")
+    monkeypatch.setattr(llm.settings, "llm_model", "glm-4.5-flash")
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+    monkeypatch.setattr(llm.settings, "llm_min_request_interval_ms", 0)
+    import time as _time
+
+    slept: list[float] = []
+    monkeypatch.setattr(_time, "sleep", slept.append)
+
+    calls = {"n": 0}
+
+    class _Resp:
+        def __init__(self, status):
+            self.status_code = status
+            self.text = '{"error":{"code":"1302","message":"Rate limit reached"}}'
+            self.headers = {"Retry-After": str(retry_after)} if retry_after else {}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+        def json(self):
+            return {"choices": [{"message": {"content": content}}]}
+
+    def post(url, headers=None, json=None, timeout=None):
+        i = calls["n"]
+        calls["n"] += 1
+        return _Resp(statuses[i] if i < len(statuses) else 200)
+
+    monkeypatch.setattr(requests, "post", post)
+    return calls, slept
+
+
+def test_a_rate_limit_waits_out_the_window_not_a_few_seconds(monkeypatch):
+    """Z.ai code 1302 is a per-MINUTE quota. Backing off ~7 seconds across four
+    attempts spends them all inside the same blocked window, so the call fails
+    having never actually retried."""
+    calls, slept = _rate_limited(monkeypatch, [429, 429], json.dumps({"ok": True}))
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+    assert calls["n"] == 3
+    assert max(slept) >= 15, f"backoff too short to outlast a quota window: {slept}"
+
+
+def test_rate_limits_do_not_consume_the_attempt_budget(monkeypatch):
+    """A throttled request was never served, so it says nothing about whether
+    the call would succeed — counting it as a failed attempt burns the budget
+    on the provider's clock rather than on real errors."""
+    calls, _ = _rate_limited(monkeypatch, [429] * 5, json.dumps({"ok": True}))
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+    assert calls["n"] == 6, "gave up while only ever being rate limited"
+
+
+def test_the_providers_own_retry_after_is_obeyed(monkeypatch):
+    calls, slept = _rate_limited(monkeypatch, [429], json.dumps({"ok": True}), retry_after=42)
+
+    llm.call_json("give me json", max_tokens=100)
+
+    assert 42 in slept, f"ignored Retry-After: {slept}"
+
+
+def test_persistent_rate_limiting_still_gives_up(monkeypatch):
+    """Waiting forever would hang the report instead of failing it."""
+    _rate_limited(monkeypatch, [429] * 50, json.dumps({"ok": True}))
+
+    with pytest.raises(RuntimeError, match="rate limited"):
+        llm.call_json("give me json", max_tokens=100)
+
+
+def test_requests_can_be_spaced_to_stay_under_a_quota(monkeypatch):
+    """Capping concurrency is not enough: released workers still fire at once
+    and a per-minute quota sees a burst."""
+    import time as _time
+
+    slept: list[float] = []
+    monkeypatch.setattr(_time, "sleep", slept.append)
+    monkeypatch.setattr(llm.settings, "llm_min_request_interval_ms", 500)
+    llm._LAST_REQUEST_AT = _time.monotonic()
+
+    llm._throttle()
+
+    assert slept and slept[0] > 0, "did not space the request"
+
+
+def test_spacing_is_off_by_default(monkeypatch):
+    import time as _time
+
+    slept: list[float] = []
+    monkeypatch.setattr(_time, "sleep", slept.append)
+    monkeypatch.setattr(llm.settings, "llm_min_request_interval_ms", 0)
+
+    llm._throttle()
+
+    assert slept == []

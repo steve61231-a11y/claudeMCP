@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     # difference between finishing a report and hitting the daily cap. 0 = the
     # module default (16k, sized for a 200k-context model).
     llm_chunk_chars: int = 0
+    # Minimum gap between outbound LLM requests, milliseconds. Capping
+    # concurrency is not enough on a per-minute quota: N workers still fire N
+    # requests at once and the provider sees a burst. Spacing them keeps the
+    # same total under the limit rather than tripping it and then waiting out a
+    # penalty window. 0 = no spacing (the default, for Anthropic).
+    llm_min_request_interval_ms: int = 0
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
     # Post-generation audit: decompose the finished report into atomic claims and

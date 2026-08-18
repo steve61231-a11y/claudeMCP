@@ -180,6 +180,45 @@ def _extract_json(text: str):
 OPENAI_COMPATIBLE_MAX_TOKENS = 8000
 OPENAI_COMPATIBLE_RETRIES = 4
 OPENAI_COMPATIBLE_TIMEOUT = 180
+# 429s get their own, much longer budget: a rate limit is a minute-long window,
+# not a blip, so seconds of backoff spend every attempt inside the same blocked
+# window and the call fails having never really retried.
+OPENAI_COMPATIBLE_RATE_LIMIT_RETRIES = 6
+OPENAI_COMPATIBLE_MAX_BACKOFF = 75
+
+_THROTTLE_LOCK = threading.Lock()
+_LAST_REQUEST_AT = 0.0
+
+
+def _throttle() -> None:
+    """Hold a minimum gap between outbound requests, process-wide.
+
+    Limiting concurrency alone is not enough: N workers still fire N requests
+    the instant they are released, and a per-minute quota sees a burst. Spacing
+    requests keeps the same total under the limit instead of tripping it and
+    then waiting out a penalty window. LLM_MIN_REQUEST_INTERVAL_MS = 0 disables
+    it, which is what the paid path wants.
+    """
+    import time as _time
+
+    gap = (settings.llm_min_request_interval_ms or 0) / 1000.0
+    if gap <= 0:
+        return
+    global _LAST_REQUEST_AT
+    with _THROTTLE_LOCK:
+        wait = _LAST_REQUEST_AT + gap - _time.monotonic()
+        if wait > 0:
+            _time.sleep(wait)
+        _LAST_REQUEST_AT = _time.monotonic()
+
+
+def _retry_after(response) -> float | None:
+    """The provider's own instruction on how long to wait, when it gives one."""
+    raw = response.headers.get("Retry-After") if getattr(response, "headers", None) else None
+    try:
+        return min(float(raw), OPENAI_COMPATIBLE_MAX_BACKOFF) if raw else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _extra_body() -> dict:
@@ -286,8 +325,11 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     body.update(_extra_body())
 
     last_error: Exception | None = None
-    for attempt in range(OPENAI_COMPATIBLE_RETRIES):
+    attempt = 0
+    rate_limited = 0
+    while attempt < OPENAI_COMPATIBLE_RETRIES:
         try:
+            _throttle()
             response = requests.post(
                 f"{base}/chat/completions",
                 headers={
@@ -297,10 +339,21 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 json=body,
                 timeout=OPENAI_COMPATIBLE_TIMEOUT,
             )
-            # Rate limits and server errors are transient — the map step fires
-            # several requests in parallel and free tiers throttle hard, so a
-            # single 429 must not lose a whole chunk of the corpus.
-            if response.status_code == 429 or response.status_code >= 500:
+            # A 429 is a QUOTA WINDOW, not a blip. Providers meter per minute, so
+            # a few seconds of backoff simply spends every attempt inside the same
+            # blocked window and the call fails having never really retried. Wait
+            # out the window instead, and don't count these against the attempt
+            # budget — the request was never served, so nothing was learned about
+            # whether it would succeed.
+            if response.status_code == 429:
+                rate_limited += 1
+                if rate_limited > OPENAI_COMPATIBLE_RATE_LIMIT_RETRIES:
+                    raise requests.HTTPError(
+                        f"rate limited {rate_limited} times: {response.text[:200]}")
+                time.sleep(_retry_after(response) or
+                           min(15 * rate_limited, OPENAI_COMPATIBLE_MAX_BACKOFF))
+                continue
+            if response.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {response.status_code}: {response.text[:200]}")
             # Not every free model implements JSON mode; those that don't reject
             # the whole request. Drop it and retry rather than failing the run —
@@ -314,12 +367,13 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
             return _extract_json(_reply_text(response.json()))
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             last_error = exc
-            if attempt == OPENAI_COMPATIBLE_RETRIES - 1:
+            attempt += 1
+            if attempt >= OPENAI_COMPATIBLE_RETRIES:
                 break
             time.sleep(min(2 ** attempt, 8) + random.random())
 
     raise RuntimeError(f"{settings.llm_provider} call failed after "
-                       f"{OPENAI_COMPATIBLE_RETRIES} attempts: {last_error}") from last_error
+                       f"{attempt} attempts: {last_error}") from last_error
 
 
 # Canned replies for the stub backend, keyed by a phrase unique to each prompt.
