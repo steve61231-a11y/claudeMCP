@@ -182,6 +182,50 @@ OPENAI_COMPATIBLE_RETRIES = 4
 OPENAI_COMPATIBLE_TIMEOUT = 180
 
 
+def _extra_body() -> dict:
+    """Provider-specific request fields, as JSON in LLM_EXTRA_BODY.
+
+    An escape hatch so a provider's quirk — a thinking toggle, a sampling
+    field, a routing hint — never requires a code change to work around.
+    Malformed JSON is ignored rather than failing every call.
+    """
+    raw = (getattr(settings, "llm_extra_body", "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _reply_text(payload: dict) -> str:
+    """The assistant's text, wherever this provider put it.
+
+    Reasoning models split their output: `content` holds the answer and
+    `reasoning_content` the chain of thought. When thinking is on and the token
+    budget runs out mid-thought, `content` comes back as an empty string and the
+    only thing present is the reasoning — so fall back to it rather than
+    reporting an empty reply. Raises with the finish reason when there is
+    genuinely nothing, because "no JSON found in ''" alone says nothing about
+    why.
+    """
+    choice = (payload.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    for field in ("content", "reasoning_content"):
+        text = message.get(field)
+        if isinstance(text, str) and text.strip():
+            return text
+    finish = choice.get("finish_reason") or "unknown"
+    usage = payload.get("usage") or {}
+    raise ValueError(
+        f"empty reply from model (finish_reason={finish}, usage={usage}). "
+        "A reasoning model that spends its whole budget thinking returns "
+        "nothing here — disable thinking via LLM_EXTRA_BODY or raise the "
+        "token budget."
+    )
+
+
 def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     """Call any provider speaking OpenAI's /chat/completions.
 
@@ -214,6 +258,16 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     if "json" in prompt.lower():
         body["response_format"] = {"type": "json_object"}
 
+    # Hybrid reasoning models (GLM-4.5/4.6, and others) spend the token budget
+    # on thinking and return an EMPTY `content` — the answer, if any, arrives in
+    # `reasoning_content` instead. Our budgets are sized for an answer, not for
+    # an answer plus a chain of thought, so thinking is switched off by default.
+    # LLM_EXTRA_BODY overrides this and carries any other provider-specific
+    # field, so a new provider's quirk never needs a code change.
+    if model.lower().startswith("glm"):
+        body["thinking"] = {"type": "disabled"}
+    body.update(_extra_body())
+
     last_error: Exception | None = None
     for attempt in range(OPENAI_COMPATIBLE_RETRIES):
         try:
@@ -240,7 +294,7 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 raise requests.HTTPError("retrying without JSON mode: "
                                          f"{response.text[:200]}")
             response.raise_for_status()
-            return _extract_json(response.json()["choices"][0]["message"]["content"])
+            return _extract_json(_reply_text(response.json()))
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             last_error = exc
             if attempt == OPENAI_COMPATIBLE_RETRIES - 1:

@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # below what the map step wants, and a 429 storm looks like a broken run.
     # 0 = no ceiling (the default, for Anthropic).
     llm_max_concurrency: int = 0
+    # Extra JSON merged into each openai_compatible request body, for
+    # provider-specific fields (e.g. '{"thinking": {"type": "disabled"}}' on
+    # GLM). An escape hatch so a provider quirk never needs a code change.
+    llm_extra_body: str = ""
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
     # Post-generation audit: decompose the finished report into atomic claims and

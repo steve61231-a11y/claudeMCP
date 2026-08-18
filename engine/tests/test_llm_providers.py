@@ -335,3 +335,103 @@ def test_health_reports_the_live_backend_and_precache_state(monkeypatch):
     assert body["llm"]["model"] == "glm-4.5-flash"
     assert body["llm"]["production"] is False
     assert body["serving_precache"] is True
+
+
+# --- reasoning models (GLM and friends) -------------------------------------
+
+def test_thinking_is_disabled_for_glm(monkeypatch):
+    """GLM-4.5/4.6 are hybrid reasoning models: with thinking on they spend the
+    budget reasoning and return an empty `content`, which is exactly the
+    'no JSON found in ...' failure this prevents."""
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_model", "glm-4.5-flash")
+
+    llm.call_json("give me json", max_tokens=100)
+
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+
+
+def test_thinking_is_not_sent_to_other_providers(monkeypatch):
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    llm.call_json("give me json", max_tokens=100)
+    assert "thinking" not in captured["body"]
+
+
+def test_extra_body_lets_a_provider_quirk_be_fixed_by_config(monkeypatch):
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_extra_body", '{"top_k": 5}')
+
+    llm.call_json("give me json", max_tokens=100)
+
+    assert captured["body"]["top_k"] == 5
+
+
+def test_malformed_extra_body_is_ignored_not_fatal(monkeypatch):
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "not json at all")
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+    assert "top_k" not in captured["body"]
+
+
+def test_answer_is_read_from_reasoning_content_when_content_is_empty(monkeypatch):
+    """Reasoning models split their output. When the budget runs out mid-thought
+    `content` is '' and the only thing present is the reasoning — using it beats
+    reporting an empty reply."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://api.z.ai/api/paas/v4")
+    monkeypatch.setattr(llm.settings, "llm_model", "glm-4.5-flash")
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {
+                "content": "",
+                "reasoning_content": 'I should answer: {"ok": true}',
+            }}]}
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _Resp())
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+
+
+def test_a_wholly_empty_reply_explains_why(monkeypatch):
+    """'no JSON found in ...' says nothing about the cause. The finish reason and
+    usage are what tell you the budget went on thinking."""
+    import time as _time
+
+    import requests
+
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://api.z.ai/api/paas/v4")
+    monkeypatch.setattr(llm.settings, "llm_model", "glm-4.5-flash")
+
+    class _Resp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                    "usage": {"completion_tokens": 100}}
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _Resp())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        llm.call_json("give me json", max_tokens=100)
+
+    message = str(excinfo.value)
+    assert "finish_reason=length" in message
+    assert "thinking" in message.lower()
