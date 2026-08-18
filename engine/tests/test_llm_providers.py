@@ -278,3 +278,40 @@ def test_every_parallel_stage_respects_the_ceiling(monkeypatch):
             f"{module.__name__}: {pools} thread pool(s) but only {guarded} "
             "guarded by llm.concurrency()"
         )
+
+
+def test_json_mode_is_dropped_and_retried_when_a_model_rejects_it(monkeypatch):
+    """Not every free model implements JSON mode, and those that don't reject
+    the whole request. One 400 must not fail the run — _extract_json already
+    copes with the fenced, chatty replies that come back without it."""
+    import time as _time
+
+    import requests
+
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_model", "some/free-model:free")
+
+    seen = []
+
+    class _Resp:
+        def __init__(self, status):
+            self.status_code = status
+            self.text = "response_format is not supported"
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(str(self.status_code))
+
+        def json(self):
+            return {"choices": [{"message": {"content": '```json\n{"ok": true}\n```'}}]}
+
+    def post(url, headers=None, json=None, timeout=None):
+        seen.append("response_format" in json)
+        return _Resp(400 if seen[-1] else 200)
+
+    monkeypatch.setattr(requests, "post", post)
+
+    assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
+    assert seen == [True, False], "did not retry without JSON mode"

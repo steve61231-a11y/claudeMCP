@@ -231,6 +231,14 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
             # single 429 must not lose a whole chunk of the corpus.
             if response.status_code == 429 or response.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {response.status_code}: {response.text[:200]}")
+            # Not every free model implements JSON mode; those that don't reject
+            # the whole request. Drop it and retry rather than failing the run —
+            # _extract_json already copes with the fenced, chatty replies that
+            # come back without it.
+            if response.status_code == 400 and "response_format" in body:
+                body.pop("response_format")
+                raise requests.HTTPError("retrying without JSON mode: "
+                                         f"{response.text[:200]}")
             response.raise_for_status()
             return _extract_json(response.json()["choices"][0]["message"]["content"])
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
