@@ -28,7 +28,10 @@ from engine import llm
 from engine.reports.analysts import GROUNDING_RULES, _render_mention
 
 CHUNK_CHARS = 16000          # per-chunk prompt budget for the map step
-MAP_MAX_TOKENS = 2500
+# The map step is where corpus detail is either preserved or lost forever —
+# every analyst downstream reads this digest, not the mentions. Compressing to
+# 2500 tokens per chunk was the first of the two places depth was destroyed.
+MAP_MAX_TOKENS = 4000
 MAP_WORKERS = 6
 
 
@@ -78,23 +81,25 @@ def _chunk_mentions(mentions: list[dict], budget: int | None = None) -> list[lis
     return chunks
 
 
-MAP_PROMPT = """You are a meticulous intelligence analyst distilling a batch of scraped mentions about {name}. Read EVERY item below and produce a compact structured digest that loses none of the substance.
+MAP_PROMPT = """You are a meticulous intelligence analyst distilling a batch of scraped mentions about {name}. Read EVERY item below and produce a dense structured digest that loses none of the substance.
+
+Compression is allowed. Omission is not. Everything downstream in this report reads YOUR digest and never sees these items again — a claim, quote, entity or anomaly you leave out is gone from the analysis for good. Extract every distinct one, not a representative sample.
 
 {grounding}
 
 For this batch, extract:
-- claims: distinct factual claims/assertions made (each with the ref id of an item making it),
-- themes: recurring topics or framings, with rough item counts,
-- notable_quotes: the most revealing verbatim quotes (ref id + exact text), including dissenting or grassroots voices,
-- entities: people/organisations named and how they relate to {name},
+- claims: EVERY distinct factual claim/assertion made (each with the ref id of an item making it) — expect dozens in a full batch, not a handful,
+- themes: every recurring topic or framing, with rough item counts,
+- notable_quotes: the most revealing verbatim quotes (ref id + exact text), including dissenting or grassroots voices — take as many as carry information,
+- entities: EVERY person/organisation/company/agency named, however briefly, and how they relate to {name},
 - sentiment_read: the balance of supportive / critical / neutral in this batch,
 - anomalies: anything unusual, contradictory, coordinated, or that seems to point beneath the surface.
 
 Batch (each line is one mention, prefixed with its ref):
 {batch}
 
-Respond with ONLY this JSON:
-{{"digest": {{"claims": [{{"ref":"id","text":"..."}}], "themes": [{{"theme":"...","count":N}}], "notable_quotes": [{{"ref":"id","text":"..."}}], "entities": [{{"name":"...","relation":"..."}}], "sentiment_read": {{"supportive":N,"critical":N,"neutral":N}}, "anomalies": ["..."]}}}}"""
+Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY — return as many elements as the batch contains:
+{{"digest": {{"claims": [{{"ref":"id","text":"..."}}, {{"ref":"id","text":"..."}}, {{"ref":"id","text":"..."}}, {{"ref":"id","text":"..."}}], "themes": [{{"theme":"...","count":N}}, {{"theme":"...","count":N}}, {{"theme":"...","count":N}}], "notable_quotes": [{{"ref":"id","text":"..."}}, {{"ref":"id","text":"..."}}, {{"ref":"id","text":"..."}}], "entities": [{{"name":"...","relation":"..."}}, {{"name":"...","relation":"..."}}, {{"name":"...","relation":"..."}}, {{"name":"...","relation":"..."}}], "sentiment_read": {{"supportive":N,"critical":N,"neutral":N}}, "anomalies": ["...", "..."]}}}}"""
 
 
 def _digest_chunk(name: str, chunk: list[dict], index: int) -> dict:

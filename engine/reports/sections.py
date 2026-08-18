@@ -12,6 +12,12 @@ from datetime import datetime
 from engine import llm
 from engine.reports import analysts
 
+# These four sections were capped at 400-500 tokens, so the cap — not the
+# evidence — decided how much they said. They read aggregate statistics, so
+# they are cheap; there is no reason for them to be the thinnest part of the
+# report.
+SECTION_MAX_TOKENS = 3000
+
 
 def _context_blob(
     politician_name: str,
@@ -39,7 +45,7 @@ def _context_blob(
                     "growth_rate": n["growth_rate"],
                     "mention_count": n["mention_count"],
                 }
-                for n in narrative_breakdown[:8]
+                for n in narrative_breakdown[:20]
             ],
             "top_influence_drivers": [
                 {
@@ -47,7 +53,7 @@ def _context_blob(
                     "score": round(i["score"], 1),
                     "sentiment_contribution": round(i["sentiment_contribution"], 1),
                 }
-                for i in influence_summary[:8]
+                for i in influence_summary[:20]
             ],
         },
         default=str,
@@ -60,8 +66,11 @@ for a reputation/sentiment report. Use only the structured data below — don't 
 Data:
 {context}
 
-Write a 4-6 sentence executive summary covering overall sentiment, the dominant narrative(s),
-volume/platform spread, and the single most important takeaway for the politician's team.
+Write a 400-600 word executive summary covering overall sentiment and how it is distributed,
+each of the dominant narratives and what is driving it, volume and platform spread and what the
+differences between platforms mean, the accounts doing the most to shape it, and the most
+important takeaway for the politician's team. Specific throughout — name the narratives, the
+platforms and the handles. No generic commentary.
 
 Respond with ONLY a JSON object: {{"summary": "..."}}
 """
@@ -72,11 +81,12 @@ from the structured data below — don't invent facts.
 Data:
 {context}
 
-List 3-5 concrete reputation risks visible in this data (e.g. a growing negative narrative,
-a high-influence critic, a platform where sentiment is notably worse). Each should be one
-specific sentence, not generic advice.
+List every concrete reputation risk visible in this data (e.g. a growing negative narrative,
+a high-influence critic, a platform where sentiment is notably worse) — typically 6-12 where the
+data supports it, not three. Each is 2-4 sentences: what the risk is, what in the data shows it,
+and why it matters. Specific, not generic advice.
 
-Respond with ONLY a JSON object: {{"risks": ["...", "..."]}}
+Respond with ONLY a JSON object: {{"risks": ["...", "...", "...", "...", "...", "..."]}}
 """
 
 OPPORTUNITIES_PROMPT = """You are a political intelligence analyst identifying opportunities
@@ -85,11 +95,12 @@ from the structured data below — don't invent facts.
 Data:
 {context}
 
-List 3-5 concrete opportunities visible in this data (e.g. a positive narrative gaining
-traction, a supportive influencer worth amplifying, an underused platform). Each should be
-one specific sentence, not generic advice.
+List every concrete opportunity visible in this data (e.g. a positive narrative gaining
+traction, a supportive influencer worth amplifying, an underused platform) — typically 6-12 where
+the data supports it, not three. Each is 2-4 sentences: what the opening is, what in the data
+shows it, and what acting on it would look like. Specific, not generic advice.
 
-Respond with ONLY a JSON object: {{"opportunities": ["...", "..."]}}
+Respond with ONLY a JSON object: {{"opportunities": ["...", "...", "...", "...", "...", "..."]}}
 """
 
 TRENDS_PROMPT = """You are a political intelligence analyst flagging emerging trends to watch
@@ -98,31 +109,32 @@ from the structured data below — don't invent facts.
 Data:
 {context}
 
-List 3-5 emerging trends worth monitoring going forward (e.g. a narrative with high growth
-rate even if not yet dominant, an emerging platform shift). Each should be one specific
-sentence, not generic advice.
+List every emerging trend worth monitoring going forward (e.g. a narrative with high growth
+rate even if not yet dominant, an emerging platform shift) — typically 6-12 where the data
+supports it, not three. Each is 2-4 sentences: what is moving, the numbers that show it, and
+where it goes if it continues. Specific, not generic advice.
 
-Respond with ONLY a JSON object: {{"trends": ["...", "..."]}}
+Respond with ONLY a JSON object: {{"trends": ["...", "...", "...", "...", "...", "..."]}}
 """
 
 
 def generate_executive_summary(context: str) -> str:
-    result = llm.call_json(SUMMARY_PROMPT.format(context=context), max_tokens=400)
+    result = llm.call_json(SUMMARY_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
     return result.get("summary", "")
 
 
 def generate_risks(context: str) -> list[str]:
-    result = llm.call_json(RISKS_PROMPT.format(context=context), max_tokens=500)
+    result = llm.call_json(RISKS_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
     return result.get("risks", [])
 
 
 def generate_opportunities(context: str) -> list[str]:
-    result = llm.call_json(OPPORTUNITIES_PROMPT.format(context=context), max_tokens=500)
+    result = llm.call_json(OPPORTUNITIES_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
     return result.get("opportunities", [])
 
 
 def generate_trends(context: str) -> list[str]:
-    result = llm.call_json(TRENDS_PROMPT.format(context=context), max_tokens=500)
+    result = llm.call_json(TRENDS_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
     return result.get("trends", [])
 
 

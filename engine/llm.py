@@ -119,6 +119,21 @@ def concurrency(default: int) -> int:
     return max(1, min(default, ceiling)) if ceiling > 0 else default
 
 
+# Ceiling on a single response. Depth is the product here: an analyst section
+# capped at 2.5k tokens writes headlines, not intelligence. The
+# OpenAI-compatible path is bound by DeepSeek's 8192 and clamps itself; Claude
+# writes far more, so the paid backend is not held to a stand-in's limit.
+ANTHROPIC_MAX_OUTPUT_TOKENS = 16000
+
+
+def max_output_tokens() -> int:
+    """The largest single response this backend will be asked for."""
+    override = settings.llm_max_output_tokens or 0
+    if override > 0:
+        return override
+    return OPENAI_COMPATIBLE_MAX_TOKENS if provider() == "openai_compatible" else ANTHROPIC_MAX_OUTPUT_TOKENS
+
+
 def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> dict | list:
     """Calls Claude and parses a JSON object/array from the response text.
 
@@ -148,8 +163,9 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
         messages=[{"role": "user", "content": prompt}],
     )
     _record_usage(response)
-    if response.stop_reason == "max_tokens" and max_tokens < 8000:
-        return call_json(prompt, max_tokens=min(8000, max_tokens * 2), model=model)
+    ceiling = max_output_tokens()
+    if response.stop_reason == "max_tokens" and max_tokens < ceiling:
+        return call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
     parsed = _extract_json(response.content[0].text)
     _cache_write(key, parsed)
     return parsed

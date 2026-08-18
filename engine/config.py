@@ -66,6 +66,12 @@ class Settings(BaseSettings):
     # same total under the limit rather than tripping it and then waiting out a
     # penalty window. 0 = no spacing (the default, for Anthropic).
     llm_min_request_interval_ms: int = 0
+    # Ceiling on a single response, in output tokens. The OpenAI-compatible
+    # path is bound by DeepSeek's 8192 and clamps itself; Claude will write far
+    # more than that, and depth is the entire point of the analyst sections, so
+    # the paid backend is not held to a stand-in's limit. 0 = the per-provider
+    # default (8k on openai_compatible, 16k on Anthropic).
+    llm_max_output_tokens: int = 0
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
     # Post-generation audit: decompose the finished report into atomic claims and

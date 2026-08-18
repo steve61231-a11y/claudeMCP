@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
+from engine.ingestion.gdelt_connector import GdeltConnector
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -55,13 +56,20 @@ def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) 
         if not url or url in seen or not title:
             continue
         seen.add(url)
+        # Every article used to be stamped with the window end, which made the
+        # whole issue-map timeline fictional — dozens of items "happening" on
+        # the same day, and the analyst dating events from it. GDELT ships the
+        # real timestamp in `seendate`; parse it the way the main connector
+        # does and clamp out-of-window items rather than inventing a date.
+        posted = GdeltConnector._parse_seendate(art.get("seendate")) or we
+        posted = min(max(posted, ws), we)
         out.append(
             IngestedMention(
                 platform=art.get("domain") or "news",
                 source_type="article",
                 author_handle=art.get("domain") or "news",
                 text=title,
-                posted_at=we,
+                posted_at=posted,
                 engagement={},
                 raw_payload={"url": url, "title": title, "source": "gdelt", "intersection": True},
             )

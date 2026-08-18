@@ -27,8 +27,19 @@ GROUNDING_RULES = """CRITICAL GROUNDING RULES:
   include that item's ref id.
 - If the sources don't support a claim, leave it out."""
 
-ANALYST_MAX_TOKENS = 2500
-CORPUS_CHARS_PER_CALL = 30000
+# How much an analyst may write, and how much corpus it gets to read.
+#
+# These were the binding constraint on report depth. At 2500 output tokens an
+# analyst covering an entire corpus writes headline fragments — which is exactly
+# what the issue map was returning. Depth is the product here, so the ceiling is
+# the backend's, not an arbitrary number. Input is the cheaper half of the bill
+# on every backend we use, so the read budget is generous too.
+ANALYST_MAX_TOKENS = 8000
+CORPUS_CHARS_PER_CALL = 60000
+# Characters of whole-corpus digest a corpus-level analyst reads. The digest is
+# already a compression of everything collected; truncating it again is where
+# the second loss of detail happened.
+DIGEST_CONTEXT_CHARS = 90000
 
 
 def _render_mention(m: dict) -> str:
@@ -105,10 +116,12 @@ PUBLIC_VOICE_PROMPT = """You are a political intelligence analyst. Your job: rep
 
 {grounding}
 
-Group what you find into three stances: supportive, critical, and neutral/questioning. For each stance identify the 2-4 dominant things people are saying (themes), and back EVERY theme with 2-4 verbatim quotes (exact text from a source item, with its ref id). Prefer comments over posts where available — comments are ordinary citizens' voices. Note the language/tone (English/Swahili/Sheng, mockery, praise, anger) where visible.
+Group what you find into three stances: supportive, critical, and neutral/questioning. For each stance identify EVERY distinct thing people are saying (themes) — typically 4-8 per stance where the corpus supports it, not two — and back EVERY theme with 3-6 verbatim quotes (exact text from a source item, with its ref id). Each theme's `summary` is 80-150 words: what the theme actually is, who holds it, how strongly, and how it is expressed. Prefer comments over posts where available — comments are ordinary citizens' voices. Note the language/tone (English/Swahili/Sheng, mockery, praise, anger) where visible.
 
-Required JSON shape:
-{{"public_voice": {{"supportive": [{{"theme": "...", "summary": "...", "quotes": [{{"ref": "abcd1234", "text": "verbatim quote"}}]}}], "critical": [...], "neutral": [...]}}}}"""
+Completeness matters as much as accuracy: a theme present in the corpus and missing from your output is a failure.
+
+Required JSON shape — the example shows the FORM, not the QUANTITY. Return as many elements as the sources support, never as few as the example happens to show:
+{{"public_voice": {{"supportive": [{{"theme": "...", "summary": "80-150 words...", "quotes": [{{"ref": "abcd1234", "text": "verbatim quote"}}, {{"ref": "efgh5678", "text": "another verbatim quote"}}, {{"ref": "ijkl9012", "text": "..."}}]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}], "critical": [ ...same shape, 4-8 themes... ], "neutral": [ ...same shape... ]}}}}"""
 
 
 def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
@@ -117,7 +130,7 @@ def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
         PUBLIC_VOICE_PROMPT.format(name=name, grounding=GROUNDING_RULES),
         _corpus_blob(mentions),
         expected_keys={"public_voice"},
-        max_tokens=4000,
+        max_tokens=ANALYST_MAX_TOKENS,
         max_untrusted_chars=CORPUS_CHARS_PER_CALL,
     )
     voice = result["public_voice"]
@@ -134,10 +147,10 @@ PLATFORM_PULSE_PROMPT = """You are a political intelligence analyst describing w
 
 {grounding}
 
-For each platform that appears with meaningful volume: describe the tone and dominant themes there, who the notable voices are, and give 2-3 verbatim example quotes (with ref ids). Do not just report counts — describe the conversation.
+For each platform that appears with meaningful volume: describe the tone and dominant themes there, who the notable voices are, and give 3-5 verbatim example quotes (with ref ids). Do not just report counts — describe the conversation. `tone` is 100-200 words: what the conversation there actually sounds like, how it differs from the other platforms, who sets the register, and what a reader would notice first.
 
-Required JSON shape:
-{{"platform_pulse": [{{"platform": "tiktok", "tone": "...", "themes": ["..."], "notable_voices": ["@handle"], "quotes": [{{"ref": "abcd1234", "text": "..."}}]}}]}}"""
+Required JSON shape — the example shows the FORM, not the QUANTITY. Return as many elements as the sources support, never as few as the example happens to show:
+{{"platform_pulse": [{{"platform": "tiktok", "tone": "100-200 words...", "themes": ["...", "...", "..."], "notable_voices": ["@handle", "@handle2"], "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}, {{"ref": "ijkl9012", "text": "..."}}]}}, {{"platform": "x", "tone": "...", "themes": [...], "notable_voices": [...], "quotes": [...]}}, {{"platform": "news", "tone": "...", "themes": [...], "notable_voices": [...], "quotes": [...]}}]}}"""
 
 
 def analyze_platform_pulse(name: str, mentions: list[dict]) -> list[dict]:
@@ -168,10 +181,12 @@ TIMELINE_PROMPT = """You are a political intelligence analyst reconstructing a d
 
 {grounding}
 
-Identify the key dated moments (spikes in conversation) and for each: the date, what happened AS DESCRIBED IN THE SOURCES, and 1-2 verbatim quotes (with ref ids) showing the reaction. Order chronologically.
+Identify EVERY key dated moment (spikes in conversation) the sources support — typically 8-20 — and for each: the date, what happened AS DESCRIBED IN THE SOURCES, and 2-4 verbatim quotes (with ref ids) showing the reaction. Order chronologically.
 
-Required JSON shape:
-{{"timeline": [{{"date": "YYYY-MM-DD", "event": "...", "quotes": [{{"ref": "abcd1234", "text": "..."}}]}}]}}"""
+Each `event` is a mini-briefing of 80-200 words, not a headline: what happened, who was involved, what was said, how people reacted, and why it mattered. Scale to significance — a pivotal day gets the full 200 words, a minor one 80 — but never a fragment.
+
+Required JSON shape — the example shows the FORM, not the QUANTITY. Return as many elements as the sources support, never as few as the example happens to show:
+{{"timeline": [{{"date": "YYYY-MM-DD", "event": "80-200 word mini-briefing...", "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}]}}"""
 
 
 def analyze_timeline(name: str, mentions: list[dict], by_day: dict[str, int]) -> list[dict]:
@@ -199,12 +214,12 @@ INFLUENCER_STANCES_PROMPT = """You are a political intelligence analyst profilin
 
 {grounding}
 
-For each handle listed, describe: what kind of account they appear to be (from their content only), their stance toward {name} (supportive/critical/neutral/mixed), and what they've been saying — with 1-2 verbatim quotes (ref ids). Do not guess who runs an account.
+For each handle listed, describe: what kind of account they appear to be (from their content only), their stance toward {name} (supportive/critical/neutral/mixed), and what they've been saying — with 2-4 verbatim quotes (ref ids). `what_they_say` is 80-180 words: their actual line of argument, how consistently they hold it, what they emphasise and what they omit. Do not guess who runs an account.
 
 Handles to profile: {handles}
 
-Required JSON shape:
-{{"influencer_stances": [{{"handle": "...", "account_type": "...", "stance": "...", "what_they_say": "...", "quotes": [{{"ref": "abcd1234", "text": "..."}}]}}]}}"""
+Required JSON shape — the example shows the FORM, not the QUANTITY. Return as many elements as the sources support, never as few as the example happens to show:
+{{"influencer_stances": [{{"handle": "...", "account_type": "...", "stance": "...", "what_they_say": "80-180 words...", "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}]}}, {{"handle": "...", "account_type": "...", "stance": "...", "what_they_say": "...", "quotes": [...]}}, {{"handle": "...", "account_type": "...", "stance": "...", "what_they_say": "...", "quotes": [...]}}]}}"""
 
 
 def analyze_influencer_stances(name: str, mentions: list[dict], influence_summary: list[dict]) -> list[dict]:
@@ -234,10 +249,12 @@ Below are the actual posts/comments belonging to this storyline.
 
 {grounding}
 
-Write: how the story shows up in the sources (what concretely is being said/reported), who is pushing it (handles visible in the sources), how supporters frame it vs critics, and 3-5 verbatim quotes (ref ids) that best capture it.
+Write: how the story shows up in the sources (what concretely is being said/reported), who is pushing it (handles visible in the sources), how supporters frame it vs critics, and 4-8 verbatim quotes (ref ids) that best capture it.
 
-Required JSON shape:
-{{"deep_dive": {{"how_it_unfolded": "...", "who_is_driving_it": ["@handle"], "supporter_framing": "...", "critic_framing": "...", "quotes": [{{"ref": "abcd1234", "text": "..."}}]}}}}"""
+Lengths: `how_it_unfolded` 250-500 words, tracing the storyline through the sources in order rather than summarising it. `supporter_framing` and `critic_framing` 80-150 words each, in the terms those sides actually use.
+
+Required JSON shape — the example shows the FORM, not the QUANTITY. Return as many elements as the sources support, never as few as the example happens to show:
+{{"deep_dive": {{"how_it_unfolded": "250-500 words...", "who_is_driving_it": ["@handle", "@handle2", "@handle3"], "supporter_framing": "80-150 words...", "critic_framing": "80-150 words...", "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}, {{"ref": "ijkl9012", "text": "..."}}, {{"ref": "mnop3456", "text": "..."}}]}}}}"""
 
 
 def narrative_genealogy(members: list[dict]) -> dict:
@@ -291,10 +308,10 @@ def analyze_narrative_deep_dives(
                 NARRATIVE_DEEP_DIVE_PROMPT.format(
                     name=name, label=n["label"], description=n["description"], grounding=GROUNDING_RULES
                 ),
-                _corpus_blob(members, budget_chars=15000),
+                _corpus_blob(members, budget_chars=30000),
                 expected_keys={"deep_dive"},
-                max_tokens=1200,
-                max_untrusted_chars=16000,
+                max_tokens=4000,
+                max_untrusted_chars=32000,
             )
         except Exception:
             continue
@@ -315,7 +332,7 @@ Additionally: only restate claims already present in the specialist findings bel
 Specialist findings:
 {findings}
 
-Write a 600-900 word executive brief a campaign strategist would actually use: what the public is saying and feeling (lead with this), the storylines that matter and where they're heading, who is shaping opinion for and against, the concrete moments that moved conversation, and what deserves action this week. Use specific quotes and handles from the findings. No generic advice.
+Write a 900-1500 word executive brief a campaign strategist would actually use: what the public is saying and feeling (lead with this), the storylines that matter and where they're heading, who is shaping opinion for and against, the concrete moments that moved conversation, and what deserves action this week. Use specific quotes and handles from the findings. No generic advice.
 
 Required JSON shape:
 {{"executive_brief": "..."}}"""
@@ -324,10 +341,10 @@ Required JSON shape:
 def synthesize_executive_brief(name: str, analyst_outputs: dict) -> str:
     import json as _json
 
-    findings = _json.dumps(analyst_outputs, default=str)[:45000]
+    findings = _json.dumps(analyst_outputs, default=str)[:90000]
     result = llm.call_json(
         EXECUTIVE_BRIEF_PROMPT.format(name=name, grounding=GROUNDING_RULES, findings=findings),
-        max_tokens=2000,
+        max_tokens=ANALYST_MAX_TOKENS,
     )
     return result.get("executive_brief", "")
 
@@ -360,9 +377,9 @@ def analyze_deep_insights(name: str, corpus_digest: dict) -> dict:
     try:
         result = llm.call_json(
             INSIGHT_PROMPT.format(
-                name=name, grounding=GROUNDING_RULES, digest=digest_context(corpus_digest, max_chars=42000)
+                name=name, grounding=GROUNDING_RULES, digest=digest_context(corpus_digest, max_chars=DIGEST_CONTEXT_CHARS)
             ),
-            max_tokens=2500,
+            max_tokens=ANALYST_MAX_TOKENS,
         )
         insights = [i for i in (result.get("insights") or []) if isinstance(i, dict)]
         return {"insights": insights, "the_one_thing": result.get("the_one_thing", "")}
@@ -374,21 +391,57 @@ ISSUE_MAP_PROMPT = """You are an intelligence analyst mapping the relationship b
 
 {grounding}
 
-Map the intersection precisely:
-- involvement: what is {principal}'s actual role, stance, action or exposure regarding {issue}? (supporter/architect/critic/implicated/absent — say which, with evidence.)
-- linking_narratives: the distinct storylines connecting {principal} to {issue}, each with its framing and who pushes it.
-- key_actors: other people/organisations that appear at this intersection and how they relate to {principal} on {issue}. For each, also give: entity_type (person/organization/company), position on the issue ("for", "against" or "neutral" — use "neutral" unless the digest actually shows a stance), and influence 0-100 for how much they shape the outcome.
-- timeline: the sequence of notable moments linking them, oldest to newest. Give `date` as ISO (YYYY-MM-DD) when the digest states or clearly implies one, otherwise null — never guess a date.
-- tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict.
-- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines.
+COMPLETENESS IS ALSO A DUTY. Leaving out something the digest DOES support is as much a failure as inventing something it doesn't. Work through the digest systematically and account for everything in it. Do not summarise; map.
 
-Only assert what the digest supports; note if the connection is thin.
+This output is read by someone who will act on it. A three-word timeline entry is useless to them. Write at the length the evidence justifies.
+
+Map the intersection precisely:
+
+- involvement: what is {principal}'s actual role, stance, action or exposure regarding {issue}? Say which (supporter/architect/critic/implicated/absent) and then evidence it. **300-600 words.** Cover what they have done, what they have said, how their position has moved, and where the record is contested.
+
+- linking_narratives: every distinct storyline connecting {principal} to {issue} that the digest supports — typically **5-12**, not one. For each: the narrative, how it is framed, who pushes it, and (in `detail`) **100-250 words** on how it actually shows up in the sources.
+
+- key_actors: EVERY person, organisation, agency, company, outlet or bloc that appears at this intersection — typically **15-40** when the digest is substantial, more if it supports more. Include the obvious principals AND the officials, regulators, contractors, county figures, MPs, critics, litigants, unions, journalists and commentators who appear. For each: `relation` in **40-120 words** (what they actually did or said here, not a job title), `entity_type` (person/organization/company), `position` on the issue ("for", "against" or "neutral" — use "neutral" unless the digest actually shows a stance), and `influence` 0-100 for how much they shape the outcome. Do not stop at four because the example below shows four.
+
+- timeline: the sequence of notable moments linking them, oldest to newest — typically **10-30 entries**. Each `event` is a **mini-briefing of 80-200 words**: what happened, who was involved, what was said, how people reacted, and why it matters to {principal}. Scale to significance — a pivotal moment gets the full 200 words, a minor one can take 80 — but never write a headline fragment. Give `date` as ISO (YYYY-MM-DD) when the digest states or clearly implies one, otherwise null — never guess a date.
+
+- tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict. **200-400 words**, naming the specific contradictions.
+
+- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines. **150-300 words.**
+
+If the digest genuinely is thin, say so in `verdict` and return what it supports — but check first that it is thin, rather than assuming it.
 
 COMPLETE INTERSECTION DIGEST:
 {digest}
 
-Respond with ONLY this JSON:
-{{"involvement":"...","linking_narratives":[{{"narrative":"...","framing":"...","pushed_by":"..."}}],"key_actors":[{{"name":"...","relation":"...","entity_type":"person|organization|company","position":"for|against|neutral","influence":0}}],"timeline":[{{"when":"...","date":"YYYY-MM-DD or null","event":"..."}}],"tension_or_risk":"...","verdict":"..."}}"""
+Respond with ONLY a JSON object of this shape. The example shows the FORM, not the QUANTITY — the arrays below are illustrative lengths, and yours should be as long as the digest supports:
+{{"involvement":"300-600 words...",
+"linking_narratives":[
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"100-250 words..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}}],
+"key_actors":[
+ {{"name":"...","relation":"40-120 words on what they did or said here...","entity_type":"person","position":"for","influence":85}},
+ {{"name":"...","relation":"...","entity_type":"organization","position":"against","influence":70}},
+ {{"name":"...","relation":"...","entity_type":"person","position":"neutral","influence":55}},
+ {{"name":"...","relation":"...","entity_type":"company","position":"neutral","influence":40}},
+ {{"name":"...","relation":"...","entity_type":"organization","position":"against","influence":35}},
+ {{"name":"...","relation":"...","entity_type":"person","position":"for","influence":30}},
+ {{"name":"...","relation":"...","entity_type":"person","position":"against","influence":25}},
+ {{"name":"...","relation":"...","entity_type":"organization","position":"neutral","influence":20}}],
+"timeline":[
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"80-200 word mini-briefing..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}}],
+"tension_or_risk":"200-400 words...",
+"verdict":"150-300 words..."}}"""
 
 
 def analyze_issue_intersection(principal: str, issue: str, corpus_digest: dict) -> dict:
@@ -402,9 +455,11 @@ def analyze_issue_intersection(principal: str, issue: str, corpus_digest: dict) 
         result = llm.call_json(
             ISSUE_MAP_PROMPT.format(
                 principal=principal, issue=issue, grounding=GROUNDING_RULES,
-                digest=digest_context(corpus_digest, max_chars=42000),
+                digest=digest_context(corpus_digest, max_chars=DIGEST_CONTEXT_CHARS),
             ),
-            max_tokens=2500,
+            # The whole map is one object; every section above competes for this
+            # budget. Give it everything the backend allows.
+            max_tokens=llm.max_output_tokens(),
         )
     except Exception:
         return empty
@@ -440,10 +495,12 @@ def verify_grounding(prose_sections: dict[str, str], source_quotes: list[str]) -
     try:
         result = llm.call_json(
             VERIFY_PROMPT.format(
-                sections=_json.dumps(prose_sections)[:30000],
-                quotes="\n".join(source_quotes)[:15000],
+                sections=_json.dumps(prose_sections)[:60000],
+                quotes="\n".join(source_quotes)[:30000],
             ),
-            max_tokens=3000,
+            # It returns the prose it was given, so its budget must cover it —
+            # a truncated reply here silently drops whole sections.
+            max_tokens=llm.max_output_tokens(),
         )
         cleaned = result.get("cleaned")
         if isinstance(cleaned, dict):
