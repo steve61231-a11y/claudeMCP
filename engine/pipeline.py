@@ -109,11 +109,27 @@ def run_analysis(
     window_start: datetime,
     window_end: datetime,
     ingestion_run: IngestionRun | None = None,
+    on_section=None,
 ) -> IntelligenceReport:
     """Analysis over everything stored for the window: entity linking (only
     for mentions not yet checked, so re-analysis never re-pays the LLM),
     transcripts for top linked videos, sentiment, narratives, influence,
-    graph and report."""
+    graph and report.
+
+    `on_section(key, value)` fires as each payload section lands. A full run
+    takes tens of minutes; without this the reader sees nothing at all until
+    the last stage finishes, which is why depth and a usable wait looked like
+    a trade-off. They are not — the sections just have to be published as they
+    are made.
+    """
+    def publish(key, value):
+        if on_section is None:
+            return
+        try:
+            on_section(key, value)
+        except Exception:  # noqa: BLE001 — never let a reader cost the report
+            pass
+
     politician_entity = _upsert_entity(db, "politician", politician.name)
 
     window_filter = (
@@ -348,6 +364,11 @@ def run_analysis(
         influence_ranking,
         network_snapshot,
     )
+    # The rule-based payload is complete here — sentiment, volume, narratives,
+    # influence and the network are all computed. That is the entire overview,
+    # available minutes before the first analyst returns. Publish it.
+    for _key, _value in payload.items():
+        publish(_key, _value)
     # Discovered documents (full-text articles/archived pages) are evidence too.
     # They feed the DEEP-READING layer — map-reduce digest, analysts, grounding —
     # where a fact buried mid-article can surface. They are deliberately kept out
@@ -373,6 +394,7 @@ def run_analysis(
         payload,
         mentions=corpus,
         narratives=built_narratives,
+        on_section=publish,
     )
     if ingestion_run is not None:
         payload["data_provenance"] = {
@@ -382,10 +404,13 @@ def run_analysis(
             **(ingestion_run.stats or {}),
         }
         payload["data_coverage"] = _coverage_summary(ingestion_run.stats or {})
+        publish("data_provenance", payload["data_provenance"])
+        publish("data_coverage", payload["data_coverage"])
 
     # What the disambiguation gate did. Filtering that nobody can see is
     # indistinguishable from data loss, so the counts travel with the report.
     payload["evidence_gate"] = gate_stats
+    publish("evidence_gate", gate_stats)
 
     # Resolve the corpus into entities and events: many reports of one happening
     # become ONE event carrying its evidence, so repetition stops masquerading
@@ -421,6 +446,8 @@ def run_analysis(
                 db, politician, run_id=ingestion_run.id if ingestion_run else None
             )
             payload["signals"] = anomaly_agent.detect_all(db, politician)
+            for _key in ("resolution", "source_credibility", "knowledge_graph", "temporal", "signals"):
+                publish(_key, payload.get(_key))
         except Exception:  # noqa: BLE001 — resolution must never break a report
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}
@@ -433,6 +460,8 @@ def run_analysis(
     if deltas:
         payload["since_last_report"] = deltas
     payload["sentiment_history"] = sentiment_history(db, politician)
+    publish("since_last_report", payload.get("since_last_report"))
+    publish("sentiment_history", payload["sentiment_history"])
 
     # Client-facing deliverable, shaped to the Sentiment Analysis Framework
     # V1.0 exactly — same parameter numbering, ordering and terminology, so an
@@ -453,6 +482,7 @@ def run_analysis(
             previous=(previous_report.payload if previous_report else None),
             sentiments=sentiments_by_mention,
         )
+        publish("sentiment_framework", payload["sentiment_framework"])
     except Exception:  # noqa: BLE001 — the framework view must not break a report
         traceback.print_exc()
 
@@ -479,6 +509,8 @@ def run_analysis(
                 k: audit[k] for k in ("checked", "verified", "unverified", "contradicted")
             }
             payload["claims"] = audit["claims"]
+            publish("verification", payload["verification"])
+            publish("claims", payload["claims"])
 
             # Finally, refuse to call the file finished: name what is missing and
             # turn those gaps into concrete queries for the NEXT run. This runs

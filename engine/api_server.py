@@ -483,6 +483,54 @@ def _lookup_precache(name: str):
     return None
 
 
+class _PartialReport:
+    """Enough of an IntelligenceReport for `_build_frontend_payload` to shape a
+    run that is still in progress. The real row does not exist until the
+    pipeline commits it."""
+
+    def __init__(self, payload: dict, window_start: datetime, window_end: datetime):
+        self.payload = payload
+        self.window_start = window_start
+        self.window_end = window_end
+
+
+# Shaping a partial costs two small queries, and the base statistics land as a
+# burst of a dozen keys at once. Rebuilding for each of them would be a dozen
+# round-trips describing identical data, so bursts collapse into one rebuild.
+# Nothing is lost: the accumulating payload keeps every key, and the next
+# section (minutes later, on a real run) publishes all of it.
+_PARTIAL_MIN_INTERVAL_SECONDS = 1.0
+
+
+def _publish_partial(job_id: str, politician, payload: dict,
+                     window_start: datetime, window_end: datetime) -> None:
+    """Shape whatever the pipeline has produced so far into the frontend's
+    payload and hang it on the job, so a reader can start on section one while
+    section eight is still being written.
+
+    Best-effort by design: a partial payload that cannot yet be shaped (the
+    base statistics have not landed) simply isn't published, and a failure here
+    must never touch the run itself.
+    """
+    job = _jobs.get(job_id)
+    if job is None or job.get("status") != "running":
+        return
+    if "sentiment_breakdown" not in payload or "volume_trends" not in payload:
+        return
+    now = time.time()
+    if now - job.get("partial_at", 0.0) < _PARTIAL_MIN_INTERVAL_SECONDS:
+        return
+    job["partial_at"] = now
+    try:
+        shaped = _build_frontend_payload(
+            politician, _PartialReport(dict(payload), window_start, window_end)
+        )
+    except Exception:  # noqa: BLE001 — a half-built payload is expected to fail sometimes
+        return
+    job["partial"] = shaped
+    job["sections_ready"] = sorted(k for k, v in payload.items() if v not in (None, [], {}, ""))
+
+
 def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
     # Demo / degraded-infra mode: serve the full pre-generated report instantly
     # for matched names (no live pipeline, zero LLM credits). Off by default.
@@ -529,6 +577,12 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             _jobs[job_id]["stage"] = f"Scanning social platforms and news for “{name}”…"
             from engine.pipeline import run_analysis, run_ingestion
 
+            live_payload: dict = {}
+
+            def _on_section(key, value):
+                live_payload[key] = value
+                _publish_partial(job_id, politician, live_payload, window_start, window_end)
+
             ingestion_run = run_ingestion(db, politician, window_start, window_end, credit_budget=300.0)
             stats = (ingestion_run.stats or {}) if ingestion_run else {}
             found = stats.get("mentions_total")
@@ -537,7 +591,8 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
                 if found
                 else "Analyzing collected mentions (sentiment, narratives, voices, network)…"
             )
-            report = run_analysis(db, politician, "live-demo", window_start, window_end, ingestion_run=ingestion_run)
+            report = run_analysis(db, politician, "live-demo", window_start, window_end,
+                                  ingestion_run=ingestion_run, on_section=_on_section)
             _jobs[job_id] = {
                 "status": "done", "ok": True,
                 "report": _build_frontend_payload(politician, report),

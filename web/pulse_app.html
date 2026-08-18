@@ -200,7 +200,11 @@
     for(let i=0;i<600;i++){
       const j = await api('/api/report/'+job_id);
       if(j.status==='done') return j;
-      if(onTick) onTick(i);
+      // The job carries a `stage` string and, once the base statistics land, a
+      // `partial` report that grows section by section. Both used to be
+      // discarded here, which is why a 20-minute run showed a spinner and
+      // nothing else for 20 minutes.
+      if(onTick) onTick(i,j);
       await new Promise(r=>setTimeout(r,2000));
     }
     // Deliberately does NOT tell the user to click Generate again. The run is
@@ -1169,7 +1173,22 @@
         tick('Planning ingestion…');
         const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type})});
         tick('Scraping sources & reading every mention…');
-        const done=await pollJob(j.job_id,(i)=>tick('Analysing… ('+(i*2)+'s)'));
+        // Render each section the moment the server publishes it. Re-rendering
+        // only when the finished set actually changes keeps the page still
+        // while the reader is on it, and the scroll position is held so a
+        // section arriving doesn't yank them back to the top.
+        let lastReady='';
+        const done=await pollJob(j.job_id,(i,job)=>{
+          tick(esc(job.stage||'Analysing…')+' ('+(i*2)+'s)');
+          if(!job.partial)return;
+          const ready=(job.sections_ready||[]).join(',');
+          if(ready===lastReady)return;
+          lastReady=ready;
+          const y=window.scrollY;
+          renderReport(out,job.partial,{live:true,partial:true,
+            sections_ready:job.sections_ready,stage:job.stage});
+          window.scrollTo(0,y);
+        });
         msg.textContent='';
         if(done.ok && done.report) renderReport(out,done.report,done);
         else out.appendChild(errCard(done.error||'Report generation failed.'));
@@ -1416,6 +1435,51 @@
       .filter(Boolean).forEach(c=>host.appendChild(c));
   }
 
+  /* ---------------- STREAMING PROGRESS ---------------- */
+
+  // Payload key -> the section it becomes on screen, in the order they appear.
+  // A run takes tens of minutes; showing which parts are already readable and
+  // which are still being written is the difference between waiting and
+  // reading.
+  const SECTION_ORDER=[
+    ['sentiment_breakdown','Sentiment & volume'],
+    ['narrative_breakdown','Narratives'],
+    ['executive_summary','Executive summary'],
+    ['deep_insights','Beneath the surface'],
+    ['public_voice','Public voice'],
+    ['timeline','What happened, and when'],
+    ['platform_pulse','Platform pulse'],
+    ['influencer_stances','Who is shaping this'],
+    ['narrative_deep_dives','Storylines'],
+    ['executive_brief','Executive brief'],
+    ['risks','Risks, openings and trends'],
+    ['since_last_report','Since your last report'],
+    ['sentiment_history','Sentiment over time'],
+    ['sentiment_framework','Sentiment Framework V1.0'],
+    ['data_coverage','Where this data came from'],
+  ];
+
+  function progressCard(ready,stage){
+    const have=new Set(ready||[]);
+    const c=el('div','card');
+    c.style.borderColor='var(--sky2)';
+    c.innerHTML=`<div class="row" style="gap:10px;align-items:center">
+      <span class="spinner"></span><b>Still building this report.</b></div>
+      <div class="muted" style="font-size:13.5px;margin-top:6px">${esc(stage||'Working…')}</div>
+      <div class="muted" style="font-size:12.5px;margin-top:8px">Everything below is finished and safe to read. The rest is being written now.</div>`;
+    const list=el('div','row');list.style.cssText='margin-top:12px;flex-wrap:wrap;gap:6px';
+    let seenPending=false;
+    SECTION_ORDER.forEach(([key,label])=>{
+      const done=have.has(key);
+      let mark='○',cls='chip';
+      if(done){mark='✓';cls='pill pos';}
+      else if(!seenPending){mark='●';cls='pill sky';seenPending=true;}
+      list.innerHTML+=`<span class="${cls}">${mark} ${esc(label)}</span>`;
+    });
+    c.appendChild(list);
+    return c;
+  }
+
   function renderReport(out,r,meta){
     out.innerHTML='';
     const wrap=el('div','grid fade');wrap.style.marginTop='8px';
@@ -1435,6 +1499,7 @@
         <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
       </div>`;
     wrap.appendChild(head);
+    if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
     if(r.grade&&r.grade.production===false){
       // A cheap run must never read as a client deliverable. The pill above is
       // easy to miss; this is not.
@@ -1910,6 +1975,6 @@
 
   // Render entry points, exposed for the browser smoke test. Read-only handles;
   // the app itself never goes through them.
-  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework,renderDeepRead,renderIssue,DEMO};
+  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework,renderDeepRead,renderIssue,progressCard,DEMO};
 })();
 </script>

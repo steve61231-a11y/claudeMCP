@@ -6,7 +6,7 @@ rule-based payload from `generate_report_payload`).
 """
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from engine import llm
@@ -145,6 +145,7 @@ def enrich_report_payload(
     payload: dict,
     mentions: list[dict] | None = None,
     narratives: list[dict] | None = None,
+    on_section=None,
 ) -> dict:
     """Runs every section writer concurrently and merges the output into
     `payload`. Each section fails independently — one LLM hiccup falls back to
@@ -156,7 +157,20 @@ def enrich_report_payload(
     generated too: public_voice, platform_pulse, timeline, influencer_stances,
     narrative_deep_dives, and the executive_brief synthesizer. Without them
     (older callers/tests), only the aggregate-based sections run.
+
+    `on_section(key, value)` is called the moment each section lands, so a
+    caller can stream sections to a waiting reader instead of holding the whole
+    report back until the slowest analyst finishes. It must never raise; a
+    publish failure is not allowed to cost the section.
     """
+    def publish(key, value):
+        if on_section is None:
+            return
+        try:
+            on_section(key, value)
+        except Exception:  # noqa: BLE001 — streaming is a courtesy, not a contract
+            pass
+
     context = _context_blob(
         politician_name,
         window_start,
@@ -223,10 +237,20 @@ def enrich_report_payload(
 
     from engine.config import settings
 
+    if "coverage" in payload:
+        publish("coverage", payload["coverage"])
+
     _cap = 3 if settings.low_memory else 8
     with ThreadPoolExecutor(max_workers=min(_cap, len(jobs))) as pool:
-        for key, value in pool.map(run, jobs):
+        # as_completed, not pool.map: map yields in submission order, so a
+        # section that finished in 5 seconds waits behind one that takes four
+        # minutes. Nothing downstream depends on the order, and a reader
+        # watching the report build does.
+        futures = [pool.submit(run, key) for key in jobs]
+        for future in as_completed(futures):
+            key, value = future.result()
             payload[key] = value
+            publish(key, value)
 
     if mentions:
         # Synthesizer reads every analyst's output ("the major AI that
@@ -256,6 +280,8 @@ def enrich_report_payload(
         }
         cleaned = analysts.verify_grounding(prose, source_quotes)
         payload.update(cleaned)
+        for key in cleaned:
+            publish(key, payload[key])
 
     return payload
 
