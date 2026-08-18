@@ -574,14 +574,34 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
     _evict_stale_jobs()
 
     name = req.name.strip()
+
+    # Re-attach to a run already in flight for this subject rather than starting
+    # a second one. A long run invites the user to click Generate again; doing so
+    # used to launch a competing pipeline over the same rate-limited API and the
+    # same rows, so both ran slower than one would have and the wait that
+    # prompted the click got worse.
+    existing = _inflight_job(name, req.type)
+    if existing:
+        return {"ok": True, "job_id": existing, "already_running": True}
+
     job_id = uuid.uuid4().hex
     # Always run the LIVE pipeline so every report reflects the newest data.
     # A pre-generated report (if any) is used only as a fallback on failure
     # (see _run_report_job) — never as a substitute for a fresh run.
-    _jobs[job_id] = {"status": "running", "created_at": time.time()}
+    _jobs[job_id] = {"status": "running", "created_at": time.time(),
+                     "subject": (name.lower(), req.type)}
     thread = threading.Thread(target=_run_report_job, args=(job_id, name, req.type), daemon=True)
     thread.start()
     return {"ok": True, "job_id": job_id}
+
+
+def _inflight_job(name: str, report_type: str) -> str | None:
+    """The id of a still-running job for this subject, if there is one."""
+    key = (name.strip().lower(), report_type)
+    for job_id, job in list(_jobs.items()):
+        if job.get("status") == "running" and job.get("subject") == key:
+            return job_id
+    return None
 
 
 @app.get("/api/report/{job_id}")
