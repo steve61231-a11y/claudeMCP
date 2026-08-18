@@ -199,6 +199,24 @@ def _extra_body() -> dict:
         return {}
 
 
+def _reasoning_off(base_url: str, model: str) -> dict:
+    """The field that turns a reasoning model's thinking off, for this provider.
+
+    Every gateway spells it differently, and sending the wrong one is not
+    harmless — a provider that does not recognise the field rejects the whole
+    request. So key off the endpoint, which we know, rather than the model name,
+    which we do not: new reasoning models appear constantly and a name-prefix
+    check silently stops matching. Unknown providers get nothing, and their
+    empty replies are caught by `_reply_text` instead.
+    """
+    host = base_url.lower()
+    if "openrouter.ai" in host:
+        return {"reasoning": {"enabled": False}}
+    if "z.ai" in host or "bigmodel.cn" in host or model.lower().startswith("glm"):
+        return {"thinking": {"type": "disabled"}}
+    return {}
+
+
 def _reply_text(payload: dict) -> str:
     """The assistant's text, wherever this provider put it.
 
@@ -264,8 +282,7 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     # an answer plus a chain of thought, so thinking is switched off by default.
     # LLM_EXTRA_BODY overrides this and carries any other provider-specific
     # field, so a new provider's quirk never needs a code change.
-    if model.lower().startswith("glm"):
-        body["thinking"] = {"type": "disabled"}
+    body.update(_reasoning_off(base, model))
     body.update(_extra_body())
 
     last_error: Exception | None = None

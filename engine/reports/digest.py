@@ -32,10 +32,24 @@ MAP_MAX_TOKENS = 2500
 MAP_WORKERS = 6
 
 
-def _chunk_mentions(mentions: list[dict], budget: int = CHUNK_CHARS) -> list[list[dict]]:
+def chunk_budget() -> int:
+    """Characters of corpus per map-step call.
+
+    Free providers meter requests per day rather than tokens, so on a
+    large-context model raising this is what keeps a whole report inside the
+    daily allowance: doubling it halves the number of calls.
+    """
+    from engine.config import settings
+
+    return settings.llm_chunk_chars or CHUNK_CHARS
+
+
+def _chunk_mentions(mentions: list[dict], budget: int | None = None) -> list[list[dict]]:
     """Partition ALL mentions into ordered, prompt-sized chunks. Comments and
     posts are interleaved so every chunk carries both official and grassroots
     voice. Nothing is dropped — the union of chunks is the whole corpus."""
+    budget = budget or chunk_budget()
+
     def eng(m):
         e = m.get("engagement") or {}
         return sum(int(e.get(k) or 0) for k in ("views", "likes", "shares", "comments"))
@@ -87,7 +101,7 @@ def _digest_chunk(name: str, chunk: list[dict], index: int) -> dict:
     batch = "\n".join(_render_mention(m) for m in chunk)
     try:
         result = llm.call_json(
-            MAP_PROMPT.format(name=name, grounding=GROUNDING_RULES, batch=batch[:CHUNK_CHARS + 4000]),
+            MAP_PROMPT.format(name=name, grounding=GROUNDING_RULES, batch=batch[:chunk_budget() + 4000]),
             max_tokens=MAP_MAX_TOKENS,
             # The map step is the highest-volume call in the system — one per
             # chunk of the whole corpus — and it is mechanical extraction, which

@@ -435,3 +435,59 @@ def test_a_wholly_empty_reply_explains_why(monkeypatch):
     message = str(excinfo.value)
     assert "finish_reason=length" in message
     assert "thinking" in message.lower()
+
+
+def test_reasoning_toggle_matches_the_provider_not_the_model_name(monkeypatch):
+    """Every gateway spells the thinking toggle differently, and an unrecognised
+    field is rejected outright rather than ignored. Keying off the endpoint
+    means a brand-new reasoning model works without a code change; a name-prefix
+    check would silently stop matching."""
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_model", "dots-studio/dots-3-note-preview:free")
+    llm.call_json("give me json", max_tokens=100)
+    assert captured["body"]["reasoning"] == {"enabled": False}
+    assert "thinking" not in captured["body"], "sent Z.ai's spelling to OpenRouter"
+
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://api.z.ai/api/paas/v4")
+    monkeypatch.setattr(llm.settings, "llm_model", "glm-4.5-flash")
+    llm.call_json("give me json", max_tokens=100)
+    assert captured["body"]["thinking"] == {"type": "disabled"}
+    assert "reasoning" not in captured["body"], "sent OpenRouter's spelling to Z.ai"
+
+
+def test_unknown_provider_gets_no_reasoning_field(monkeypatch):
+    """Guessing would risk a 400 on every call; the empty-reply fallback covers
+    us instead."""
+    monkeypatch.setattr(llm.settings, "llm_extra_body", "")
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://some-new-gateway.example/v1")
+    monkeypatch.setattr(llm.settings, "llm_model", "brand-new-model")
+
+    llm.call_json("give me json", max_tokens=100)
+
+    assert "reasoning" not in captured["body"] and "thinking" not in captured["body"]
+
+
+def test_chunk_size_is_configurable_to_fit_a_daily_request_cap(monkeypatch):
+    """Free tiers meter requests per day, not tokens. On a large-context model
+    bigger chunks mean fewer calls, which is the difference between finishing a
+    report and hitting the cap."""
+    from engine.reports import digest as digest_module
+
+    mentions = [{"id": f"m{i}", "platform": "x", "source_type": "post",
+                 "text": "text about the subject " * 40, "author_handle": "a",
+                 "posted_at": None, "engagement": {}} for i in range(80)]
+
+    monkeypatch.setattr(digest_module.llm.settings, "llm_chunk_chars", 0)
+    default_chunks = len(digest_module._chunk_mentions(mentions))
+
+    monkeypatch.setattr(digest_module.llm.settings, "llm_chunk_chars", 160000)
+    big_chunks = len(digest_module._chunk_mentions(mentions))
+
+    assert big_chunks < default_chunks, "raising the budget did not reduce calls"
+    # Coverage is the guarantee that must survive any chunk size.
+    assert sum(len(c) for c in digest_module._chunk_mentions(mentions)) == 80

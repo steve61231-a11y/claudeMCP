@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # provider-specific fields (e.g. '{"thinking": {"type": "disabled"}}' on
     # GLM). An escape hatch so a provider quirk never needs a code change.
     llm_extra_body: str = ""
+    # Characters of corpus per map-step call. Free tiers meter REQUESTS per day,
+    # not tokens, so on a large-context model fewer, bigger chunks is the
+    # difference between finishing a report and hitting the daily cap. 0 = the
+    # module default (16k, sized for a 200k-context model).
+    llm_chunk_chars: int = 0
     # Items per batched LLM call for those bulk stages.
     agent_batch_size: int = 25
     # Post-generation audit: decompose the finished report into atomic claims and
