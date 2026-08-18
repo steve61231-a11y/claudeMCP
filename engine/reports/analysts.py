@@ -387,42 +387,59 @@ def analyze_deep_insights(name: str, corpus_digest: dict) -> dict:
         return {"insights": [], "the_one_thing": ""}
 
 
-ISSUE_MAP_PROMPT = """You are an intelligence analyst mapping the relationship between a PRINCIPAL and an ISSUE/INSTITUTION. Below is a COMPLETE distilled digest of every collected mention at their intersection — everything said about {principal} *in connection with* {issue}.
+# ---------------------------------------------------------------------------
+# Issue intersection — one analyst per section, not one call for all of them
+#
+# The whole map used to come back from a single call. Even with the budget
+# raised to the backend's ceiling that is arithmetically impossible to fill:
+# 15-40 actors at 40-120 words each, plus 10-30 timeline entries at 80-200
+# words each, is several times more than any single response can hold, so the
+# model silently rationed — four actors, three-word events. Splitting the map
+# into four analysts gives each section the full budget and lets them run
+# concurrently, which is also what makes them streamable one at a time.
+# ---------------------------------------------------------------------------
+
+ISSUE_PREAMBLE = """You are an intelligence analyst mapping the relationship between a PRINCIPAL and an ISSUE/INSTITUTION. Below is a COMPLETE distilled digest of every collected mention at their intersection — everything said about {principal} *in connection with* {issue}.
 
 {grounding}
 
 COMPLETENESS IS ALSO A DUTY. Leaving out something the digest DOES support is as much a failure as inventing something it doesn't. Work through the digest systematically and account for everything in it. Do not summarise; map.
 
-This output is read by someone who will act on it. A three-word timeline entry is useless to them. Write at the length the evidence justifies.
+This is read by someone who will act on it. Write at the length the evidence justifies — a three-word entry is useless to them."""
 
-Map the intersection precisely:
-
-- involvement: what is {principal}'s actual role, stance, action or exposure regarding {issue}? Say which (supporter/architect/critic/implicated/absent) and then evidence it. **300-600 words.** Cover what they have done, what they have said, how their position has moved, and where the record is contested.
-
-- linking_narratives: every distinct storyline connecting {principal} to {issue} that the digest supports — typically **5-12**, not one. For each: the narrative, how it is framed, who pushes it, and (in `detail`) **100-250 words** on how it actually shows up in the sources.
-
-- key_actors: EVERY person, organisation, agency, company, outlet or bloc that appears at this intersection — typically **15-40** when the digest is substantial, more if it supports more. Include the obvious principals AND the officials, regulators, contractors, county figures, MPs, critics, litigants, unions, journalists and commentators who appear. For each: `relation` in **40-120 words** (what they actually did or said here, not a job title), `entity_type` (person/organization/company), `position` on the issue ("for", "against" or "neutral" — use "neutral" unless the digest actually shows a stance), and `influence` 0-100 for how much they shape the outcome. Do not stop at four because the example below shows four.
-
-- timeline: the sequence of notable moments linking them, oldest to newest — typically **10-30 entries**. Each `event` is a **mini-briefing of 80-200 words**: what happened, who was involved, what was said, how people reacted, and why it matters to {principal}. Scale to significance — a pivotal moment gets the full 200 words, a minor one can take 80 — but never write a headline fragment. Give `date` as ISO (YYYY-MM-DD) when the digest states or clearly implies one, otherwise null — never guess a date.
-
-- tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict. **200-400 words**, naming the specific contradictions.
-
-- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines. **150-300 words.**
-
-If the digest genuinely is thin, say so in `verdict` and return what it supports — but check first that it is thin, rather than assuming it.
+ISSUE_DIGEST_TAIL = """
 
 COMPLETE INTERSECTION DIGEST:
 {digest}
+"""
 
-Respond with ONLY a JSON object of this shape. The example shows the FORM, not the QUANTITY — the arrays below are illustrative lengths, and yours should be as long as the digest supports:
-{{"involvement":"300-600 words...",
-"linking_narratives":[
- {{"narrative":"...","framing":"...","pushed_by":"...","detail":"100-250 words..."}},
- {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
- {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
- {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
- {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}}],
-"key_actors":[
+ISSUE_POSITION_PROMPT = ISSUE_PREAMBLE + """
+
+Your section: {principal}'s POSITION on {issue}, and where it exposes them.
+
+- involvement: what is {principal}'s actual role, stance, action or exposure? Say which (supporter/architect/critic/implicated/absent) and then evidence it. **300-600 words** covering what they have done, what they have said, how their position has moved over time, and where the record is contested.
+- tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict. **200-400 words**, naming the specific contradictions rather than gesturing at them.
+- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines. **150-300 words.**
+
+If the digest genuinely is thin, say so in `verdict` and return what it supports — but check that it is thin rather than assuming it.""" + ISSUE_DIGEST_TAIL + """
+Respond with ONLY this JSON:
+{{"involvement":"300-600 words...","tension_or_risk":"200-400 words...","verdict":"150-300 words..."}}"""
+
+
+ISSUE_ACTORS_PROMPT = ISSUE_PREAMBLE + """
+
+Your section: EVERY actor at this intersection.
+
+List every person, organisation, agency, company, outlet, court, committee or bloc that appears in connection with {principal} and {issue} — typically **15-40** when the digest is substantial, and more if it supports more. Include the obvious principals AND the officials, regulators, contractors, county figures, MPs, critics, litigants, unions, journalists and commentators who appear even briefly. An actor the digest names and you omit is gone from the analysis.
+
+For each:
+- name
+- relation: **40-120 words** on what they actually did or said here — not a job title. What position did they take, when, against whom, and with what effect?
+- entity_type: person / organization / company
+- position: "for", "against" or "neutral" — use "neutral" unless the digest actually shows a stance
+- influence: 0-100, how much they shape the outcome""" + ISSUE_DIGEST_TAIL + """
+Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY — return every actor the digest supports, never the eight the example happens to show:
+{{"key_actors":[
  {{"name":"...","relation":"40-120 words on what they did or said here...","entity_type":"person","position":"for","influence":85}},
  {{"name":"...","relation":"...","entity_type":"organization","position":"against","influence":70}},
  {{"name":"...","relation":"...","entity_type":"person","position":"neutral","influence":55}},
@@ -430,8 +447,18 @@ Respond with ONLY a JSON object of this shape. The example shows the FORM, not t
  {{"name":"...","relation":"...","entity_type":"organization","position":"against","influence":35}},
  {{"name":"...","relation":"...","entity_type":"person","position":"for","influence":30}},
  {{"name":"...","relation":"...","entity_type":"person","position":"against","influence":25}},
- {{"name":"...","relation":"...","entity_type":"organization","position":"neutral","influence":20}}],
-"timeline":[
+ {{"name":"...","relation":"...","entity_type":"organization","position":"neutral","influence":20}}]}}"""
+
+
+ISSUE_TIMELINE_PROMPT = ISSUE_PREAMBLE + """
+
+Your section: the SEQUENCE of moments linking {principal} and {issue}, oldest to newest — typically **10-30 entries**.
+
+Each `event` is a **mini-briefing of 80-200 words**: what happened, who was involved, what was said, how people reacted, and why it matters to {principal}. Scale to significance — a pivotal moment gets the full 200 words, a minor one can take 80 — but never write a headline fragment.
+
+Give `date` as ISO (YYYY-MM-DD) when the digest states or clearly implies one, otherwise null. **Never guess a date**: a fabricated timeline reads as authoritative and is worse than an undated one. `when` carries the loose phrasing the sources use ("mid-2025", "after the budget").""" + ISSUE_DIGEST_TAIL + """
+Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY:
+{{"timeline":[
  {{"when":"...","date":"YYYY-MM-DD or null","event":"80-200 word mini-briefing..."}},
  {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
  {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
@@ -439,38 +466,82 @@ Respond with ONLY a JSON object of this shape. The example shows the FORM, not t
  {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
  {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
  {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}},
- {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}}],
-"tension_or_risk":"200-400 words...",
-"verdict":"150-300 words..."}}"""
+ {{"when":"...","date":"YYYY-MM-DD or null","event":"..."}}]}}"""
 
 
-def analyze_issue_intersection(principal: str, issue: str, corpus_digest: dict) -> dict:
-    """Reads the whole intersection digest and maps how the principal and the
-    issue/institution are actually connected. Degrades to an empty map."""
+ISSUE_NARRATIVES_PROMPT = ISSUE_PREAMBLE + """
+
+Your section: every distinct STORYLINE connecting {principal} to {issue} — typically **5-12**, not one.
+
+For each: the narrative, how it is framed, who pushes it, and `detail` of **100-250 words** on how it actually shows up in the sources — what is concretely being said, by whom, and how the framing differs between the people advancing it and the people resisting it.""" + ISSUE_DIGEST_TAIL + """
+Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY:
+{{"linking_narratives":[
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"100-250 words..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}},
+ {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}}]}}"""
+
+
+ISSUE_SECTIONS = {
+    "position": (ISSUE_POSITION_PROMPT, ("involvement", "tension_or_risk", "verdict")),
+    "actors": (ISSUE_ACTORS_PROMPT, ("key_actors",)),
+    "timeline": (ISSUE_TIMELINE_PROMPT, ("timeline",)),
+    "narratives": (ISSUE_NARRATIVES_PROMPT, ("linking_narratives",)),
+}
+
+_ISSUE_EMPTY = {
+    "involvement": "", "linking_narratives": [], "key_actors": [],
+    "timeline": [], "tension_or_risk": "", "verdict": "",
+}
+
+
+def analyze_issue_intersection(
+    principal: str, issue: str, corpus_digest: dict, on_part=None
+) -> dict:
+    """Maps how the principal and the issue/institution are actually connected.
+
+    Four analysts, one per section, each with the backend's full output budget
+    and all four in flight at once. `on_part(name, partial_map)` fires as each
+    returns, so the map can be streamed. Every section degrades independently:
+    a failed analyst costs its own section, never the map.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     from engine.reports.digest import digest_context
 
-    empty = {"involvement": "", "linking_narratives": [], "key_actors": [],
-             "timeline": [], "tension_or_risk": "", "verdict": ""}
-    try:
-        result = llm.call_json(
-            ISSUE_MAP_PROMPT.format(
-                principal=principal, issue=issue, grounding=GROUNDING_RULES,
-                digest=digest_context(corpus_digest, max_chars=DIGEST_CONTEXT_CHARS),
-            ),
-            # The whole map is one object; every section above competes for this
-            # budget. Give it everything the backend allows.
-            max_tokens=llm.max_output_tokens(),
-        )
-    except Exception:
-        return empty
-    return {
-        "involvement": result.get("involvement", ""),
-        "linking_narratives": [n for n in (result.get("linking_narratives") or []) if isinstance(n, dict)],
-        "key_actors": [a for a in (result.get("key_actors") or []) if isinstance(a, dict)],
-        "timeline": [t for t in (result.get("timeline") or []) if isinstance(t, dict)],
-        "tension_or_risk": result.get("tension_or_risk", ""),
-        "verdict": result.get("verdict", ""),
-    }
+    digest = digest_context(corpus_digest, max_chars=DIGEST_CONTEXT_CHARS)
+    result = dict(_ISSUE_EMPTY)
+
+    def run(name: str):
+        prompt, keys = ISSUE_SECTIONS[name]
+        try:
+            reply = llm.call_json(
+                prompt.format(principal=principal, issue=issue,
+                              grounding=GROUNDING_RULES, digest=digest),
+                max_tokens=llm.max_output_tokens(),
+            )
+        except Exception:
+            return name, {}
+        if not isinstance(reply, dict):
+            return name, {}
+        return name, {k: reply.get(k) for k in keys if k in reply}
+
+    with ThreadPoolExecutor(max_workers=llm.concurrency(len(ISSUE_SECTIONS))) as pool:
+        futures = [pool.submit(run, name) for name in ISSUE_SECTIONS]
+        for future in as_completed(futures):
+            name, values = future.result()
+            for key, value in values.items():
+                if key in ("key_actors", "timeline", "linking_narratives"):
+                    result[key] = [v for v in (value or []) if isinstance(v, dict)]
+                else:
+                    result[key] = value or ""
+            if on_part is not None:
+                try:
+                    on_part(name, dict(result))
+                except Exception:  # noqa: BLE001 — streaming never costs a section
+                    pass
+    return result
 
 
 VERIFY_PROMPT = """You are a fact-grounding auditor. Below is analyst-written report prose, followed by the source quotes the analysts worked from.

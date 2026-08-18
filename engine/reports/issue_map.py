@@ -17,6 +17,7 @@ map degrades gracefully; it lights up on deploy. Callers may inject `mentions`
 directly (used by tests and by callers that already hold an intersection corpus).
 """
 
+import traceback
 from datetime import datetime, timedelta
 
 from engine.config import settings
@@ -77,50 +78,231 @@ def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) 
     return out
 
 
-def _google_news_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
+def _both_terms_for_quoting_source(identity: str, issue_term: str) -> str:
+    """A both-terms query for a connector that quotes the name it is given.
+
+    GoogleNewsRssConnector wraps the subject name in quotes and ORs the aliases
+    in, so passing `Ruto" "SHA` produces `"Ruto" "SHA"` — two quoted phrases
+    side by side, which the engine reads as AND. It is a shim around a
+    connector interface built for one subject, kept in one named place rather
+    than repeated at each call site.
+    """
+    return f'{identity}" "{issue_term}'
+
+
+def _google_news_intersection(identity: str, issue_term: str, ws: datetime, we: datetime) -> list[IngestedMention]:
     """Google News RSS requiring BOTH terms — the strongest free source for the
-    Kenyan-politics intersection (local outlets GDELT misses). Reuses the
-    connector but with a fixed both-terms query via aliases."""
+    Kenyan-politics intersection (local outlets GDELT misses)."""
     from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
 
-    conn = GoogleNewsRssConnector()
-    # The connector ORs name+aliases; to require BOTH terms we pass a single
-    # combined phrase as the "name" and no aliases.
-    return conn.fetch(f'{principal}" "{issue}', [], ws, we)
+    return GoogleNewsRssConnector().fetch(
+        _both_terms_for_quoting_source(identity, issue_term), [], ws, we
+    )
 
 
-def _reddit_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
+def _reddit_intersection(identity: str, issue_term: str, ws: datetime, we: datetime) -> list[IngestedMention]:
+    """Reddit search takes the query verbatim; quoted phrases separated by a
+    space are an AND of both phrases."""
     from engine.ingestion.reddit_connector import RedditConnector
 
-    return RedditConnector().fetch(f"{principal} {issue}", [], ws, we)
+    return RedditConnector().fetch(f'"{identity}" "{issue_term}"', [], ws, we)
 
 
-def acquire_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
-    """Gather mentions that connect the principal and the issue. Best-effort
-    across ALL free sources (GDELT + Google News RSS + Reddit); enriches article
-    bodies so the digest reads full journalism at the intersection."""
+def _youtube_intersection(identity: str, issue_term: str, ws: datetime, we: datetime) -> list[IngestedMention]:
+    from engine.ingestion.youtube_connector import YouTubeConnector
+
+    return YouTubeConnector().fetch(f"{identity} {issue_term}", [], ws, we)
+
+
+# How many identity x issue-name pairs each source is asked for. GDELT and
+# Google News are cheap keyless requests and carry the news record, so they get
+# the widest sweep; YouTube costs a yt-dlp subprocess per query, so it gets the
+# fewest. One literal query per source is what made the issue map shallow —
+# these numbers are the fix, and they are here to be tuned rather than buried.
+PAIR_BUDGET = {"gdelt": 8, "google_news": 8, "reddit": 4, "youtube": 3}
+
+
+def _pairs(identities: list[str], issue_terms: list[str], budget: int) -> list[tuple[str, str]]:
+    """Identity x issue-name pairs, most-specific first.
+
+    Breadth-first over identities so a small budget still covers the primary
+    name against every way the issue is written, before spending anything on
+    the second alias.
+    """
+    out: list[tuple[str, str]] = []
+    for term in issue_terms:
+        for identity in identities:
+            out.append((identity, term))
+    out.sort(key=lambda pair: (identities.index(pair[0]) + issue_terms.index(pair[1])))
+    return out[:budget]
+
+
+def acquire_intersection(
+    principal: str,
+    issue: str,
+    ws: datetime,
+    we: datetime,
+    identities: list[str] | None = None,
+    issue_terms: list[str] | None = None,
+) -> list[IngestedMention]:
+    """Gather mentions that connect the principal and the issue.
+
+    This used to be four requests: one literal AND-query to each of three
+    sources. That is why an issue map came back with four actors — it was
+    analysing four requests' worth of material while the politician path fanned
+    out across dozens of identity variants and eighty discovery probes. Here it
+    sweeps every identity variant against every way the issue is named, across
+    every enabled free source, and enriches article bodies so the digest reads
+    whole journalism rather than headlines.
+    """
+    identities = [i for i in (identities or [principal]) if i] or [principal]
+    issue_terms = [t for t in (issue_terms or [issue]) if t] or [issue]
+
     mentions: list[IngestedMention] = []
     seen: set[str] = set()
 
     def _add(items):
         for m in items or []:
-            url = (m.get("raw_payload") or {}).get("url") or m.get("text", "")[:80]
-            if url and url not in seen:
-                seen.add(url)
+            key = (m.get("raw_payload") or {}).get("url") or (m.get("text") or "")[:80]
+            if key and key not in seen:
+                seen.add(key)
                 mentions.append(m)
 
+    def _sweep(source: str, fetch):
+        for identity, term in _pairs(identities, issue_terms, PAIR_BUDGET[source]):
+            try:
+                _add(fetch(identity, term, ws, we))
+            except Exception:  # noqa: BLE001 — one bad query must not end the sweep
+                continue
+
     if settings.enable_gdelt:
-        _add(_gdelt_intersection(principal, issue, ws, we))
+        _sweep("gdelt", _gdelt_intersection)
     if settings.enable_google_news:
-        _add(_google_news_intersection(principal, issue, ws, we))
+        _sweep("google_news", _google_news_intersection)
     if settings.enable_reddit:
-        _add(_reddit_intersection(principal, issue, ws, we))
+        _sweep("reddit", _reddit_intersection)
+    if settings.enable_youtube:
+        _sweep("youtube", _youtube_intersection)
 
     if mentions:
         from engine.ingestion.article_text import enrich_with_article_text
 
         enrich_with_article_text(mentions)
     return mentions
+
+
+def acquire_intersection_documents(discovery_queries: list[str]) -> list[dict]:
+    """Full-page documents at the intersection, via metasearch discovery.
+
+    This is the layer that reaches the material no fixed connector indexes —
+    committee reports, county statements, court filings, archived pages — and
+    it is the single biggest source of depth available to an issue map. The
+    issue map never used it.
+    """
+    if not (settings.enable_discovery and settings.searxng_url and discovery_queries):
+        return []
+    try:
+        from engine.ingestion.discovery_connector import DiscoveryConnector
+
+        return DiscoveryConnector().fetch_documents(
+            discovery_queries[0], [], discovery_queries
+        )
+    except Exception:  # noqa: BLE001 — discovery is additive, never required
+        return []
+
+
+def _ensure_subject(db, principal: str):
+    """The subject row the intersection corpus is stored under.
+
+    Deliberately the PRINCIPAL, not "principal x issue": material about Ruto
+    and SHA is material about Ruto. Storing it under the person means an issue
+    map enriches the corpus a politician report reads, a politician report
+    enriches what the next issue map retrieves, and a second issue map on the
+    same person starts from everything the first one found.
+    """
+    from engine.db.models import Politician
+
+    subject = db.query(Politician).filter_by(name=principal).first()
+    if subject is None:
+        subject = Politician(name=principal, aliases=[principal], keywords=[])
+        db.add(subject)
+        db.commit()
+    return subject
+
+
+def _persist_intersection(db, subject, mentions, documents, issue: str) -> dict:
+    """Store the intersection corpus under the subject, with provenance.
+
+    The issue map used to keep nothing at all: every run re-scraped from zero,
+    could never compound, and could not reuse a corpus the politician path had
+    already built for the same person. Storage is idempotent (content-hash
+    upserts), so re-running an issue map costs requests, never duplicates.
+    """
+    from engine.db.models import IngestionRun, IngestionTask
+    from engine.ingestion import orchestrator
+
+    run = IngestionRun(
+        politician_id=subject.id,
+        window_start=datetime.utcnow() - timedelta(days=365),
+        window_end=datetime.utcnow(),
+        status="running",
+        credit_budget=0.0,
+        stats={"kind": "issue_map", "issue": issue},
+    )
+    db.add(run)
+    db.flush()
+    task = IngestionTask(
+        run_id=run.id, connector="issue_map", platform="mixed",
+        endpoint="intersection", query=f"{subject.name} {issue}",
+    )
+    db.add(task)
+    db.commit()
+
+    stored_mentions = 0
+    stored_documents = 0
+    try:
+        stored_mentions = orchestrator._store_mentions(db, run, task, subject, mentions)
+    except Exception:  # noqa: BLE001 — a storage failure must not lose the map
+        traceback.print_exc()
+    try:
+        stored_documents = orchestrator._store_documents(db, run, subject, documents)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+
+    run.status = "complete"
+    db.commit()
+    return {"run_id": run.id, "mentions_stored": stored_mentions,
+            "documents_stored": stored_documents}
+
+
+def _gate_documents(db, subject) -> dict:
+    """Discovery is deliberately broad, so a same-named person, company or
+    acronym can otherwise walk straight into the conclusions — the exact
+    failure this gate exists to prevent, and one the issue map skipped."""
+    try:
+        from engine.agents import disambiguate
+
+        return disambiguate.gate_documents(db, subject)
+    except Exception:  # noqa: BLE001
+        return {"error": "disambiguation gate failed; documents kept unfiltered"}
+
+
+def _resolve_intersection(db, subject, corpus: list[dict]) -> dict:
+    """Entity and event resolution over the intersection corpus.
+
+    Many reports of one happening become ONE event carrying its evidence, so
+    repetition stops masquerading as significance — and the entities and
+    relationships persist, which is what lets the next run start further ahead.
+    """
+    if not settings.enable_resolution or not corpus:
+        return {}
+    try:
+        from engine.agents import resolve as resolve_agent
+
+        return resolve_agent.resolve_corpus(db, subject, corpus)
+    except Exception:  # noqa: BLE001 — resolution must never break a map
+        traceback.print_exc()
+        return {"error": "entity/event resolution failed"}
 
 
 def build_issue_map(
@@ -130,32 +312,60 @@ def build_issue_map(
     window_end: datetime | None = None,
     mentions: list[dict] | None = None,
     desired_outcome: str | None = None,
+    issue_aliases: list[str] | None = None,
+    on_section=None,
 ) -> dict:
     """Produce the issue-map payload for principal × issue.
 
-    Acquires (or accepts injected) intersection mentions, runs the whole-corpus
-    map-reduce digest for provable full coverage, then the issue-intersection
-    analyst. Returns a self-describing payload including a coverage record and a
-    small evidence sample.
+    Acquires (or accepts injected) intersection material across every enabled
+    free source with full identity x issue-name expansion plus metasearch
+    discovery, stores it under the principal so the corpus compounds, pulls
+    back everything already stored that bears on the issue, gates and resolves
+    it, then runs the whole-corpus map-reduce digest and the intersection
+    analyst. Returns a self-describing payload including a coverage record and
+    an evidence sample.
+
+    `mentions` short-circuits acquisition entirely (tests, and callers that
+    already hold an intersection corpus). `on_section(key, value)` streams
+    stages to a waiting reader, same contract as run_analysis.
     """
     from engine.reports import analysts
     from engine.reports.digest import build_corpus_digest
 
+    def publish(key, value):
+        if on_section is None:
+            return
+        try:
+            on_section(key, value)
+        except Exception:  # noqa: BLE001
+            pass
+
     we = window_end or datetime.utcnow()
     ws = window_start or (we - timedelta(days=365))
+    acquisition: dict = {}
 
     if mentions is None:
-        mentions = acquire_intersection(principal, issue, ws, we)
+        mentions, acquisition = _acquire_and_store(principal, issue, ws, we,
+                                                   issue_aliases, publish)
 
     label = f"{principal} × {issue}"
+    publish("stage", f"Reading {len(mentions)} intersection sources…")
     digest = build_corpus_digest(label, mentions)
-    analysis = analysts.analyze_issue_intersection(principal, issue, digest)
+    publish("coverage", digest["coverage"])
+    # Four analysts run at once; each publishes the map as it stands the moment
+    # its section lands, so the reader gets the actors while the timeline is
+    # still being written.
+    analysis = analysts.analyze_issue_intersection(
+        principal, issue, digest,
+        on_part=lambda name, partial: publish("intersection", partial),
+    )
+    publish("intersection", analysis)
 
     sample = [
         {
             "platform": m.get("platform"),
             "text": (m.get("text") or "")[:400],
-            "url": (m.get("raw_payload") or {}).get("url"),
+            "url": (m.get("raw_payload") or {}).get("url") or m.get("source_url"),
             "posted_at": m.get("posted_at"),
         }
         for m in mentions[:15]
@@ -171,9 +381,128 @@ def build_issue_map(
         "evidence_sample": sample,
         "thin": digest["coverage"]["mentions_total"] == 0,
     }
+    if acquisition:
+        # How the corpus was assembled travels with the map. A thin result has
+        # to be distinguishable from a collection failure.
+        payload["acquisition"] = acquisition
     payload["issue_framework"] = _issue_framework(principal, issue, payload, analysis,
                                                   desired_outcome=desired_outcome)
+    publish("issue_framework", payload["issue_framework"])
     return payload
+
+
+def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
+                       issue_aliases: list[str] | None,
+                       publish) -> tuple[list[dict], dict]:
+    """Acquire the intersection, persist it, and read back everything stored
+    that bears on the issue — including whatever earlier runs already found.
+
+    Falls back to acquisition-only (no store, no reuse) if the database is
+    unreachable, so an issue map still works where a report couldn't.
+    """
+    from engine.db.session import SessionLocal
+    from engine.ingestion import queries
+
+    db = None
+    try:
+        db = SessionLocal()
+        subject = _ensure_subject(db, principal)
+        identities = queries.text_variants(subject)
+        issue_terms = queries.issue_variants(issue, issue_aliases)
+        discovery = queries.intersection_discovery_variants(subject, issue, issue_aliases)
+    except Exception:  # noqa: BLE001 — no database is not a reason to fail
+        traceback.print_exc()
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+        publish("stage", f"Searching for “{principal}” × “{issue}”…")
+        fresh = acquire_intersection(principal, issue, ws, we)
+        return _as_corpus(fresh), {"stored": False, "reason": "database unavailable"}
+
+    try:
+        publish("stage", f"Searching {len(identities)} name variants × "
+                         f"{len(issue_terms)} issue terms across every source…")
+        fresh = acquire_intersection(principal, issue, ws, we,
+                                     identities=identities, issue_terms=issue_terms)
+        publish("stage", f"Sweeping {len(discovery)} discovery probes for full-text sources…")
+        documents = acquire_intersection_documents(discovery)
+
+        stored = _persist_intersection(db, subject, fresh, documents, issue)
+        gate = _gate_documents(db, subject)
+
+        publish("stage", "Pulling back everything stored that bears on this issue…")
+        from engine.agents import evidence
+
+        corpus = evidence.retrieve_intersection(db, subject.id, issue_terms)
+        # Anything acquired this run that the store hasn't indexed yet (or that
+        # full-text search ranks out) is still evidence — union, never replace.
+        corpus = _merge_corpus(corpus, _as_corpus(fresh))
+
+        resolution = _resolve_intersection(db, subject, corpus)
+        return corpus, {
+            "stored": True,
+            "subject_id": subject.id,
+            "identity_variants": len(identities),
+            "issue_terms": issue_terms,
+            "discovery_probes": len(discovery),
+            "fresh_mentions": len(fresh),
+            "fresh_documents": len(documents),
+            **stored,
+            "evidence_gate": gate,
+            "resolution": {k: v for k, v in (resolution or {}).items() if k != "events"},
+            "corpus_from_store": len(corpus),
+        }
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        fresh = acquire_intersection(principal, issue, ws, we,
+                                     identities=identities, issue_terms=issue_terms)
+        return _as_corpus(fresh), {"stored": False, "reason": "acquisition or storage failed"}
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+def _as_corpus(mentions) -> list[dict]:
+    """IngestedMention dicts in the shape the digest and analysts read."""
+    out: list[dict] = []
+    for i, m in enumerate(mentions or []):
+        raw = m.get("raw_payload") or {}
+        out.append(
+            {
+                "id": m.get("id") or f"fresh-{i}",
+                "platform": m.get("platform"),
+                "source_type": m.get("source_type"),
+                "author_handle": m.get("author_handle"),
+                "text": m.get("text") or "",
+                "posted_at": m.get("posted_at"),
+                "engagement": m.get("engagement") or {},
+                "language": m.get("language"),
+                "source_url": raw.get("url") or m.get("source_url"),
+            }
+        )
+    return out
+
+
+def _merge_corpus(primary: list[dict], extra: list[dict]) -> list[dict]:
+    """Union by URL, falling back to the opening of the text.
+
+    The same article arriving from the store and from this run's fetch must not
+    be read twice — repetition is exactly what the resolution layer exists to
+    stop masquerading as significance.
+    """
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for item in list(primary) + list(extra):
+        key = (item.get("source_url") or "").strip() or (item.get("text") or "")[:120].strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
 
 
 def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,

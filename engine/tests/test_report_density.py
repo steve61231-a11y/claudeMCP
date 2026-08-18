@@ -34,7 +34,9 @@ API_SERVER = REPO / "engine" / "api_server.py"
 @pytest.mark.parametrize(
     "prompt",
     [
-        analysts.ISSUE_MAP_PROMPT,
+        analysts.ISSUE_ACTORS_PROMPT,
+        analysts.ISSUE_TIMELINE_PROMPT,
+        analysts.ISSUE_NARRATIVES_PROMPT,
         analysts.PUBLIC_VOICE_PROMPT,
         analysts.PLATFORM_PULSE_PROMPT,
         analysts.TIMELINE_PROMPT,
@@ -60,7 +62,10 @@ def test_schema_examples_are_multi_element(prompt: str):
 @pytest.mark.parametrize(
     "prompt",
     [
-        analysts.ISSUE_MAP_PROMPT,
+        analysts.ISSUE_POSITION_PROMPT,
+        analysts.ISSUE_ACTORS_PROMPT,
+        analysts.ISSUE_TIMELINE_PROMPT,
+        analysts.ISSUE_NARRATIVES_PROMPT,
         analysts.TIMELINE_PROMPT,
         analysts.PUBLIC_VOICE_PROMPT,
     ],
@@ -72,8 +77,41 @@ def test_prose_prompts_state_a_length(prompt: str):
 
 def test_issue_map_prompt_asks_for_every_actor():
     """3-4 actors was the symptom; the floor is the fix."""
-    assert "15-40" in analysts.ISSUE_MAP_PROMPT
-    assert "80-200 words" in analysts.ISSUE_MAP_PROMPT
+    assert "15-40" in analysts.ISSUE_ACTORS_PROMPT
+    assert "80-200 words" in analysts.ISSUE_TIMELINE_PROMPT
+
+
+def test_the_issue_map_is_four_analysts_not_one_call():
+    """15-40 actors at 40-120 words each plus 10-30 timeline entries at 80-200
+    words each does not fit in one response on any backend, so a single call
+    silently rations. Each section gets its own full budget instead."""
+    assert set(analysts.ISSUE_SECTIONS) == {"position", "actors", "timeline", "narratives"}
+    covered = {key for _, keys in analysts.ISSUE_SECTIONS.values() for key in keys}
+    assert covered == set(analysts._ISSUE_EMPTY)
+
+
+def test_a_failed_section_costs_only_that_section(monkeypatch):
+    calls = {"n": 0}
+
+    def flaky(prompt, max_tokens=1024, model=None):
+        calls["n"] += 1
+        if "EVERY actor" in prompt:
+            raise RuntimeError("provider 429")
+        if "SEQUENCE of moments" in prompt:
+            return {"timeline": [{"when": "2026", "date": None, "event": "something happened"}]}
+        if "STORYLINE" in prompt:
+            return {"linking_narratives": [{"narrative": "n", "framing": "f", "pushed_by": "p"}]}
+        return {"involvement": "i", "tension_or_risk": "t", "verdict": "v"}
+
+    monkeypatch.setattr(analysts.llm, "call_json", flaky)
+    monkeypatch.setattr("engine.reports.digest.digest_context", lambda d, max_chars=0: "digest")
+
+    out = analysts.analyze_issue_intersection("P", "I", {"digests": []})
+    assert out["key_actors"] == []          # the section that failed
+    assert out["verdict"] == "v"            # the ones that didn't
+    assert len(out["timeline"]) == 1
+    assert len(out["linking_narratives"]) == 1
+    assert calls["n"] == 4
 
 
 def test_map_step_forbids_omission():

@@ -126,3 +126,92 @@ def independent_source_count(evidence: list[dict]) -> int:
     counts when it is genuinely independent.
     """
     return len({(e.get("source") or e.get("url") or "").lower() for e in evidence if e.get("source") or e.get("url")})
+
+
+def retrieve_intersection(
+    db, politician_id: str, terms: list[str], limit: int = 400
+) -> list[dict]:
+    """Everything already stored about this subject that mentions the issue.
+
+    The issue map used to re-scrape from zero on every run and keep nothing, so
+    it could never compound and could never reuse the corpus the politician
+    path had already built for the same person. This is the other half of that
+    fix: once intersection material is stored under the subject, a later run —
+    for the same issue or a different one — reads it straight out of the store.
+
+    Returns corpus dicts in the same shape as `pipeline._document_corpus`, so
+    the digest and the analysts read documents and social posts side by side
+    with no special-casing.
+    """
+    query = " OR ".join(t for t in terms if t)
+    if not query:
+        return []
+    half = max(1, limit // 2)
+
+    corpus: list[dict] = []
+
+    doc_rows = db.execute(
+        sql_text(
+            """
+            SELECT id, url, domain, title, author, body, published_at, fetched_at, language
+            FROM documents
+            WHERE politician_id = :pid
+              AND (relevance_verdict IS NULL OR relevance_verdict <> 'off_topic')
+              AND search_vector @@ websearch_to_tsquery('english', :q)
+            ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', :q)) DESC
+            LIMIT :lim
+            """
+        ),
+        {"pid": politician_id, "q": query, "lim": half},
+    ).fetchall()
+    for row in doc_rows:
+        text = f"{row.title}\n\n{row.body}" if row.title else (row.body or "")
+        if not text.strip():
+            continue
+        corpus.append(
+            {
+                "id": row.id,
+                "platform": row.domain or "web",
+                "source_type": "article",
+                "author_handle": row.author or row.domain or "web",
+                "text": text,
+                "posted_at": row.published_at or row.fetched_at,
+                "engagement": {},
+                "language": row.language,
+                "source_url": row.url,
+            }
+        )
+
+    mention_rows = db.execute(
+        sql_text(
+            """
+            SELECT id, platform, source_type, author_handle, text, posted_at,
+                   engagement_json, language, source_url
+            FROM raw_mentions
+            WHERE politician_id = :pid
+              AND is_spam = 0
+              AND to_tsvector('english', text) @@ websearch_to_tsquery('english', :q)
+            ORDER BY ts_rank(to_tsvector('english', text),
+                             websearch_to_tsquery('english', :q)) DESC
+            LIMIT :lim
+            """
+        ),
+        {"pid": politician_id, "q": query, "lim": limit - len(corpus)},
+    ).fetchall()
+    for row in mention_rows:
+        if not (row.text or "").strip():
+            continue
+        corpus.append(
+            {
+                "id": row.id,
+                "platform": row.platform,
+                "source_type": row.source_type,
+                "author_handle": row.author_handle,
+                "text": row.text,
+                "posted_at": row.posted_at,
+                "engagement": row.engagement_json or {},
+                "language": row.language,
+                "source_url": row.source_url,
+            }
+        )
+    return corpus

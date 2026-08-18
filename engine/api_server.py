@@ -677,8 +677,24 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
     try:
         we = datetime.utcnow()
         ws = we - timedelta(days=max(1, days))
+
+        # Same contract as a report run: publish each stage as it lands so the
+        # reader watches the map assemble instead of a spinner. An issue map on
+        # the real acquisition stack is a long run — that is the point of it.
+        def _on_section(key, value):
+            job = _jobs.get(job_id)
+            if job is None or job.get("status") != "running":
+                return
+            if key == "stage":
+                job["stage"] = value
+                return
+            job.setdefault("partial_issue_map", {
+                "principal": principal, "issue": issue,
+                "window": {"start": ws, "end": we},
+            })[key] = value
+
         payload = build_issue_map(principal, issue, window_start=ws, window_end=we,
-                                  desired_outcome=desired_outcome)
+                                  desired_outcome=desired_outcome, on_section=_on_section)
         _jobs[job_id] = {"status": "done", "ok": True, "issue_map": payload, "created_at": time.time()}
     except Exception as exc:  # surface server-side; this is an API-key-gated operator tool
         traceback.print_exc()

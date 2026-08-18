@@ -1640,7 +1640,25 @@
         if(!LIVE)throw new Error('demo');
         tick('Building intersection corpus…');
         const j=await api('/api/issue-map',{method:'POST',body:JSON.stringify({principal,issue,days,desired_outcome:$('#do',form).value.trim()||null})});
-        const done=await pollJob(j.job_id,i=>tick('Reading the intersection… ('+(i*2)+'s)'));
+        // The map runs the full acquisition stack now — dozens of queries and
+        // an 80-probe discovery sweep — so it is a long run. Show the stage the
+        // engine reports, and render the intersection the moment the analyst
+        // returns it, before the framework view is built on top.
+        let lastFilled='';
+        const done=await pollJob(j.job_id,(i,job)=>{
+          tick(esc(job.stage||'Reading the intersection…')+' ('+(i*2)+'s)');
+          const pm=job.partial_issue_map;
+          if(!pm||!pm.intersection)return;
+          // Four analysts land separately; re-render each time another section
+          // of the map arrives, not just on the first one.
+          const filled=Object.keys(pm.intersection)
+            .filter(k=>{const v=pm.intersection[k];return v&&v.length;}).sort().join(',');
+          if(filled===lastFilled)return;
+          lastFilled=filled;
+          const y=window.scrollY;
+          renderIssue(out,pm);
+          window.scrollTo(0,y);
+        });
         msg.textContent='';
         if(done.ok&&done.issue_map)renderIssue(out,done.issue_map);
         else out.appendChild(errCard(done.error||'Issue map failed.'));

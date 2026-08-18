@@ -146,6 +146,90 @@ def hashtag_variants(politician: Politician) -> list[str]:
     return _dedupe(variants)[:MAX_HASHTAG_VARIANTS]
 
 
+# Intersection expansion — a principal AND an issue/institution.
+#
+# The issue map used to fire ONE literal AND-query per source ("Ruto" "SHA"),
+# which is why it came back with four actors: it was analysing four requests'
+# worth of material while the politician path was fanning out across dozens.
+# The identity expansion that fixed that for the politician path applies here
+# too — a Kenyan outlet writes "CS Mbadi" and "SHA", not "John Mbadi" and
+# "Social Health Authority" — so every identity variant is crossed with every
+# way the issue is referred to.
+
+# Angles that pull an intersection apart into its parts, rather than returning
+# the same top story from every source. Kept explicit and auditable, like
+# DISCOVERY_PROBES.
+INTERSECTION_PROBES = [
+    "role", "statement", "criticism", "defence", "policy", "reform",
+    "budget", "funding", "implementation", "rollout", "court", "petition",
+    "parliament", "committee", "report", "audit", "protest", "reaction",
+]
+
+MAX_INTERSECTION_VARIANTS = 24
+MAX_INTERSECTION_DISCOVERY_VARIANTS = 80
+
+
+def issue_variants(issue: str, extra: list[str] | None = None) -> list[str]:
+    """Ways the issue itself is referred to.
+
+    Acronym-and-expansion pairs are the common case in Kenyan coverage (SHA /
+    Social Health Authority), and an operator can supply more.
+    """
+    variants = [issue]
+    variants.extend(extra or [])
+    return _dedupe(variants)
+
+
+def intersection_text_variants(
+    politician: Politician, issue: str, issue_aliases: list[str] | None = None
+) -> list[str]:
+    """Both-terms search phrases across every identity x issue-name pairing.
+
+    Quoted so an engine matches the phrase rather than the words, and ordered
+    most-specific first so a truncating source still gets the best queries.
+    """
+    identities = text_variants(politician)
+    issues = issue_variants(issue, issue_aliases)
+    pairs: list[str] = []
+    # Breadth-first over identities: the full name x every issue name, then the
+    # first alias x every issue name, and so on. A source that only runs the
+    # first few queries still covers both terms' main forms.
+    for identity in identities:
+        for term in issues:
+            pairs.append(f'"{identity}" "{term}"')
+    return _dedupe(pairs)[:MAX_INTERSECTION_VARIANTS]
+
+
+def intersection_discovery_variants(
+    politician: Politician, issue: str, issue_aliases: list[str] | None = None
+) -> list[str]:
+    """Metasearch queries for the intersection.
+
+    Layer 1: identity x issue name — the intersection itself.
+    Layer 2: intersection x probe — the angles that separate a rollout from a
+             court case from a parliamentary fight, so the corpus contains the
+             whole argument rather than one week of headlines.
+    Layer 3: intersection x timespan — search ranks recent material first, and
+             an intersection usually has a history.
+    """
+    identities = text_variants(politician)[:3]
+    issues = issue_variants(issue, issue_aliases)
+    primary_identity = identities[0] if identities else politician.name
+    primary_issue = issues[0] if issues else issue
+
+    variants: list[str] = [f'"{i}" "{t}"' for i in identities for t in issues]
+    for probe in INTERSECTION_PROBES:
+        variants.append(f'"{primary_identity}" "{primary_issue}" {probe}')
+    for probe in DISCOVERY_TIMESPAN_PROBES:
+        variants.append(f'"{primary_identity}" "{primary_issue}" {probe}')
+    # A second way of naming the issue broadens recall where the acronym and
+    # the expansion are used by different outlets.
+    if len(issues) > 1:
+        for probe in INTERSECTION_PROBES[:6]:
+            variants.append(f'"{primary_identity}" "{issues[1]}" {probe}')
+    return _dedupe(variants)[:MAX_INTERSECTION_DISCOVERY_VARIANTS]
+
+
 def _pending_leads(politician: Politician) -> list[str]:
     """Follow-up queries a previous investigator pass recorded on the subject.
 
