@@ -28,12 +28,33 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-      # TEMPORARY (Anthropic credits are depleted): serve the full pre-generated
-      # report instantly for matched names (e.g. "John Mbadi") with ZERO LLM
-      # spend, so the working product is demoable while credits are topped up.
-      # Set back to "false" once Anthropic credit is added to run live for any name.
+      # Serve the stored pre-generated report instantly for matched names (e.g.
+      # "John Mbadi") with ZERO LLM spend. Keep "false" whenever you want live
+      # runs: with this on, a matched name never reaches the pipeline, so a
+      # model/provider switch appears to have changed nothing. /api/health
+      # reports the live value as `serving_precache`.
       - key: SERVE_PRECACHE_FIRST
-        value: "true"
+        value: "false"
+      # Model backend. Unset/"anthropic" = production Claude. Set these in the
+      # dashboard to run testing on a cheap or free provider instead; every
+      # report produced that way is stamped test-grade and banner-labelled.
+      #   openai_compatible — any OpenAI-protocol provider (Z.ai/GLM, DeepSeek,
+      #                       Qwen, Kimi, OpenRouter, a local model)
+      #   stub              — no network, no cost, empty analysis
+      - key: LLM_PROVIDER
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: LLM_BULK_MODEL
+        sync: false
+      # Free tiers cap requests-per-minute below what the pipeline wants; 2 is a
+      # safe ceiling. Leave unset on Anthropic to keep full parallelism.
+      - key: LLM_MAX_CONCURRENCY
+        sync: false
       # Full-power pipeline (2GB): full concurrency, all sources, no per-run caps.
       - key: LOW_MEMORY
         value: "false"

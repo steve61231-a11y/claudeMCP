@@ -1398,5 +1398,12 @@ def health():
         "build": commit[:7] or "local",
         "local_ml": settings.use_local_ml,
         "uptime_seconds": int(time.time() - _PROCESS_START),
+        # Which model backend is actually live, so a provider switch can be
+        # confirmed from outside without generating a report to find out.
+        "llm": _llm.report_grade(),
+        # When true, matched names are served the stored pre-generated report and
+        # the live pipeline never runs — so a provider switch appears to have
+        # done nothing. Surfaced here because that is otherwise invisible.
+        "serving_precache": settings.serve_precache_first,
         "data_supply": supply,
     }

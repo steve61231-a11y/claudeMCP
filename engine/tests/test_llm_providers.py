@@ -315,3 +315,23 @@ def test_json_mode_is_dropped_and_retried_when_a_model_rejects_it(monkeypatch):
 
     assert llm.call_json("give me json", max_tokens=100) == {"ok": True}
     assert seen == [True, False], "did not retry without JSON mode"
+
+
+def test_health_reports_the_live_backend_and_precache_state(monkeypatch):
+    """Two things that are otherwise invisible from outside: which model is
+    actually serving, and whether the pre-cache is short-circuiting the pipeline
+    so a provider switch looks like it did nothing."""
+    from fastapi.testclient import TestClient
+
+    from engine import api_server
+
+    monkeypatch.setattr(api_server.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(api_server.settings, "llm_model", "glm-4.5-flash")
+    monkeypatch.setattr(api_server.settings, "serve_precache_first", True)
+
+    body = TestClient(api_server.app).get("/api/health").json()
+
+    assert body["llm"]["backend"] == "openai_compatible"
+    assert body["llm"]["model"] == "glm-4.5-flash"
+    assert body["llm"]["production"] is False
+    assert body["serving_precache"] is True
