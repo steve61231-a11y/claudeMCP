@@ -12,7 +12,7 @@ def get_nlp():
         import spacy
 
         # On a memory-constrained instance, skip the full NER model and use a
-        # tiny blank pipeline. extract_people already handles a blank model (no
+        # tiny blank pipeline. has_person_candidate handles a blank model (no
         # "ner" pipe) by falling back to a capitalized-name heuristic + the LLM,
         # so people extraction still works with a much smaller footprint.
         if settings.low_memory:
@@ -116,51 +116,112 @@ def _capitalized_name_hint(text: str, politician_name: str) -> bool:
     return False
 
 
-PEOPLE_PROMPT = """You are mapping the people mentioned alongside a Kenyan politician in scraped media/social text. The text may be in English, Swahili, or Sheng.
+PEOPLE_BATCH_PROMPT = """You are mapping the people mentioned alongside a Kenyan politician in scraped media/social text. The text may be in English, Swahili, or Sheng.
 
-Politician being tracked (exclude them from the output): {name}
+Politician being tracked (exclude them from every answer): {name}
 
-Identify every OTHER named individual in the text — fellow politicians, journalists, party officials, activists, content creators. For each, give their role and affiliation ONLY if the provided text itself states or clearly implies it; otherwise use null. Do NOT fill in role, affiliation, office, or status from your own knowledge of public figures — your knowledge may be out of date (people die, lose office, switch parties). Never assert whether a person is alive, dead, or currently holds any position unless the text says so. Do not invent people who are not named in the text.
+For EACH numbered item below, identify every OTHER named individual in that item — fellow politicians, journalists, party officials, activists, content creators. For each person give their role and affiliation ONLY if that item's text states or clearly implies it; otherwise use null. Do NOT fill in role, affiliation, office, or status from your own knowledge of public figures — your knowledge may be out of date (people die, lose office, switch parties). Never assert whether a person is alive, dead, or currently holds any position unless the text says so. Do not invent people who are not named in the text.
 
-The required JSON shape is:
-{{"people": [{{"name": "Full Name", "role": "journalist|politician|party official|activist|creator|other or null", "affiliation": "organisation/media house/party or null"}}]}}"""
+Keep each person attached to the item number they came from. An item with no other named people simply has no entries.
+
+Items:
+{batch}
+
+Respond with ONLY this JSON, keeping the item numbers:
+{{"people": [{{"i": 1, "name": "Full Name", "role": "journalist|politician|party official|activist|creator|other or null", "affiliation": "organisation/media house/party or null"}}]}}"""
+
+_PEOPLE_BATCH_WORKERS = 4
+_PEOPLE_MAX_ITEM_CHARS = 900
 
 
-def extract_people(text: str, politician_name: str) -> list[dict]:
-    """Named individuals co-mentioned with the politician, with role/affiliation.
+def _clean_person(person, politician_lower: str) -> dict | None:
+    if not isinstance(person, dict):
+        return None
+    name = str(person.get("name") or "").strip()
+    if not name or name.lower() in politician_lower or politician_lower in name.lower():
+        return None
+    return {
+        "name": name,
+        "role": (str(person["role"]).strip() or None) if person.get("role") else None,
+        "affiliation": (str(person["affiliation"]).strip() or None) if person.get("affiliation") else None,
+    }
 
-    spaCy NER gates the (paid) LLM call: no PERSON candidates, no LLM. The LLM
-    then adds role/affiliation and filters NER noise. Returns [] on any failure
-    — person extraction must never break the analysis run.
-    """
-    if not any(e["type"] == "person" for e in extract_standard_entities(text)):
-        if "ner" in get_nlp().pipe_names:
-            return []
-        if not _capitalized_name_hint(text, politician_name):
-            # Blank spaCy model (en_core_web_sm unavailable): fall back to a
-            # cheap capitalized-name-pair heuristic so people extraction
-            # doesn't silently drop to zero — it would otherwise empty the
-            # people network.
-            return []
+
+def has_person_candidate(text: str, politician_name: str) -> bool:
+    """Local NER gate — the free filter that decides whether an item is worth
+    sending to the model at all."""
+    if any(e["type"] == "person" for e in extract_standard_entities(text)):
+        return True
+    if "ner" in get_nlp().pipe_names:
+        return False
+    # Blank spaCy model (en_core_web_sm unavailable): fall back to a cheap
+    # capitalized-name-pair heuristic so people extraction doesn't silently
+    # drop to zero — it would otherwise empty the people network.
+    return _capitalized_name_hint(text, politician_name)
+
+
+def _extract_people_batch(items: list[tuple[str, str]], politician_name: str) -> dict[str, list[dict]]:
+    """One call for a batch of items. A failed batch contributes nothing."""
+    lines = []
+    for position, (_, text) in enumerate(items, start=1):
+        snippet = (text or "").replace("\n", " ")[:_PEOPLE_MAX_ITEM_CHARS]
+        lines.append(f"[{position}] {snippet}")
+    batch = "\n".join(lines)
+
     try:
         result = llm.call_json_untrusted(
-            PEOPLE_PROMPT.format(name=politician_name), text, expected_keys={"people"}, max_tokens=512
+            PEOPLE_BATCH_PROMPT.format(name=politician_name, batch=batch),
+            batch,
+            expected_keys={"people"},
+            max_tokens=min(8000, 160 * len(items) + 400),
+            max_untrusted_chars=len(batch) + 1000,
+            model=llm.bulk_model(),
         )
-    except Exception:
-        return []
-    people = []
+    except Exception:  # noqa: BLE001 — retried on the next incremental run
+        return {}
+
     politician_lower = politician_name.lower()
-    for person in result.get("people") or []:
-        if not isinstance(person, dict):
+    out: dict[str, list[dict]] = {}
+    for entry in result.get("people") or []:
+        try:
+            position = int(entry.get("i"))
+        except (TypeError, ValueError, AttributeError):
             continue
-        name = str(person.get("name") or "").strip()
-        if not name or name.lower() in politician_lower or politician_lower in name.lower():
+        if not 1 <= position <= len(items):
             continue
-        people.append(
-            {
-                "name": name,
-                "role": (str(person["role"]).strip() or None) if person.get("role") else None,
-                "affiliation": (str(person["affiliation"]).strip() or None) if person.get("affiliation") else None,
-            }
-        )
+        person = _clean_person(entry, politician_lower)
+        if person:
+            out.setdefault(items[position - 1][0], []).append(person)
+    return out
+
+
+def extract_people_items(items: list[tuple[str, str]], politician_name: str) -> dict[str, list[dict]]:
+    """People co-mentioned with the politician, for a whole corpus at once.
+
+    This was the last stage still spending one LLM round-trip per mention, and
+    at a few hundred mentions it dominated both the cost and the wall-clock of
+    a report — on a rate-limited backend it was the whole run. Batching it the
+    way sentiment was batched turns ~300 calls into ~12.
+
+    spaCy NER still gates the call per item (no PERSON candidate, no tokens
+    spent), so a batch only carries items that might actually contain someone.
+    Returns {item_id: people}; an item the model doesn't answer for is simply
+    absent, so a later run retries it rather than recording an empty answer.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from engine.config import settings
+
+    candidates = [(item_id, text) for item_id, text in items
+                  if (text or "").strip() and has_person_candidate(text, politician_name)]
+    if not candidates:
+        return {}
+
+    size = max(1, settings.agent_batch_size)
+    batches = [candidates[i : i + size] for i in range(0, len(candidates), size)]
+    people: dict[str, list[dict]] = {}
+    workers = llm.concurrency(min(_PEOPLE_BATCH_WORKERS, len(batches)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for partial in pool.map(lambda b: _extract_people_batch(b, politician_name), batches):
+            people.update(partial)
     return people

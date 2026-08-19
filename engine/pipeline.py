@@ -74,8 +74,15 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
 
 def _per_mention_workers() -> int:
     """Fewer threads on a memory-constrained free instance so concurrent work
-    can't exhaust RAM and get the worker OOM-killed (intermittent 502s)."""
-    return 3 if settings.low_memory else _PER_MENTION_WORKERS
+    can't exhaust RAM and get the worker OOM-killed (intermittent 502s), and
+    never more than the operator's LLM concurrency ceiling.
+
+    That ceiling exists to keep a rate-limited backend under its per-minute
+    quota, and this is the highest-volume stage in the pipeline — it was the
+    one place that ignored it."""
+    from engine import llm
+
+    return llm.concurrency(3 if settings.low_memory else _PER_MENTION_WORKERS)
 
 
 def run_pipeline(
@@ -172,22 +179,16 @@ def run_analysis(
         keep = {m.id for m in sorted(llm_link_needed, key=_engagement, reverse=True)[:_llm_cap]}
         unchecked = [m for m in unchecked if not _needs_llm_link(m) or m.id in keep]
 
-    # People extraction is enrichment rather than gating, and costs a call per
-    # mention, so it is bounded independently of linking.
+    # People extraction is enrichment rather than gating, so it is bounded
+    # independently of linking.
     people_budget = {
         m.id for m in sorted(unchecked, key=_engagement, reverse=True)[:_llm_cap]
     }
 
-    def link_and_extract(mention: RawMention) -> tuple[dict | None, list[dict]]:
-        def people(m: RawMention) -> list[dict]:
-            if m.id not in people_budget:
-                return []
-            return entities.extract_people(m.text, politician.name)
-
+    def link_only(mention: RawMention) -> dict | None:
         if not _needs_llm_link(mention):
             src = (mention.raw_payload or {}).get("source")
-            link = {"matched": True, "match_type": f"targeted_{src}", "confidence": 0.75}
-            return link, people(mention)
+            return {"matched": True, "match_type": f"targeted_{src}", "confidence": 0.75}
 
         link = entities.detect_entity_link(
             mention.text, politician.name, politician.aliases or [], politician.keywords or []
@@ -199,17 +200,27 @@ def run_analysis(
             parent = (mention.raw_payload or {}).get("_parent_post")
             if parent:
                 link = {"matched": True, "match_type": "comment_on_linked_post", "confidence": 0.7}
-        if not link:
-            return None, []
-        return link, people(mention)
+        return link
 
     with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
-        link_results = list(pool.map(link_and_extract, unchecked))
+        link_results = list(pool.map(link_only, unchecked))
 
-    for mention, (link, people) in zip(unchecked, link_results):
+    # People extraction, batched over the whole set in one pass rather than a
+    # round-trip per mention. This was the last unbatched per-item stage left,
+    # and at a few hundred mentions it was most of the wall-clock of a report:
+    # on a rate-limited backend, ~300 serialised calls is the difference
+    # between a report that finishes and one that times out.
+    linked_for_people = [
+        (m.id, m.text) for m, link in zip(unchecked, link_results)
+        if link and m.id in people_budget
+    ]
+    people_by_mention = entities.extract_people_items(linked_for_people, politician.name)
+
+    for mention, link in zip(unchecked, link_results):
         mention.link_checked = 1
         if not link:
             continue
+        people = people_by_mention.get(mention.id, [])
         db.add(
             MentionEntity(
                 mention_id=mention.id,

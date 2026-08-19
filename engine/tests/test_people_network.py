@@ -38,13 +38,15 @@ def add_mention(db, politician, text, author="user1", platform="tiktok", followe
 
 
 def test_extract_people_skips_llm_without_ner_candidates(monkeypatch):
+    """The free local gate is what keeps the batch from carrying items that
+    contain nobody."""
     monkeypatch.setattr(entities_module, "extract_standard_entities", lambda text: [])
 
     def boom(*a, **k):
         raise AssertionError("LLM must not be called without NER candidates")
 
     monkeypatch.setattr(llm, "call_json_untrusted", boom)
-    assert entities_module.extract_people("no names here", "John Mbadi") == []
+    assert entities_module.extract_people_items([("m1", "no names here")], "John Mbadi") == {}
 
 
 def test_extract_people_filters_the_tracked_politician(monkeypatch):
@@ -58,23 +60,85 @@ def test_extract_people_filters_the_tracked_politician(monkeypatch):
         "call_json_untrusted",
         lambda *a, **k: {
             "people": [
-                {"name": "Linus Kaikai", "role": "journalist", "affiliation": "Citizen TV"},
-                {"name": "John Mbadi", "role": "politician", "affiliation": "ODM"},
+                {"i": 1, "name": "Linus Kaikai", "role": "journalist", "affiliation": "Citizen TV"},
+                {"i": 1, "name": "John Mbadi", "role": "politician", "affiliation": "ODM"},
             ]
         },
     )
-    people = entities_module.extract_people("text", "John Mbadi")
-    assert people == [{"name": "Linus Kaikai", "role": "journalist", "affiliation": "Citizen TV"}]
+    people = entities_module.extract_people_items([("m1", "text")], "John Mbadi")
+    assert people == {"m1": [{"name": "Linus Kaikai", "role": "journalist", "affiliation": "Citizen TV"}]}
+
+
+def test_people_extraction_is_one_call_per_batch_not_per_mention(monkeypatch):
+    """This was the last unbatched per-item stage, and at a few hundred
+    mentions it was most of the wall-clock of a report — on a rate-limited
+    backend it was the whole run."""
+    monkeypatch.setattr(settings, "agent_batch_size", 25)
+    monkeypatch.setattr(
+        entities_module, "extract_standard_entities",
+        lambda text: [{"name": "Someone Else", "type": "person"}],
+    )
+    calls = {"n": 0}
+
+    def counted(*a, **k):
+        calls["n"] += 1
+        return {"people": []}
+
+    monkeypatch.setattr(llm, "call_json_untrusted", counted)
+    items = [(f"m{i}", f"Mention {i} about Someone Else") for i in range(60)]
+    entities_module.extract_people_items(items, "John Mbadi")
+    assert calls["n"] == 3  # 60 items / 25 per batch, not 60 calls
+
+
+def test_people_answers_stay_attached_to_their_own_mention(monkeypatch):
+    """Items keep their identity through the batch — a person attributed to
+    the wrong mention would corrupt the co-mention network silently."""
+    monkeypatch.setattr(
+        entities_module, "extract_standard_entities",
+        lambda text: [{"name": "X", "type": "person"}],
+    )
+    monkeypatch.setattr(
+        llm, "call_json_untrusted",
+        lambda *a, **k: {"people": [
+            {"i": 2, "name": "Linus Kaikai", "role": "journalist", "affiliation": None},
+            {"i": 3, "name": "Anne Waiguru", "role": None, "affiliation": None},
+            {"i": 99, "name": "Out Of Range", "role": None, "affiliation": None},
+        ]},
+    )
+    out = entities_module.extract_people_items(
+        [("a", "one"), ("b", "two"), ("c", "three")], "John Mbadi"
+    )
+    assert out == {
+        "b": [{"name": "Linus Kaikai", "role": "journalist", "affiliation": None}],
+        "c": [{"name": "Anne Waiguru", "role": None, "affiliation": None}],
+    }
+
+
+def test_a_failed_batch_leaves_items_unanswered_rather_than_empty(monkeypatch):
+    """An unanswered item is retried on the next incremental run; an item
+    recorded as having no people never is."""
+    monkeypatch.setattr(
+        entities_module, "extract_standard_entities",
+        lambda text: [{"name": "X", "type": "person"}],
+    )
+
+    def boom(*a, **k):
+        raise RuntimeError("provider 429")
+
+    monkeypatch.setattr(llm, "call_json_untrusted", boom)
+    assert entities_module.extract_people_items([("a", "one")], "John Mbadi") == {}
 
 
 def test_run_analysis_maps_people_and_writes_graph_edges(db_session, monkeypatch):
     fake_driver = patch_pipeline_dependencies(monkeypatch)
     monkeypatch.setattr(
         entities_module,
-        "extract_people",
-        lambda text, name: [{"name": "Linus Kaikai", "role": "journalist", "affiliation": "Citizen TV"}]
-        if "Kaikai" in text
-        else [],
+        "extract_people_items",
+        lambda items, name: {
+            item_id: [{"name": "Linus Kaikai", "role": "journalist", "affiliation": "Citizen TV"}]
+            for item_id, text in items
+            if "Kaikai" in (text or "")
+        },
     )
     politician = make_politician(db_session)
     add_mention(db_session, politician, "Mbadi interviewed by Linus Kaikai on Citizen TV")

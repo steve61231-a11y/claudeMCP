@@ -108,3 +108,26 @@ def test_a_failed_call_is_never_remembered_as_an_answer(tmp_path, monkeypatch):
         llm.call_json("prompt", max_tokens=100, model="m")
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_per_mention_workers_respect_the_llm_concurrency_ceiling(monkeypatch):
+    """The ceiling exists to keep a rate-limited backend under its per-minute
+    quota. The per-mention stage — the highest-volume one in the pipeline —
+    was the one place that ignored it and span up ten threads regardless.
+    """
+    from engine.config import settings as _settings
+    from engine.pipeline import _per_mention_workers
+
+    monkeypatch.setattr(_settings, "low_memory", False, raising=False)
+
+    monkeypatch.setattr(_settings, "llm_max_concurrency", 0, raising=False)
+    unbounded = _per_mention_workers()
+    assert unbounded > 1  # the paid path is not throttled
+
+    monkeypatch.setattr(_settings, "llm_max_concurrency", 2, raising=False)
+    assert _per_mention_workers() == 2
+
+    # A ceiling above the default never *raises* the thread count — the
+    # memory limit still applies.
+    monkeypatch.setattr(_settings, "llm_max_concurrency", 99, raising=False)
+    assert _per_mention_workers() == unbounded
