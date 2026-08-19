@@ -6,6 +6,7 @@ X-API-Key header, ALLOWED_ORIGINS restricts CORS, and report submissions are
 rate-limited per client IP. All default to permissive for local dev only.
 """
 
+import json
 import threading
 import time
 import traceback
@@ -147,8 +148,22 @@ _JOB_TTL_SECONDS = 3600
 
 
 def _evict_stale_jobs() -> None:
+    """Drop finished jobs older than the TTL.
+
+    A job that is STILL RUNNING is never evicted, however old it is. Evicting
+    one deletes the only handle its client has on work that is actively
+    happening, and the poll then 404s on a run that is going perfectly well.
+    That was survivable when a run took minutes; a full-stack issue map —
+    dozens of source queries, an eighty-probe discovery sweep and four
+    analysts on a rate-limited backend — can outlive an hour, which made it
+    reachable.
+    """
     cutoff = time.time() - _JOB_TTL_SECONDS
-    for job_id in [jid for jid, job in _jobs.items() if job.get("created_at", 0) < cutoff]:
+    stale = [
+        jid for jid, job in _jobs.items()
+        if job.get("created_at", 0) < cutoff and job.get("status") != "running"
+    ]
+    for job_id in stale:
         _jobs.pop(job_id, None)
 
 
@@ -712,6 +727,11 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
 
         payload = build_issue_map(principal, issue, window_start=ws, window_end=we,
                                   desired_outcome=desired_outcome, on_section=_on_section)
+        # Store before publishing. `_jobs` lives in this process only, and a
+        # free instance restarts; without this, an hour of scraping and four
+        # analysts are simply gone when it does, and the client's poll 404s
+        # with nothing to fall back on.
+        _store_issue_map(principal, issue, payload)
         _jobs[job_id] = {"status": "done", "ok": True, "issue_map": payload, "created_at": time.time()}
     except Exception as exc:  # surface server-side; this is an API-key-gated operator tool
         traceback.print_exc()
@@ -738,6 +758,103 @@ def create_issue_map(req: IssueMapRequest, request: Request, x_api_key: str | No
     thread = threading.Thread(target=_run_issue_map_job, args=(job_id, principal, issue, req.days, (req.desired_outcome or "").strip() or None), daemon=True)
     thread.start()
     return {"ok": True, "job_id": job_id}
+
+
+def _issue_period(issue: str) -> str:
+    """How an issue map is filed in `intelligence_reports`.
+
+    Reusing that table rather than adding one keeps issue maps in the same
+    place as reports for the same subject — they are both analyses of that
+    subject — and needs no migration.
+    """
+    return f"issue:{issue.strip().lower()}"
+
+
+def _json_safe(value):
+    """Coerce a payload to something JSONB will accept.
+
+    An issue map carries real `datetime` objects — the window, the generated-at
+    stamp, every `posted_at` in the evidence sample — and psycopg2 refuses
+    them. Without this the store fails, the exception is swallowed by the
+    guard below, and recovery silently never works: exactly the kind of
+    failure that looks like a feature nobody uses.
+    """
+    return json.loads(json.dumps(value, default=str))
+
+
+def _store_issue_map(principal: str, issue: str, payload: dict) -> None:
+    """Persist a finished issue map. Never raises: a storage failure must not
+    cost the caller the map they are waiting for."""
+    from engine.db.models import IntelligenceReport
+
+    db = None
+    try:
+        db = SessionLocal()
+        subject = db.query(Politician).filter_by(name=principal.strip()).first()
+        if subject is None:
+            return
+        window = payload.get("window") or {}
+        db.add(
+            IntelligenceReport(
+                politician_id=subject.id,
+                period=_issue_period(issue),
+                window_start=window.get("start") or datetime.utcnow(),
+                window_end=window.get("end") or datetime.utcnow(),
+                payload=_json_safe(payload),
+            )
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def _lookup_issue_map(principal: str, issue: str) -> dict | None:
+    """The most recent stored map for this pair, if there is one."""
+    from engine.db.models import IntelligenceReport
+
+    db = None
+    try:
+        db = SessionLocal()
+        subject = db.query(Politician).filter_by(name=principal.strip()).first()
+        if subject is None:
+            return None
+        row = (
+            db.query(IntelligenceReport)
+            .filter_by(politician_id=subject.id, period=_issue_period(issue))
+            .order_by(IntelligenceReport.generated_at.desc())
+            .first()
+        )
+        return row.payload if row else None
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        return None
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+@app.get("/api/issue-map/latest")
+def latest_issue_map(principal: str, issue: str, x_api_key: str | None = Header(default=None)):
+    """Recover a stored map for principal x issue.
+
+    A job id only means something to the process that created it, so when that
+    process restarts mid-run the client is left holding an id that 404s. This
+    is how it gets its answer back instead of an hour of work disappearing.
+    """
+    _require_api_key(x_api_key)
+    payload = _lookup_issue_map(principal, issue)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="no stored issue map for that pair")
+    return {"ok": True, "issue_map": payload, "recovered": True}
 
 
 def _latest_report_core(db, name: str) -> dict | None:

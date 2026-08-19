@@ -206,7 +206,15 @@
     // call than Claude, and the run is serialised to respect their rate limits. Re-running is fast — the pipeline resumes from stored
     // progress — so a timeout is safe to retry.
     for(let i=0;i<600;i++){
-      const j = await api('/api/report/'+job_id);
+      let j;
+      try{ j = await api('/api/report/'+job_id); }
+      catch(err){
+        // A 404 here means the engine no longer knows this job — it restarted
+        // mid-run. That is a different situation from a failed request, and
+        // the caller may be able to recover the result another way.
+        if(err.httpStatus===404){ const e=new Error('job_lost'); e.jobLost=true; throw e; }
+        throw err;
+      }
       if(j.status==='done') return j;
       // The job carries a `stage` string and, once the base statistics land, a
       // `partial` report that grows section by section. Both used to be
@@ -1202,6 +1210,10 @@
         else out.appendChild(errCard(done.error||'Report generation failed.'));
       }catch(e){
         msg.textContent='';
+        if(LIVE && e.jobLost){
+          out.appendChild(errCard('The engine restarted during this run, so the job was lost. Everything it had already collected is stored — run the same name again and it resumes from there rather than starting over.'));
+          return;
+        }
         if(!LIVE){ out.appendChild(noteCard('Demo preview','Showing a sample report. Host this file (or open Settings and point it at your API) to run this live for real.')); renderReport(out,DEMO.report,{live:false}); }
         else out.appendChild(el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>Report call failed: ${esc(e.message||e)}</span></div>
           <div class="muted" style="font-size:13px;margin-top:10px">API base is <b>${esc(CFG.base)}</b>. If that's not your Zenith engine (e.g. it's a static host with no backend), open <b>Settings</b> and set it to your engine URL, then Save. A 404 usually means the request hit something that isn't the engine.</div>`));
@@ -1753,6 +1765,18 @@
         else out.appendChild(errCard(done.error||'Issue map failed.'));
       }catch(e){msg.textContent='';
         if(!LIVE){out.appendChild(noteCard('Demo preview','Sample intersection. Host this / connect your API to run live.'));renderIssue(out,DEMO.issue);}
+        else if(e.jobLost){
+          // The engine restarted mid-run. The map is stored as soon as it
+          // finishes, so ask for it by subject rather than by a job id that
+          // no longer exists anywhere.
+          try{
+            const rec=await api('/api/issue-map/latest?principal='+encodeURIComponent(principal)+'&issue='+encodeURIComponent(issue));
+            out.appendChild(noteCard('Recovered','The engine restarted during the run. This is the most recent stored map for this pair — re-run to refresh it.'));
+            renderIssue(out,rec.issue_map);
+          }catch(_){
+            out.appendChild(errCard('The engine restarted during this run and the map was lost before it finished. Nothing was stored yet — run it again. The corpus it had already scraped is kept, so the next run starts further ahead.'));
+          }
+        }
         else out.appendChild(errCard('Engine error: '+e.message));}
       finally{btn.disabled=false;}
     };
