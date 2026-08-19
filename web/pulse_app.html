@@ -94,6 +94,14 @@
   #zenith .stance{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));margin-top:12px}
   #zenith .stance-col{background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:14px}
   #zenith .stance-col h4{margin:0 0 2px;font-size:13px;text-transform:uppercase;letter-spacing:.1em}
+  /* Claim + its evidence. The chip is the affordance: click it to see the
+     passages the verdict actually rests on. */
+  #zenith details.ev{margin-top:8px}
+  #zenith details.ev>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;padding:4px 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut)}
+  #zenith details.ev>summary::-webkit-details-marker{display:none}
+  #zenith details.ev>summary:hover{color:var(--txt);border-color:var(--sky2)}
+  #zenith details.ev[open]>summary{color:var(--sky2);border-color:var(--sky2)}
   #zenith table{width:100%;border-collapse:collapse;font-size:14px}
   #zenith th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--mut);padding:9px 10px;border-bottom:1px solid var(--line2)}
   #zenith td{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
@@ -1417,6 +1425,84 @@
     return c;
   }
 
+  /** Every factual claim in the prose, with the sources behind it.
+
+      The verification agent has written these on every run since it shipped —
+      status, confidence, independent source count, and the exact passage each
+      citation turns on — and nothing has ever displayed them. A claim the
+      evidence can't support is labelled, not deleted: a thin spot in the file
+      is itself a finding, and the point of the product is that a reader can
+      check the work rather than take the model's word for it. */
+  const CLAIM_TONE={verified:'pos',contradicted:'neg',unverified:'amber'};
+
+  function renderClaims(claims,ver){
+    const rows=(claims||[]).filter(c=>c&&c.text);
+    if(!rows.length)return null;
+    const order={contradicted:0,unverified:1,verified:2};
+    rows.sort((a,b)=>(order[a.status]??3)-(order[b.status]??3));
+    const v=ver||{};
+    const sub=v.checked?`${fmt(v.checked)} claims checked · ${fmt(v.verified)} verified · ${fmt(v.unverified)} unverified · ${fmt(v.contradicted)} contradicted`
+                       :`${rows.length} claims checked against the stored corpus`;
+    const c=deepCard('Check the work',sub);
+    rows.forEach(cl=>{
+      const cites=(cl.citations||[]).filter(x=>x&&(x.quote||x.url));
+      const tone=CLAIM_TONE[cl.status]||'';
+      const row=el('div','mentr');
+      row.innerHTML=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:12px">
+          <div style="font-size:14px;max-width:78%">${esc(cl.text)}</div>
+          <div class="row" style="gap:6px"><span class="pill ${tone}">${esc(cl.status||'—')}</span>
+            ${cl.confidence!=null?`<span class="chip">${Math.round((cl.confidence>1?cl.confidence:cl.confidence*100))}% conf.</span>`:''}</div></div>
+        ${cl.note?`<div class="muted" style="font-size:12.5px;margin-top:6px">${esc(cl.note)}</div>`:''}`;
+      if(cites.length){
+        const d=el('details','ev');
+        d.innerHTML=`<summary>${cites.length} supporting source${cites.length===1?'':'s'}`
+          +`${cl.independent_sources?` · ${cl.independent_sources} independent`:''} ▾</summary>`;
+        cites.forEach(x=>d.appendChild(el('div','',
+          `<div class="qt">“${esc((x.quote||'').trim())}”<span class="qt-ref">${esc(x.source||'source')}${x.url?' · '+esc(x.url):''}</span></div>`)));
+        row.appendChild(d);
+      } else {
+        row.appendChild(el('div','muted','<div style="font-size:12.5px;margin-top:8px">No supporting passage found in the stored corpus.</div>'));
+      }
+      c.appendChild(row);
+    });
+    return c;
+  }
+
+  /** What the disambiguation gate filtered out. Filtering nobody can see is
+      indistinguishable from data loss. */
+  function renderEvidenceGate(gate){
+    if(!gate||gate.examined==null)return null;
+    const c=deepCard('What was read, and what was set aside',gate.error||null);
+    const g=el('div','grid');g.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';g.style.marginTop='12px';
+    g.appendChild(kpiCard('Examined',fmt(gate.examined),''));
+    if(gate.on_topic!=null)g.appendChild(kpiCard('On topic',fmt(gate.on_topic),''));
+    if(gate.off_topic!=null)g.appendChild(kpiCard('Set aside',fmt(gate.off_topic),'different subject, same name'));
+    c.appendChild(g);
+    return c;
+  }
+
+  /** What the file still cannot answer, and what the next run will ask. */
+  function renderOpenQuestions(items,leads){
+    const qs=(items||[]).filter(Boolean);
+    const ls=(leads||[]).filter(Boolean);
+    if(!qs.length&&!ls.length)return null;
+    const c=deepCard('Still open','What this file cannot answer yet');
+    qs.forEach(q=>{
+      const text=typeof q==='string'?q:(q.question||'');
+      if(!text)return;
+      const pr=String((q&&q.priority)||'').toLowerCase();
+      c.appendChild(el('div','mentr',
+        `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+           <b style="font-size:14.5px;max-width:82%">${esc(text)}</b>
+           ${pr?`<span class="pill ${pr==='high'?'neg':pr==='low'?'':'amber'}">${esc(pr)}</span>`:''}</div>
+         ${q&&q.why?`<div class="muted" style="font-size:13px;margin-top:5px">${esc(q.why)}</div>`:''}`));
+    });
+    if(ls.length)c.appendChild(el('div','',
+      `<div class="lbl" style="margin-top:14px">Queries queued for the next run</div>
+       <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${ls.slice(0,20).map(l=>`<span class="chip">${esc(l)}</span>`).join('')}</div>`));
+    return c;
+  }
+
   /** Appends every deep analyst section that carries content. A section with
       nothing in it is skipped rather than rendered blank — but nothing the
       pipeline generated is dropped. */
@@ -1427,10 +1513,13 @@
      renderInfluencerStances(r.influencerStances)]
       .filter(Boolean).forEach(c=>host.appendChild(c));
     renderNarrativeDeepDives(r.narrativeDeepDives).forEach(c=>host.appendChild(c));
-    [renderJudgementLists(r),
+    [renderOpenQuestions(r.open_questions,r.investigation_leads),
+     renderJudgementLists(r),
      renderSinceLastReport(r.sinceLastReport),
      renderSentimentHistory(r.sentimentHistory),
      renderRecency(r.recency,r.volume),
+     renderClaims(r.claims,r.verification),
+     renderEvidenceGate(r.evidence_gate),
      renderDataCoverage(r.dataCoverage)]
       .filter(Boolean).forEach(c=>host.appendChild(c));
   }
@@ -1967,6 +2056,24 @@
       influencerStances:[
         {handle:'nation.africa',account_type:'National newspaper',stance:'neutral',influence_score:88.4,what_they_say:'Reports both the official commitment and the facility complaints, generally sourcing the government first and patients second.',quotes:[{ref:'b1c2d3e4',text:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'}]},
         {handle:'r/Kenya',account_type:'Community forum',stance:'critical',influence_score:71.2,what_they_say:'Aggregates first-person failure accounts; the single richest source of specific, checkable claims in this corpus.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'}]}],
+      verification:{checked:24,verified:18,unverified:5,contradicted:1},
+      evidence_gate:{examined:512,on_topic:431,off_topic:81,ambiguous:0},
+      open_questions:[
+        {question:'Which facilities are still charging registered members, and under what instruction?',why:'Every critical account describes it and no source names the circular or directive behind it.',priority:'high'},
+        {question:'What share of registered members have actually used their cover?',why:'Registration numbers are reported; utilisation is not, which is the number that would settle the argument.',priority:'medium'}],
+      investigation_leads:['"SHA" facility circular','"SHA" utilisation rate county','"SHA" chronic illness cover'],
+      claims:[
+        {section:'executive_brief',status:'contradicted',confidence:0.72,independent_sources:2,
+         text:'Facilities stopped charging cash after the 90-day commitment.',
+         note:'Two independent sources report the opposite after that date.',
+         citations:[{source:'nation.africa',url:'https://nation.africa/sha-complaints',quote:'Patients were still asked for cash three weeks after the deadline.'},
+                    {source:'r/Kenya',url:'https://reddit.com/r/Kenya/sha',quote:'Went in last Tuesday. Cash or go home.'}]},
+        {section:'risks',status:'unverified',confidence:0.35,independent_sources:0,
+         text:'SHA registration reached sixty percent of households.',
+         note:'No source in the collected corpus states this figure.',citations:[]},
+        {section:'executive_brief',status:'verified',confidence:0.91,independent_sources:1,
+         text:'The President committed to fixes within 90 days.',
+         citations:[{source:'nation.africa',url:'https://nation.africa/sha-90-days',quote:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'}]}],
       narrativeDeepDives:[
         {label:'SHA rollout pain',mention_count:214,
           how_it_unfolded:'The storyline begins as scattered individual complaints about registration, then consolidates around a single reproducible claim \u2014 that registered members are still being asked for cash at the point of care. Once advocacy groups began collecting cases, the framing shifted from administrative teething to systemic failure, and mainstream outlets picked it up.',

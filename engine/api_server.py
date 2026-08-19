@@ -452,6 +452,23 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "dataCoverage": payload.get("data_coverage", {}),
         "sinceLastReport": payload.get("since_last_report"),
         "sentimentHistory": payload.get("sentiment_history", []),
+        # The audit trail and the client deliverable. The frontend has read
+        # these since the weekly dashboard was built — the API just never sent
+        # them, so on a live report the Sentiment Framework tab never appeared
+        # and the Status section was permanently blank. snake_case here because
+        # that is the name the renderers already use.
+        "sentiment_framework": payload.get("sentiment_framework"),
+        "verification": payload.get("verification", {}),
+        "evidence_gate": payload.get("evidence_gate", {}),
+        # Every factual claim in the prose, with the sources that back it and
+        # the passage each one turns on. Written on every run since the
+        # verification agent shipped, and never shown to anyone.
+        "claims": payload.get("claims", []),
+        # The investigator's agenda: what the file still can't answer, and the
+        # queries the next run should ask. Each item carries `question`, which
+        # is the shape the dashboard's Key Questions renderer already expects.
+        "open_questions": (payload.get("investigation") or {}).get("agenda", []),
+        "investigation_leads": (payload.get("investigation") or {}).get("follow_up_queries", []),
     }
 
 

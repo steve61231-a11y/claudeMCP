@@ -157,7 +157,7 @@ def _emitted_report_keys() -> set[str]:
     block = block[: block.index('\n    }\n')]
     return {
         m.group(1)
-        for m in re.finditer(r'^        "([A-Za-z]+)":', block, re.M)
+        for m in re.finditer(r'^        "([A-Za-z_]+)":', block, re.M)
     }
 
 
@@ -170,6 +170,26 @@ def test_every_emitted_section_has_a_renderer():
     assert "publicVoice" in emitted, "payload shape changed — update this test"
     unread = sorted(k for k in emitted if f"r.{k}" not in html and f".{k}" not in html)
     assert not unread, f"API emits sections nothing renders: {unread}"
+
+
+def test_every_section_the_ui_renders_is_actually_sent():
+    """The mirror of the test above, and a live bug rather than a hypothetical:
+    the weekly dashboard has read `sentiment_framework`, `verification`,
+    `evidence_gate` and the investigator's questions since it was built, and
+    the API sent none of them. On a live report the Sentiment Framework tab —
+    the client deliverable — simply never appeared."""
+    emitted = _emitted_report_keys()
+    for key in ("sentiment_framework", "verification", "evidence_gate",
+                "claims", "open_questions", "investigation_leads"):
+        assert key in emitted, f"the UI renders `{key}` and the API never sends it"
+
+
+def test_claims_are_shown_with_the_evidence_behind_them():
+    """A verdict a reader cannot check is just another assertion."""
+    html = APP_HTML.read_text(encoding="utf-8")
+    assert "function renderClaims(" in html
+    assert "supporting source" in html
+    assert "cl.citations" in html
 
 
 def test_issue_map_intersection_reaches_the_screen():
