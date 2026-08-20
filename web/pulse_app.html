@@ -223,12 +223,30 @@
       if(onTick) onTick(i,j);
       await new Promise(r=>setTimeout(r,2000));
     }
-    // Deliberately does NOT tell the user to click Generate again. The run is
-    // still going server-side; a second click re-attaches to it rather than
-    // starting a competing one, but the honest advice is to wait or reload.
-    throw new Error('still working after ~20 min — the run is still going on the server. '
-      + 'Reload the page in a few minutes and search the same name; a finished report is stored. '
-      + 'On a free model, turn off the optional deep stages to make runs finish faster.');
+    // Running out of poll iterations is not a failure — the run is still going
+    // server-side, and every section it has finished is stored against the
+    // subject. The caller shows what exists rather than throwing it away.
+    const e=new Error('poll_window_elapsed'); e.stillRunning=true; throw e;
+  }
+
+  /** Whatever the engine has stored for this subject, by name rather than by a
+      job id that only means something to the process that minted it.
+
+      This is what makes a run survive the page that started it: a reload, a
+      closed tab, a poll window running out, or the instance restarting no
+      longer costs the sections already produced. */
+  async function fetchProgress(name, kind, issue){
+    const q='/api/progress?name='+encodeURIComponent(name)+'&kind='+encodeURIComponent(kind||'report')
+      +(issue?'&issue='+encodeURIComponent(issue):'');
+    try{ return await api(q); }catch(_){ return null; }
+  }
+
+  function stillRunningNote(prog){
+    const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
+    return noteCard('Still running',
+      'Everything below is finished and stored. The rest is still being written on the server — '
+      + 'you can close this page and come back; searching the same subject picks it up where it is.'
+      + (when?' Last section arrived '+when+' UTC.':''));
   }
 
   const TABS=[['search','Search'],['issue','Issue Map'],['network','Network'],['mission','Mission Control'],['settings','Settings']];
@@ -1183,6 +1201,16 @@
       const name=$('#q',form).value.trim(); if(!name)return;
       const type=$('#qt',form).value; const btn=$('#grun',form); const msg=$('#gmsg',form);
       btn.disabled=true; out.innerHTML='';
+      // Show what the engine already has for this subject before asking for
+      // anything new, so a returning reader starts reading immediately.
+      if(LIVE){
+        const prior=await fetchProgress(name,'report');
+        if(prior&&prior.payload&&Object.keys(prior.payload).length){
+          if(prior.status==='running')out.appendChild(stillRunningNote(prior));
+          renderReport(out,prior.payload,{live:true,partial:prior.status==='running',
+            sections_ready:prior.sections_ready,stage:prior.stage});
+        }
+      }
       const tick=(m)=>{msg.innerHTML='<span class="spinner"></span> '+m;};
       try{
         if(!LIVE) throw new Error('demo');
@@ -1210,8 +1238,22 @@
         else out.appendChild(errCard(done.error||'Report generation failed.'));
       }catch(e){
         msg.textContent='';
-        if(LIVE && e.jobLost){
-          out.appendChild(errCard('The engine restarted during this run, so the job was lost. Everything it had already collected is stored — run the same name again and it resumes from there rather than starting over.'));
+        if(LIVE && (e.jobLost || e.stillRunning)){
+          // Neither of these is a failed report. Show every section the engine
+          // has stored and say plainly what is still happening.
+          const prog=await fetchProgress(name,'report');
+          if(prog&&prog.payload&&Object.keys(prog.payload).length){
+            out.innerHTML='';
+            out.appendChild(stillRunningNote(prog));
+            renderReport(out,prog.payload,{live:true,partial:prog.status!=='done',
+              sections_ready:prog.sections_ready,stage:prog.stage});
+          } else if(prog&&prog.error){
+            out.appendChild(errCard(prog.error));
+          } else {
+            out.appendChild(noteCard('Still working',
+              'The run is going on the server and has not finished its first section yet. '
+              + 'You can close this page — search the same name later and it picks up where it is.'));
+          }
           return;
         }
         if(!LIVE){ out.appendChild(noteCard('Demo preview','Showing a sample report. Host this file (or open Settings and point it at your API) to run this live for real.')); renderReport(out,DEMO.report,{live:false}); }
@@ -1736,6 +1778,13 @@
       const principal=$('#pr',form).value.trim(),issue=$('#is',form).value.trim();
       if(!principal||!issue)return;const days=parseInt($('#dy',form).value)||365;
       const btn=$('#mrun',form),msg=$('#mmsg',form);btn.disabled=true;out.innerHTML='';
+      if(LIVE){
+        const prior=await fetchProgress(principal,'issue_map',issue);
+        if(prior&&prior.payload&&prior.payload.intersection){
+          if(prior.status==='running')out.appendChild(stillRunningNote(prior));
+          renderIssue(out,prior.payload);
+        }
+      }
       const tick=m=>msg.innerHTML='<span class="spinner"></span> '+m;
       try{
         if(!LIVE)throw new Error('demo');
@@ -1765,16 +1814,27 @@
         else out.appendChild(errCard(done.error||'Issue map failed.'));
       }catch(e){msg.textContent='';
         if(!LIVE){out.appendChild(noteCard('Demo preview','Sample intersection. Host this / connect your API to run live.'));renderIssue(out,DEMO.issue);}
-        else if(e.jobLost){
+        else if(e.jobLost || e.stillRunning){
           // The engine restarted mid-run. The map is stored as soon as it
           // finishes, so ask for it by subject rather than by a job id that
           // no longer exists anywhere.
-          try{
-            const rec=await api('/api/issue-map/latest?principal='+encodeURIComponent(principal)+'&issue='+encodeURIComponent(issue));
-            out.appendChild(noteCard('Recovered','The engine restarted during the run. This is the most recent stored map for this pair — re-run to refresh it.'));
-            renderIssue(out,rec.issue_map);
-          }catch(_){
-            out.appendChild(errCard('The engine restarted during this run and the map was lost before it finished. Nothing was stored yet — run it again. The corpus it had already scraped is kept, so the next run starts further ahead.'));
+          const prog=await fetchProgress(principal,'issue_map',issue);
+          if(prog&&prog.payload&&prog.payload.intersection){
+            out.innerHTML='';
+            if(prog.status!=='done')out.appendChild(stillRunningNote(prog));
+            renderIssue(out,prog.payload);
+          } else if(prog&&prog.error){
+            out.appendChild(errCard(prog.error));
+          } else {
+            try{
+              const rec=await api('/api/issue-map/latest?principal='+encodeURIComponent(principal)+'&issue='+encodeURIComponent(issue));
+              out.appendChild(noteCard('Recovered','This is the most recent stored map for this pair — re-run to refresh it.'));
+              renderIssue(out,rec.issue_map);
+            }catch(_){
+              out.appendChild(noteCard('Still working',
+                'The run is going on the server and has not finished its first section yet. '
+                + 'The corpus it scrapes is stored as it goes, so nothing is wasted — come back and search the same pair.'));
+            }
           }
         }
         else out.appendChild(errCard('Engine error: '+e.message));}

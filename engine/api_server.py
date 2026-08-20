@@ -515,6 +515,110 @@ def _lookup_precache(name: str):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Durable run progress
+#
+# Streaming sections into `_jobs` alone still tied the result to one browser
+# sitting on one page: a run that outlived the poll window, a reload, a closed
+# tab or a restarted instance threw away everything already produced. The work
+# had happened — there was nowhere to look for it.
+#
+# Every section is therefore also written to `run_progress`, keyed by subject
+# rather than by a job id that only means something to the process that minted
+# it. A reader can then pick the run up from anywhere, at any time, including
+# after the process that started it is gone.
+# ---------------------------------------------------------------------------
+
+def _subject_key(name: str, issue: str | None = None) -> str:
+    base = (name or "").strip().lower()
+    return f"{base}|{issue.strip().lower()}" if issue else base
+
+
+def _save_progress(subject_key: str, kind: str, *, job_id: str | None = None,
+                   status: str | None = None, stage: str | None = None,
+                   sections_ready: list | None = None, payload: dict | None = None,
+                   error: str | None = None) -> None:
+    """Upsert one run's progress. Never raises — progress is a convenience and
+    must not be able to cost the run it is describing."""
+    from engine.db.models import RunProgress
+
+    db = None
+    try:
+        db = SessionLocal()
+        row = db.query(RunProgress).filter_by(subject_key=subject_key, kind=kind).first()
+        if row is None:
+            row = RunProgress(subject_key=subject_key, kind=kind, started_at=datetime.utcnow())
+            db.add(row)
+        if job_id is not None:
+            row.job_id = job_id
+        if status is not None:
+            row.status = status
+        if stage is not None:
+            row.stage = stage
+        if sections_ready is not None:
+            row.sections_ready = list(sections_ready)
+        if payload is not None:
+            row.payload = _json_safe(payload)
+        # An error is recorded, but a later successful run clears it rather
+        # than leaving a stale failure attached to a good result.
+        row.error = error
+        row.updated_at = datetime.utcnow()
+        db.commit()
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+def _read_progress(subject_key: str, kind: str) -> dict | None:
+    from engine.db.models import RunProgress
+
+    db = None
+    try:
+        db = SessionLocal()
+        row = db.query(RunProgress).filter_by(subject_key=subject_key, kind=kind).first()
+        if row is None:
+            return None
+        return {
+            "status": row.status,
+            "stage": row.stage,
+            "sections_ready": row.sections_ready or [],
+            "payload": row.payload or {},
+            "error": row.error,
+            "started_at": str(row.started_at) if row.started_at else None,
+            "updated_at": str(row.updated_at) if row.updated_at else None,
+        }
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        return None
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+@app.get("/api/progress")
+def get_progress(name: str, kind: str = "report", issue: str | None = None,
+                 x_api_key: str | None = Header(default=None)):
+    """A run's state by SUBJECT, not by job id.
+
+    This is what makes a run survive the page that started it. A job id only
+    means something to the process that minted it; a subject is something the
+    client always knows and can ask about again tomorrow.
+    """
+    _require_api_key(x_api_key)
+    progress = _read_progress(_subject_key(name, issue), kind)
+    if progress is None:
+        raise HTTPException(status_code=404, detail="no run recorded for that subject")
+    return {"ok": True, **progress}
+
+
 class _PartialReport:
     """Enough of an IntelligenceReport for `_build_frontend_payload` to shape a
     run that is still in progress. The real row does not exist until the
@@ -559,8 +663,14 @@ def _publish_partial(job_id: str, politician, payload: dict,
         )
     except Exception:  # noqa: BLE001 — a half-built payload is expected to fail sometimes
         return
+    ready = sorted(k for k, v in payload.items() if v not in (None, [], {}, ""))
     job["partial"] = shaped
-    job["sections_ready"] = sorted(k for k, v in payload.items() if v not in (None, [], {}, ""))
+    job["sections_ready"] = ready
+    # And durably, keyed by subject, so the run outlives this process and this
+    # browser tab.
+    _save_progress(_subject_key(politician.name), "report", job_id=job_id,
+                   status="running", stage=job.get("stage"),
+                   sections_ready=ready, payload=shaped)
 
 
 def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
@@ -592,6 +702,8 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
                              "created_at": time.time(), "live": False,
                              "stale_fallback": True, "error_detail": diag}
         else:
+            _save_progress(_subject_key(name), "report", job_id=job_id,
+                           status="failed", error=f"report generation failed: {diag}")
             _jobs[job_id] = {"status": "done", "ok": False,
                              "error": f"report generation failed: {diag}",
                              "created_at": time.time()}
@@ -625,9 +737,13 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             )
             report = run_analysis(db, politician, "live-demo", window_start, window_end,
                                   ingestion_run=ingestion_run, on_section=_on_section)
+            finished = _build_frontend_payload(politician, report)
+            _save_progress(_subject_key(politician.name), "report", job_id=job_id,
+                           status="done", stage="Complete.",
+                           sections_ready=sorted(report.payload or {}), payload=finished)
             _jobs[job_id] = {
                 "status": "done", "ok": True,
-                "report": _build_frontend_payload(politician, report),
+                "report": finished,
                 "created_at": time.time(), "live": True,
             }
             return
@@ -719,11 +835,17 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
                 return
             if key == "stage":
                 job["stage"] = value
+                _save_progress(_subject_key(principal, issue), "issue_map",
+                               job_id=job_id, status="running", stage=value)
                 return
-            job.setdefault("partial_issue_map", {
+            partial = job.setdefault("partial_issue_map", {
                 "principal": principal, "issue": issue,
                 "window": {"start": ws, "end": we},
-            })[key] = value
+            })
+            partial[key] = value
+            _save_progress(_subject_key(principal, issue), "issue_map", job_id=job_id,
+                           status="running", stage=job.get("stage"),
+                           sections_ready=sorted(partial), payload=partial)
 
         payload = build_issue_map(principal, issue, window_start=ws, window_end=we,
                                   desired_outcome=desired_outcome, on_section=_on_section)
@@ -732,10 +854,17 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
         # analysts are simply gone when it does, and the client's poll 404s
         # with nothing to fall back on.
         _store_issue_map(principal, issue, payload)
+        _save_progress(_subject_key(principal, issue), "issue_map", job_id=job_id,
+                       status="done", stage="Complete.",
+                       sections_ready=sorted(payload), payload=payload)
         _jobs[job_id] = {"status": "done", "ok": True, "issue_map": payload, "created_at": time.time()}
     except Exception as exc:  # surface server-side; this is an API-key-gated operator tool
         traceback.print_exc()
         diag = f"{type(exc).__name__}: {exc}".strip()[:400]
+        # Record the failure against the subject too — a reader who comes back
+        # later deserves the reason, not an empty screen.
+        _save_progress(_subject_key(principal, issue), "issue_map", job_id=job_id,
+                       status="failed", error=f"issue map failed: {diag}")
         _jobs[job_id] = {"status": "done", "ok": False, "error": f"issue map failed: {diag}",
                          "created_at": time.time()}
 

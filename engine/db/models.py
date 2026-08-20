@@ -465,3 +465,35 @@ class Snapshot(Base):
     narrative_state = Column(JSONB, default=dict)
     # Computed diff vs the previous snapshot.
     delta = Column(JSONB, default=dict)
+
+
+class RunProgress(Base):
+    """A run's sections as they are produced, durable and independent of any
+    browser session.
+
+    Sections were streamed into process memory only, so a report that took
+    longer than the poll window — or a reload, a closed tab, or a restarted
+    free instance — threw away everything the run had already produced. The
+    work had happened; there was just nowhere to look for it.
+
+    One row per (subject, kind), upserted in place as each section lands.
+    Deliberately NOT `intelligence_reports`: a half-built payload filed there
+    would be picked up by `compute_deltas` as "the previous report" and corrupt
+    every subsequent report-over-report comparison.
+    """
+
+    __tablename__ = "run_progress"
+    __table_args__ = (UniqueConstraint("subject_key", "kind", name="uq_run_progress_subject_kind"),)
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    # Lowercased subject name for a report; "principal|issue" for an issue map.
+    subject_key = Column(String, nullable=False)
+    kind = Column(String, nullable=False)  # report|issue_map
+    job_id = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="running")  # running|done|failed
+    stage = Column(Text, nullable=True)
+    sections_ready = Column(JSONB, default=list)
+    payload = Column(JSONB, default=dict)
+    error = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, index=True)
