@@ -700,3 +700,87 @@ def test_json_mode_is_still_dropped_and_retried_on_a_400(monkeypatch):
     assert llm.call_json("respond with json", max_tokens=100) == {"ok": True}
     assert "response_format" in seen[0]
     assert "response_format" not in seen[-1]
+
+
+def _adaptive_post(monkeypatch, reject_when, model="stealth/ox-alpha"):
+    """A provider that 400s while `reject_when(body)` holds, then succeeds."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_api_key", "sk-test")
+    monkeypatch.setattr(llm.settings, "llm_model", model)
+    seen: list[dict] = []
+
+    class _Resp:
+        def __init__(self, status, text=""):
+            self.status_code = status
+            self.text = text
+            self.headers = {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"ok": true}'},
+                                 "finish_reason": "stop"}]}
+
+    def post(url, headers=None, json=None, timeout=None):
+        seen.append(dict(json))
+        rejection = reject_when(json)
+        if rejection:
+            return _Resp(400, rejection)
+        return _Resp(200)
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+    return seen
+
+
+def test_a_model_that_mandates_reasoning_is_accommodated(monkeypatch):
+    """We disable reasoning by default so hybrid models don't spend the whole
+    budget thinking and return an empty answer. Some models refuse to have it
+    switched off, and a blanket rule keyed off the endpoint cannot know which."""
+    seen = _adaptive_post(
+        monkeypatch,
+        lambda body: ('{"error":{"message":"Reasoning is mandatory for this '
+                      'endpoint and cannot be disabled.","code":400}}'
+                      if "reasoning" in body else None),
+    )
+    assert llm.call_json("respond with json", max_tokens=100) == {"ok": True}
+    assert "reasoning" in seen[0], "the first attempt should still try to disable it"
+    assert "reasoning" not in seen[-1], "the retry must drop it"
+
+
+def test_the_field_named_in_the_error_is_the_one_dropped(monkeypatch):
+    """Dropping JSON mode when the provider complained about reasoning would
+    degrade parsing for no reason."""
+    seen = _adaptive_post(
+        monkeypatch,
+        lambda body: ('{"error":{"message":"Reasoning cannot be disabled"}}'
+                      if "reasoning" in body else None),
+    )
+    llm.call_json("respond with json", max_tokens=100)
+    assert "response_format" in seen[-1], "JSON mode was dropped needlessly"
+
+
+def test_adapting_does_not_spend_the_retry_budget(monkeypatch):
+    """Each drop removes that field for good, so adapting is bounded — it must
+    not eat the attempts reserved for genuinely transient failures."""
+    monkeypatch.setattr(llm, "OPENAI_COMPATIBLE_RETRIES", 1)
+    seen = _adaptive_post(
+        monkeypatch,
+        lambda body: ('{"error":{"message":"Reasoning is mandatory"}}'
+                      if "reasoning" in body else None),
+    )
+    assert llm.call_json("respond with json", max_tokens=100) == {"ok": True}
+    assert len(seen) == 2
+
+
+def test_a_400_naming_nothing_we_sent_still_fails_loudly(monkeypatch):
+    """Once our own fields are gone, a 400 is about the request itself and must
+    reach the operator rather than looping."""
+    seen = _adaptive_post(monkeypatch, lambda body: '{"error":{"message":"context too long"}}')
+    with pytest.raises(llm.ProviderRejectedRequest) as excinfo:
+        llm.call_json("respond with json", max_tokens=100)
+    assert "context too long" in str(excinfo.value)

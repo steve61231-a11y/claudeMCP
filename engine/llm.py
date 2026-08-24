@@ -272,6 +272,41 @@ def _reasoning_off(base_url: str, model: str) -> dict:
     return {}
 
 
+# Fields this module adds for its OWN reasons — the caller never asks for them.
+# JSON mode keeps replies parseable; the reasoning switch stops hybrid models
+# spending the whole token budget on thinking and returning an empty answer.
+#
+# Providers disagree about all of them, and not in a way that can be hard-coded:
+# some reject JSON mode, and some MANDATE reasoning and refuse to let it be
+# turned off. Keying off the endpoint was already a guess, and it cannot keep up
+# with models that appear and vanish weekly. So when a 400 arrives, drop the
+# field the provider is objecting to and ask again — let it state its own
+# constraints instead of maintaining a table of them here.
+#
+# Each entry is (field, words that suggest this field is the problem).
+_ADAPTIVE_FIELDS = (
+    ("reasoning", ("reasoning",)),
+    ("thinking", ("thinking", "reasoning")),
+    ("response_format", ("response_format", "json_object", "json mode")),
+)
+
+
+def _drop_rejected_field(body: dict, error_text: str) -> str | None:
+    """Remove the one field a 400 is complaining about. Returns its name."""
+    lowered = (error_text or "").lower()
+    for field, hints in _ADAPTIVE_FIELDS:
+        if field in body and any(hint in lowered for hint in hints):
+            body.pop(field)
+            return field
+    # Nothing named in the message: drop whichever of ours is still present, so
+    # a terse provider still gets a second chance rather than failing the run.
+    for field, _ in _ADAPTIVE_FIELDS:
+        if field in body:
+            body.pop(field)
+            return field
+    return None
+
+
 def _reply_text(payload: dict) -> str:
     """The assistant's text, wherever this provider put it.
 
@@ -383,14 +418,19 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 continue
             if response.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {response.status_code}: {response.text[:200]}")
-            # Not every free model implements JSON mode; those that don't reject
-            # the whole request. Drop it and retry rather than failing the run —
-            # _extract_json already copes with the fenced, chatty replies that
-            # come back without it.
-            if response.status_code == 400 and "response_format" in body:
-                body.pop("response_format")
-                raise requests.HTTPError("retrying without JSON mode: "
-                                         f"{response.text[:200]}")
+            # A 400 is often about a field WE added, not about the caller's
+            # prompt: a model that doesn't implement JSON mode, or one that
+            # mandates reasoning and refuses to have it switched off. Drop the
+            # field the provider objects to and try again rather than failing a
+            # run over our own defaults.
+            if response.status_code == 400:
+                dropped = _drop_rejected_field(body, response.text)
+                if dropped:
+                    # Not an attempt: the request was rejected over our own
+                    # default, not over anything about the prompt, and each
+                    # drop removes that field for good — so this can happen at
+                    # most once per adaptive field.
+                    continue
             if 400 <= response.status_code < 500:
                 raise ProviderRejectedRequest(
                     f"{settings.llm_provider} rejected the request: "
