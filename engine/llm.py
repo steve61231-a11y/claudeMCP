@@ -299,6 +299,18 @@ def _reply_text(payload: dict) -> str:
     )
 
 
+class ProviderRejectedRequest(RuntimeError):
+    """A 4xx the provider will never accept, however many times it is sent.
+
+    A bad model id, a revoked key, an unsupported parameter. These are not
+    blips: retrying spends four timeouts to arrive at the same answer, and the
+    generic "400 Client Error" that `raise_for_status()` produces discards the
+    response body — which is the one place the provider says what is actually
+    wrong. Carrying the body out is the difference between a debuggable error
+    and a guessing game.
+    """
+
+
 def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     """Call any provider speaking OpenAI's /chat/completions.
 
@@ -379,6 +391,12 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 body.pop("response_format")
                 raise requests.HTTPError("retrying without JSON mode: "
                                          f"{response.text[:200]}")
+            if 400 <= response.status_code < 500:
+                raise ProviderRejectedRequest(
+                    f"{settings.llm_provider} rejected the request: "
+                    f"HTTP {response.status_code} from {base}/chat/completions "
+                    f"(model={model!r}) — {response.text[:400] or '<empty body>'}"
+                )
             response.raise_for_status()
             return _extract_json(_reply_text(response.json()))
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:

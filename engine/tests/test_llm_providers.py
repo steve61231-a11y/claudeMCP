@@ -597,3 +597,106 @@ def test_spacing_is_off_by_default(monkeypatch):
     llm._throttle()
 
     assert slept == []
+
+
+# --- a rejected request must say WHY ----------------------------------------
+
+def _rejecting_post(monkeypatch, status, body, count=None):
+    """A provider that rejects every request with `status` and `body`."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_api_key", "sk-test")
+    monkeypatch.setattr(llm.settings, "llm_model", "stealth/ox-alpha")
+
+    class _Resp:
+        status_code = status
+        text = body
+        headers: dict = {}
+
+        def raise_for_status(self):
+            raise requests.HTTPError(f"{status} Client Error: Bad Request for url: x")
+
+        def json(self):
+            return json.loads(body)
+
+    def post(url, headers=None, json=None, timeout=None):
+        if count is not None:
+            count["n"] = count.get("n", 0) + 1
+        return _Resp()
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+
+
+def test_a_rejected_request_carries_the_providers_own_explanation(monkeypatch):
+    """raise_for_status() produces "400 Client Error: Bad Request for url: ..."
+    and discards the body — the one place the provider says what is wrong. A
+    bad model id looked identical to a bad key, an unsupported parameter and a
+    malformed prompt."""
+    _rejecting_post(
+        monkeypatch, 400,
+        '{"error":{"message":"stealth/ox-alpha is not a valid model ID","code":400}}',
+    )
+    with pytest.raises(llm.ProviderRejectedRequest) as excinfo:
+        llm.call_json("respond with json", max_tokens=100)
+
+    message = str(excinfo.value)
+    assert "not a valid model ID" in message
+    assert "HTTP 400" in message
+    assert "stealth/ox-alpha" in message  # names the model it was sent
+
+
+def test_a_bad_key_is_reported_as_a_bad_key(monkeypatch):
+    _rejecting_post(monkeypatch, 401, '{"error":{"message":"No auth credentials found"}}')
+    with pytest.raises(llm.ProviderRejectedRequest) as excinfo:
+        llm.call_json("respond with json", max_tokens=100)
+    assert "No auth credentials found" in str(excinfo.value)
+
+
+def test_a_rejected_request_is_not_retried(monkeypatch):
+    """A 4xx never succeeds on retry; sending it again spends a timeout to
+    arrive at the same answer. Only the JSON-mode 400 is worth a second go."""
+    count: dict = {}
+    _rejecting_post(monkeypatch, 401, '{"error":{"message":"nope"}}', count=count)
+    with pytest.raises(llm.ProviderRejectedRequest):
+        llm.call_json("respond with json", max_tokens=100)
+    assert count["n"] == 1
+
+
+def test_json_mode_is_still_dropped_and_retried_on_a_400(monkeypatch):
+    """The one 400 that IS worth retrying: a model that doesn't implement JSON
+    mode rejects the whole request, and the reply parses fine without it."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_model", "some/model")
+    seen: list[dict] = []
+
+    class _Resp:
+        def __init__(self, status, text=""):
+            self.status_code = status
+            self.text = text
+            self.headers = {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"ok": true}'},
+                                 "finish_reason": "stop"}]}
+
+    def post(url, headers=None, json=None, timeout=None):
+        seen.append(dict(json))
+        if "response_format" in json:
+            return _Resp(400, '{"error":{"message":"response_format unsupported"}}')
+        return _Resp(200)
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+
+    assert llm.call_json("respond with json", max_tokens=100) == {"ok": True}
+    assert "response_format" in seen[0]
+    assert "response_format" not in seen[-1]
