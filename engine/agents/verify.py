@@ -33,6 +33,19 @@ CONTRADICTED = "contradicted"
 
 _MAX_CLAIMS_PER_SECTION = 12
 _WORKERS = 4
+# Passages per extraction call, and claims per adjudication call.
+#
+# Both stages were one LLM round-trip per item, which is affordable only while
+# the item counts are small. They stopped being small: `risks`, `opportunities`
+# and `trends` are LISTS, every element becomes its own extraction target, and
+# raising those sections from "3-5 items" to "6-12" tripled the extraction
+# calls and multiplied the judgements downstream. On a serialised backend that
+# is most of the wall-clock of a report.
+#
+# Adjudication batches are smaller than extraction batches because each claim
+# carries its own retrieved evidence, so the prompt grows much faster per item.
+_EXTRACT_BATCH = 10
+_ADJUDICATE_BATCH = 6
 
 
 EXTRACT_PROMPT = """You are auditing an intelligence report before it is released.
@@ -95,6 +108,127 @@ def extract_claims(passage: str, max_claims: int = _MAX_CLAIMS_PER_SECTION) -> l
     return claims[:max_claims]
 
 
+BATCH_EXTRACT_PROMPT = """You are auditing an intelligence report before it is released.
+
+For EACH numbered passage below, break it into ATOMIC factual claims — each a single,
+self-contained, checkable assertion about the subject or the world. Keep every claim
+attached to the number of the passage it came from.
+
+Skip anything that is opinion, recommendation or analysis rather than a factual
+assertion. A passage with no checkable claims simply has no entries.
+
+Passages:
+{batch}
+
+Respond with ONLY this JSON, keeping the numbers:
+{{"claims": [{{"i": 1, "text": "a single checkable assertion"}}, {{"i": 1, "text": "another"}}, {{"i": 2, "text": "..."}}]}}"""
+
+
+BATCH_ADJUDICATE_PROMPT = """You are a fact-checker. For EACH numbered claim below, judge it
+ONLY against the evidence listed under that claim. Do not use outside knowledge.
+
+  verified     — the evidence directly supports the claim,
+  contradicted — the evidence directly contradicts it,
+  unverified   — the evidence neither supports nor contradicts it.
+
+`support` lists the evidence numbers (within that claim's own list) that carry the verdict.
+
+{batch}
+
+Respond with ONLY this JSON, keeping the claim numbers:
+{{"verdicts": [{{"i": 1, "verdict": "verified|contradicted|unverified", "support": [1], "reason": "one sentence"}}]}}"""
+
+
+def _render_evidence(evidence: list[dict]) -> str:
+    return "\n".join(
+        f"    [{i}] ({e.get('source') or 'unknown source'}) {e.get('passage', '')[:400]}"
+        for i, e in enumerate(evidence, start=1)
+    )
+
+
+def extract_claims_batch(passages: list[str]) -> dict[int, list[str]]:
+    """Atomic claims for several passages in one call. {position: [claims]}."""
+    lines = []
+    for position, passage in enumerate(passages, start=1):
+        lines.append(f"[{position}] {(passage or '')[:6000]}")
+    batch = "\n\n".join(lines)
+    try:
+        result = llm.call_json(
+            BATCH_EXTRACT_PROMPT.format(batch=batch),
+            max_tokens=min(8000, 220 * len(passages) + 500),
+        )
+    except Exception:  # noqa: BLE001 — an unextracted passage is simply unchecked
+        return {}
+
+    out: dict[int, list[str]] = {}
+    for entry in result.get("claims") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            position = int(entry.get("i"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= position <= len(passages):
+            continue
+        text = str(entry.get("text") or "").strip()
+        if not text:
+            continue
+        bucket = out.setdefault(position, [])
+        if len(bucket) < _MAX_CLAIMS_PER_SECTION:
+            bucket.append(text)
+    return out
+
+
+def adjudicate_batch(items: list[tuple[str, list[dict]]]) -> dict[int, dict]:
+    """Judge several claims, each against its own evidence, in one call.
+
+    Returns {position: outcome}. A claim the model does not answer for is
+    absent, and the caller leaves it unverified — the judge failing must never
+    be able to UPGRADE a claim's status.
+    """
+    blocks = []
+    for position, (claim, evidence) in enumerate(items, start=1):
+        blocks.append(f"Claim [{position}]: {claim}\n  Evidence for claim [{position}]:\n"
+                      + (_render_evidence(evidence) or "    (none)"))
+    batch = "\n\n".join(blocks)
+    try:
+        result = llm.call_json_untrusted(
+            BATCH_ADJUDICATE_PROMPT.format(batch=batch),
+            batch,
+            expected_keys={"verdicts"},
+            max_tokens=min(8000, 220 * len(items) + 400),
+            max_untrusted_chars=len(batch) + 1000,
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+
+    out: dict[int, dict] = {}
+    for entry in result.get("verdicts") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            position = int(entry.get("i"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= position <= len(items):
+            continue
+        verdict = str(entry.get("verdict") or UNVERIFIED).lower()
+        if verdict not in (VERIFIED, CONTRADICTED, UNVERIFIED):
+            verdict = UNVERIFIED
+        evidence = items[position - 1][1]
+        support = []
+        for index in entry.get("support") or []:
+            try:
+                slot = int(index)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= slot <= len(evidence):
+                support.append(slot)
+        out[position] = {"verdict": verdict, "support": support,
+                         "reason": str(entry.get("reason") or "")[:300]}
+    return out
+
+
 def adjudicate(claim: str, evidence: list[dict]) -> dict:
     """Judge one claim against retrieved evidence.
 
@@ -147,7 +281,14 @@ def _judge(section: str, claim_text: str, found: list[dict],
            credibility: dict[str, float] | None = None) -> dict:
     """Adjudicate one already-retrieved claim. Pure LLM work, so it is safe to
     run concurrently — database access happens on the caller's session."""
-    outcome = adjudicate(claim_text, found)
+    return _settle(section, claim_text, found, credibility, adjudicate(claim_text, found))
+
+
+def _settle(section: str, claim_text: str, found: list[dict],
+            credibility: dict[str, float] | None, outcome: dict) -> dict:
+    """Turn a verdict into the stored result: supporting evidence, independent
+    source count and confidence. Shared so the batched and single-claim paths
+    can never disagree about what a verdict means."""
     supporting = [found[i - 1] for i in outcome["support"]] or (
         found[:2] if outcome["verdict"] == VERIFIED else []
     )
@@ -188,10 +329,21 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
                 if isinstance(item, str):
                     targets.append((section, item))
 
+    # Extraction, batched. `risks`, `opportunities` and `trends` are lists, so
+    # every element is its own target — dozens of round-trips where a handful
+    # of calls will do.
     claims: list[tuple[str, str]] = []
-    for section, passage in targets:
-        for claim_text in extract_claims(passage):
-            claims.append((section, claim_text))
+    extract_batches = [targets[i : i + _EXTRACT_BATCH] for i in range(0, len(targets), _EXTRACT_BATCH)]
+    with ThreadPoolExecutor(max_workers=llm.concurrency(min(_WORKERS, len(extract_batches) or 1))) as pool:
+        extracted = list(pool.map(
+            lambda batch: (batch, extract_claims_batch([passage for _, passage in batch])),
+            extract_batches,
+        ))
+    for batch, per_position in extracted:
+        for position, texts in sorted(per_position.items()):
+            section = batch[position - 1][0]
+            for claim_text in texts:
+                claims.append((section, claim_text))
 
     if not claims:
         return {"checked": 0, "verified": 0, "unverified": 0, "contradicted": 0, "claims": []}
@@ -214,9 +366,33 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
     }
     credibility = credibility_for(db, [k for k in source_keys if k])
 
-    workers = llm.concurrency(min(_WORKERS, len(retrieved)))
+    # Adjudication, batched. A claim with no evidence at all is unverified by
+    # definition, so it never costs a call — filter those out before batching
+    # rather than paying to be told what we already know.
+    judged: list[dict] = []
+    needs_judging = [(i, c) for i, c in enumerate(retrieved) if c[2]]
+    for section, claim_text, found in (c for c in retrieved if not c[2]):
+        judged.append(_settle(section, claim_text, found, credibility,
+                              {"verdict": UNVERIFIED, "support": [],
+                               "reason": "no supporting evidence found in the corpus"}))
+
+    batches = [needs_judging[i : i + _ADJUDICATE_BATCH]
+               for i in range(0, len(needs_judging), _ADJUDICATE_BATCH)]
+    workers = llm.concurrency(min(_WORKERS, len(batches) or 1))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(lambda c: _judge(c[0], c[1], c[2], credibility), retrieved))
+        outcomes = list(pool.map(
+            lambda batch: (batch, adjudicate_batch([(c[1], c[2]) for _, c in batch])),
+            batches,
+        ))
+    for batch, per_position in outcomes:
+        for position, (_, claim) in enumerate(batch, start=1):
+            section, claim_text, found = claim
+            # A claim the judge did not answer for stays unverified: a failed
+            # judgement must never be able to UPGRADE a claim's status.
+            outcome = per_position.get(position) or {
+                "verdict": UNVERIFIED, "support": [], "reason": "verification unavailable"}
+            judged.append(_settle(section, claim_text, found, credibility, outcome))
+    results = judged
 
     counts = {VERIFIED: 0, UNVERIFIED: 0, CONTRADICTED: 0}
     for result in results:
