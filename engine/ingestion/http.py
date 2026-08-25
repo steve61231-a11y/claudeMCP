@@ -5,6 +5,13 @@ from urllib3.util.retry import Retry
 DEFAULT_TIMEOUT = 30
 
 
+USER_AGENT = (
+    "ZenithIntelligence/1.0 "
+    "(+https://github.com/steve61231-a11y/claudemcp; political research) "
+    "python-requests"
+)
+
+
 def build_session(total_retries: int = 4, backoff_factor: float = 1.0) -> requests.Session:
     """Session with exponential backoff on transient failures and 429s.
 
@@ -19,6 +26,12 @@ def build_session(total_retries: int = 4, backoff_factor: float = 1.0) -> reques
         raise_on_status=False,
     )
     session = requests.Session()
+    # A descriptive User-Agent, because several sources refuse the default one.
+    # Wikipedia's API policy explicitly requires identifying the client and
+    # returns 403 to bare `python-requests`, which arrives here as an empty
+    # result rather than an error — a subject with an obvious article silently
+    # contributing nothing to the corpus.
+    session.headers.update({"User-Agent": USER_AGENT})
     adapter = HTTPAdapter(max_retries=retry)
     session.mount("https://", adapter)
     session.mount("http://", adapter)

@@ -1685,14 +1685,23 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
         try:
             from engine.ingestion.discovery_connector import DiscoveryConnector
 
-            found = DiscoveryConnector().discover([q])
+            connector = DiscoveryConnector()
+            found = connector.discover([q])
             discovery.update(
-                {"results": len(found), "error": None,
+                {"results": len(found), "error": connector.last_error,
                  "sample": found[0]["url"] if found else None,
-                 "searxng_url": settings.searxng_url}
+                 # Both, because the difference between them IS the bug we hit:
+                 # a Render internal hostname pasted as `service:port` has no
+                 # scheme, requests refuses it, and the whole discovery layer
+                 # goes quiet.
+                 "searxng_url": settings.searxng_url,
+                 "resolved_url": connector.base_url}
             )
             if not found:
-                discovery["hint"] = "0 results — check the instance is up and `json` is in its search.formats"
+                discovery["hint"] = (
+                    connector.last_error
+                    or "0 results — check the instance is up and `json` is in its search.formats"
+                )
         except Exception as exc:  # noqa: BLE001
             discovery.update({"results": 0, "error": f"{type(exc).__name__}: {exc}"[:200]})
     else:

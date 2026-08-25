@@ -37,6 +37,25 @@ _SKIP_DOMAINS = {
 }
 
 
+def _normalise_base_url(raw: str | None) -> str:
+    """A usable base URL, with a scheme.
+
+    Render's internal hostnames are given as `service:port`, which is exactly
+    what its dashboard shows and exactly what an operator pastes in. Without a
+    scheme `requests` raises InvalidSchema, the blanket except below turns that
+    into an empty result list, and the whole discovery layer — the eighty-probe
+    full-text sweep, the largest single source of depth in a report — is dead
+    with no error anywhere. That is a config typo costing the product its best
+    feature, silently, so it is corrected here rather than diagnosed later.
+    """
+    value = (raw or "").strip().rstrip("/")
+    if not value:
+        return ""
+    if "://" not in value:
+        value = "http://" + value
+    return value
+
+
 class DiscoveryConnector:
     """Queries SearXNG and returns full-text documents (not mentions).
 
@@ -45,7 +64,11 @@ class DiscoveryConnector:
     """
 
     def __init__(self, base_url: str | None = None, searcher=None, fetcher=None):
-        self.base_url = (base_url if base_url is not None else settings.searxng_url).rstrip("/")
+        self.base_url = _normalise_base_url(
+            base_url if base_url is not None else settings.searxng_url
+        )
+        # Why the last search returned nothing, when it returned nothing.
+        self.last_error: str | None = None
         # Both seams are injectable so tests never touch the network.
         self._searcher = searcher
         self._fetcher = fetcher
@@ -70,9 +93,17 @@ class DiscoveryConnector:
                 timeout=settings.discovery_timeout,
             )
             if response.status_code != 200:
+                self.last_error = f"HTTP {response.status_code} from {self.base_url}/search"
                 return []
+            self.last_error = None
             return response.json().get("results", []) or []
-        except Exception:  # noqa: BLE001 — discovery must never break a run
+        except Exception as exc:  # noqa: BLE001 — discovery must never break a run
+            # Recorded, not just swallowed. A misconfigured URL and a genuinely
+            # empty result set are indistinguishable from the caller otherwise,
+            # and that is how a dead discovery layer went unnoticed: the
+            # diagnostic said "0 results — check the instance is up" while the
+            # real fault was a URL with no scheme.
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return []
 
     def _fetch_body(self, url: str) -> str:
