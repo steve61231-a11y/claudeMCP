@@ -585,6 +585,7 @@ def _read_progress(subject_key: str, kind: str) -> dict | None:
             return None
         return {
             "status": row.status,
+            "job_id": row.job_id,
             "stage": row.stage,
             "sections_ready": row.sections_ready or [],
             "payload": row.payload or {},
@@ -674,6 +675,16 @@ def _publish_partial(job_id: str, politician, payload: dict,
 
 
 def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
+    # Claim the subject's progress row BEFORE any work starts, clearing whatever
+    # the last run left there.
+    #
+    # Without this, a failure recorded by an earlier run outlives it: the next
+    # run takes longer than the poll window, the page falls back to stored
+    # progress, and shows that old error as though it had just happened — with
+    # its old stack trace, from a build that is no longer deployed. A fixed bug
+    # then looks unfixed, and the fix gets debugged instead of the run.
+    _save_progress(_subject_key(name), "report", job_id=job_id,
+                   status="running", stage="Starting…", error=None)
     # Demo / degraded-infra mode: serve the full pre-generated report instantly
     # for matched names (no live pipeline, zero LLM credits). Off by default.
     if settings.serve_precache_first:
@@ -822,6 +833,8 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
 
     from engine.reports.issue_map import build_issue_map
 
+    _save_progress(_subject_key(principal, issue), "issue_map", job_id=job_id,
+                   status="running", stage="Starting…", error=None)
     try:
         we = datetime.utcnow()
         ws = we - timedelta(days=max(1, days))

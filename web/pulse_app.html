@@ -241,6 +241,16 @@
     try{ return await api(q); }catch(_){ return null; }
   }
 
+  /** A stored error belongs to THIS run only if it is this run's job.
+
+      A failure recorded by an earlier run otherwise outlives it: the current
+      run outlasts the poll window, the page falls back to stored progress, and
+      presents that fossil — old message, old stack trace, from a build that is
+      no longer deployed — as if it had just happened. A bug that was already
+      fixed then looks unfixed, and the fix gets debugged instead of the run. */
+  const errorBelongsToRun = (prog, job_id) =>
+    !!(prog && prog.error && prog.status === 'failed' && (!prog.job_id || prog.job_id === job_id));
+
   function stillRunningNote(prog){
     const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
     return noteCard('Still running',
@@ -1200,7 +1210,7 @@
     const run=async()=>{
       const name=$('#q',form).value.trim(); if(!name)return;
       const type=$('#qt',form).value; const btn=$('#grun',form); const msg=$('#gmsg',form);
-      btn.disabled=true; out.innerHTML='';
+      btn.disabled=true; out.innerHTML=''; let jobId=null;
       // Show what the engine already has for this subject before asking for
       // anything new, so a returning reader starts reading immediately.
       if(LIVE){
@@ -1216,6 +1226,7 @@
         if(!LIVE) throw new Error('demo');
         tick('Planning ingestion…');
         const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type})});
+        jobId=j.job_id;
         tick('Scraping sources & reading every mention…');
         // Render each section the moment the server publishes it. Re-rendering
         // only when the finished set actually changes keeps the page still
@@ -1247,7 +1258,7 @@
             out.appendChild(stillRunningNote(prog));
             renderReport(out,prog.payload,{live:true,partial:prog.status!=='done',
               sections_ready:prog.sections_ready,stage:prog.stage});
-          } else if(prog&&prog.error){
+          } else if(errorBelongsToRun(prog,jobId)){
             out.appendChild(errCard(prog.error));
           } else {
             out.appendChild(noteCard('Still working',
@@ -1777,7 +1788,7 @@
     const run=async()=>{
       const principal=$('#pr',form).value.trim(),issue=$('#is',form).value.trim();
       if(!principal||!issue)return;const days=parseInt($('#dy',form).value)||365;
-      const btn=$('#mrun',form),msg=$('#mmsg',form);btn.disabled=true;out.innerHTML='';
+      const btn=$('#mrun',form),msg=$('#mmsg',form);btn.disabled=true;out.innerHTML='';let jobId=null;
       if(LIVE){
         const prior=await fetchProgress(principal,'issue_map',issue);
         if(prior&&prior.payload&&prior.payload.intersection){
@@ -1790,6 +1801,7 @@
         if(!LIVE)throw new Error('demo');
         tick('Building intersection corpus…');
         const j=await api('/api/issue-map',{method:'POST',body:JSON.stringify({principal,issue,days,desired_outcome:$('#do',form).value.trim()||null})});
+        jobId=j.job_id;
         // The map runs the full acquisition stack now — dozens of queries and
         // an 80-probe discovery sweep — so it is a long run. Show the stage the
         // engine reports, and render the intersection the moment the analyst
@@ -1823,7 +1835,7 @@
             out.innerHTML='';
             if(prog.status!=='done')out.appendChild(stillRunningNote(prog));
             renderIssue(out,prog.payload);
-          } else if(prog&&prog.error){
+          } else if(errorBelongsToRun(prog,jobId)){
             out.appendChild(errCard(prog.error));
           } else {
             try{
