@@ -1698,6 +1698,14 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
 
 
 _WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+# THE frontend. Singular, deliberately.
+#
+# There used to be a second copy at web/index.html which was what this route
+# actually served, while every edit went to pulse_app.html. The two drifted
+# silently: the backend shipped new behaviour on each deploy and the page
+# never changed, so the app contradicted its own API and it read as a backend
+# fault. One file, named once, and a test that fails if a second appears.
+FRONTEND_HTML = _WEB_DIR / "pulse_app.html"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1706,9 +1714,17 @@ def serve_frontend():
     share one origin — no separate hosting, no CORS setup, no demo mode. Just
     open the engine's URL and it IS the live app. (Falls back to a tiny notice
     if the web bundle wasn't shipped.)"""
-    index = _WEB_DIR / "index.html"
-    if index.exists():
-        return FileResponse(str(index), media_type="text/html")
+    if FRONTEND_HTML.exists():
+        # no-cache, not no-store: the browser still revalidates and still gets a
+        # cheap 304 when nothing changed, but it can never serve a copy from
+        # before the last deploy. Without this a stale page survives every
+        # redeploy, the backend moves on without it, and the two disagree in
+        # ways that look like backend bugs.
+        return FileResponse(
+            str(FRONTEND_HTML),
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
     return HTMLResponse(
         "<h1>Zenith engine</h1><p>API is live. Frontend bundle not found — "
         "hit <a href='/api/health'>/api/health</a>.</p>",
