@@ -16,6 +16,58 @@ Statistics:
 The required JSON shape is: {{"summary": "the executive summary text"}}"""
 
 
+def corpus_preview(mentions: list[dict], window_end) -> dict:
+    """The report as it stands before a single model call.
+
+    Volume, platform spread, recency and the loudest mentions are all pure
+    arithmetic over rows we already hold. None of it needs the LLM, and all of
+    it is genuinely useful — yet it used to arrive only at the END of the
+    longest stretch of a run, because it was computed alongside sentiment and
+    narratives rather than before them.
+
+    So a reader waited through entity linking, people extraction and
+    whole-corpus sentiment scoring to be told how many mentions there were.
+    This lets that land in seconds instead.
+
+    Sentiment/narrative/influence keys are present but EMPTY, not zeroed: the
+    payload has to keep the shape the frontend reads, and a `None` renders as
+    "—" (not yet known) where a 0 would assert that nothing is positive.
+    """
+    volume_by_platform = Counter(m["platform"] for m in mentions)
+    volume_by_day = Counter(
+        m["posted_at"].date().isoformat() for m in mentions if m.get("posted_at")
+    )
+    volume_by_source_type = Counter(m["source_type"] for m in mentions if m.get("source_type"))
+    volume_by_language = Counter(m["language"] for m in mentions if m.get("language"))
+
+    def _age_days(m):
+        posted = m.get("posted_at")
+        return (window_end - posted).days if posted else None
+
+    return {
+        "sentiment_breakdown": {
+            "positive_pct": None,
+            "neutral_pct": None,
+            "negative_pct": None,
+            "total_mentions_analyzed": 0,
+        },
+        "volume_trends": {
+            "by_platform": dict(volume_by_platform),
+            "by_day": dict(sorted(volume_by_day.items())),
+            "by_source_type": dict(volume_by_source_type),
+            "by_language": dict(volume_by_language),
+            "total_mentions": len(mentions),
+            "last_7_days": sum(1 for m in mentions if (_age_days(m) or 999) < 7),
+            "last_30_days": sum(1 for m in mentions if (_age_days(m) or 999) < 30),
+        },
+        "influence_summary": [],
+        "narrative_breakdown": [],
+        "network_insights": {},
+        "notable_mentions": _notable_mentions(mentions, {}),
+        "executive_summary": "",
+    }
+
+
 def generate_report_payload(
     politician_name: str,
     window_start: datetime,
@@ -92,7 +144,11 @@ def _notable_mentions(mentions: list[dict], sentiments: dict[str, dict]) -> list
             "source_type": m.get("source_type"),
             "author_handle": m["author_handle"],
             "text": m["text"][:400],
-            "posted_at": m["posted_at"].isoformat(),
+            # Undated is a real state: archive pages and some feeds carry no
+            # timestamp, and the corpus preview reads rows before any of the
+            # dating fixups downstream. Crashing here would take the whole
+            # early section with it.
+            "posted_at": m["posted_at"].isoformat() if m.get("posted_at") else None,
             "source_url": m.get("source_url"),
             "engagement": m.get("engagement") or {},
             "sentiment": (sentiments.get(m["id"]) or {}).get("sentiment"),

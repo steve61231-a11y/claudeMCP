@@ -72,6 +72,30 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
     return corpus
 
 
+def _as_corpus_dicts(rows) -> list[dict]:
+    """RawMention rows in the shape every reader downstream expects.
+
+    Defined once because the early corpus preview and the real analysis must
+    describe the same corpus — two hand-rolled copies of this mapping would
+    drift, and the preview would then quietly disagree with the report that
+    replaces it.
+    """
+    return [
+        {
+            "id": m.id,
+            "platform": m.platform,
+            "source_type": m.source_type,
+            "author_handle": m.author_handle,
+            "text": m.text,
+            "posted_at": m.posted_at,
+            "engagement": m.engagement_json or {},
+            "language": m.language,
+            "source_url": m.source_url,
+        }
+        for m in rows
+    ]
+
+
 def _per_mention_workers() -> int:
     """Fewer threads on a memory-constrained free instance so concurrent work
     can't exhaust RAM and get the worker OOM-killed (intermittent 502s), and
@@ -149,6 +173,25 @@ def run_analysis(
     def _engagement(m: RawMention) -> int:
         e = m.engagement_json or {}
         return sum(int(e.get(k, 0) or 0) for k in ("likes", "shares", "comments", "views"))
+
+    # The first thing a reader gets, and it costs nothing: volume, platform
+    # spread, recency and the loudest mentions are arithmetic over rows we
+    # already hold. This used to be computed alongside sentiment and narratives
+    # and therefore arrived only after entity linking, people extraction and
+    # whole-corpus scoring — the longest stretch of a run. A reader waited ten
+    # minutes to be told how many mentions there were.
+    if on_section is not None:
+        try:
+            from engine.reports.generator import corpus_preview
+
+            preview = corpus_preview(
+                _as_corpus_dicts(db.query(RawMention).filter(*window_filter).all()),
+                window_end,
+            )
+            for _key, _value in preview.items():
+                publish(_key, _value)
+        except Exception:  # noqa: BLE001 — a preview must never risk the report
+            traceback.print_exc()
 
     _llm_cap = settings.low_memory_max_llm_mentions if settings.low_memory else settings.max_llm_mentions
 
@@ -302,20 +345,7 @@ def run_analysis(
             )
     db.flush()
 
-    stored_mentions = [
-        {
-            "id": m.id,
-            "platform": m.platform,
-            "source_type": m.source_type,
-            "author_handle": m.author_handle,
-            "text": m.text,
-            "posted_at": m.posted_at,
-            "engagement": m.engagement_json or {},
-            "language": m.language,
-            "source_url": m.source_url,
-        }
-        for m in linked_mentions
-    ]
+    stored_mentions = _as_corpus_dicts(linked_mentions)
 
     sentiment_rows = (
         db.query(MentionSentiment).filter(MentionSentiment.mention_id.in_([m["id"] for m in stored_mentions])).all()
