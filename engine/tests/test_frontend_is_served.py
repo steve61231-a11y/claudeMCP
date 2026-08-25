@@ -34,11 +34,33 @@ def test_the_served_file_is_the_one_that_exists():
     assert api_server.FRONTEND_HTML.name == "pulse_app.html"
 
 
+def test_the_page_is_a_complete_document_not_a_fragment():
+    """pulse_app.html opens on <style> and closes on </script>. index.html was
+    a build artifact that wrapped it, and deleting the artifact without moving
+    the wrap would have served a headless fragment: quirks mode, no charset (so
+    every em dash and curly quote in the copy mojibakes) and no viewport meta
+    (so every phone gets a desktop layout)."""
+    raw = api_server.FRONTEND_HTML.read_text(encoding="utf-8")
+    assert not raw.lstrip().startswith("<!doctype"), (
+        "the source is expected to be a fragment; if it became a full document, "
+        "the wrap below now duplicates the <head>"
+    )
+
+    document = api_server.render_frontend_document()
+    assert document.lstrip().lower().startswith("<!doctype html>")
+    assert '<meta charset="utf-8">' in document
+    assert 'name="viewport"' in document
+    assert document.rstrip().endswith("</html>")
+    assert raw in document, "the wrap must not alter the app itself"
+
+
 def test_the_root_route_serves_the_real_app():
     client = TestClient(api_server.app)
     resp = client.get("/")
     assert resp.status_code == 200
     body = resp.text
+    assert body.lstrip().lower().startswith("<!doctype html>"), "served as a fragment"
+    assert "charset" in body.lower()
     # Markers from the work that never reached the served page.
     assert "renderDeepRead" in body, "the served page is missing the deep-read sections"
     assert "progressCard" in body, "the served page cannot show streaming progress"

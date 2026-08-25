@@ -1700,12 +1700,40 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
 _WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 # THE frontend. Singular, deliberately.
 #
-# There used to be a second copy at web/index.html which was what this route
-# actually served, while every edit went to pulse_app.html. The two drifted
-# silently: the backend shipped new behaviour on each deploy and the page
-# never changed, so the app contradicted its own API and it read as a backend
-# fault. One file, named once, and a test that fails if a second appears.
+# There used to be a second file at web/index.html which was what this route
+# actually served, while every edit went to pulse_app.html. index.html was a
+# BUILD ARTIFACT — pulse_app.html wrapped in a document skeleton by a shell
+# one-liner in web/README.md — and nothing re-ran that step, so the two drifted
+# silently: the backend shipped new behaviour on each deploy and the page never
+# changed. The app contradicted its own API and every symptom read as a backend
+# fault.
+#
+# The artifact is gone and the wrap happens here instead. One source file, no
+# build step to forget, and nothing that can go stale between them.
 FRONTEND_HTML = _WEB_DIR / "pulse_app.html"
+
+# pulse_app.html is a FRAGMENT: it opens on <style> and closes on </script>.
+# Serving it raw drops the browser into quirks mode, loses the charset (so the
+# em dashes and curly quotes throughout the copy mojibake) and loses the
+# viewport meta (so every phone gets a desktop layout).
+_FRONTEND_HEAD = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070b12">
+<title>Zenith Intelligence</title>
+<meta name="description" content="Zenith Intelligence platform.">
+<style>html,body{margin:0;background:#070b12}</style>
+</head>
+<body>
+"""
+_FRONTEND_TAIL = "\n</body>\n</html>\n"
+
+
+def render_frontend_document() -> str:
+    """The complete HTML document, wrapped around the single source file."""
+    return _FRONTEND_HEAD + FRONTEND_HTML.read_text(encoding="utf-8") + _FRONTEND_TAIL
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1720,9 +1748,8 @@ def serve_frontend():
         # before the last deploy. Without this a stale page survives every
         # redeploy, the backend moves on without it, and the two disagree in
         # ways that look like backend bugs.
-        return FileResponse(
-            str(FRONTEND_HTML),
-            media_type="text/html",
+        return HTMLResponse(
+            render_frontend_document(),
             headers={"Cache-Control": "no-cache, must-revalidate"},
         )
     return HTMLResponse(
