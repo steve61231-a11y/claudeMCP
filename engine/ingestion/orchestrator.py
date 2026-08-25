@@ -284,14 +284,24 @@ def _run_stats(db: Session, run: IngestionRun) -> dict:
     by_platform: dict[str, int] = {}
     for platform, count in (
         db.query(RawMention.platform, func.count())
-        .filter(RawMention.run_id == run.id)
+        .filter(RawMention.run_id == run.id, RawMention.is_spam == 0)
         .group_by(RawMention.platform)
         .all()
     ):
         by_platform[platform] = int(count)
+    # What cleaning rejected. Reported rather than inferred: a thin corpus and
+    # an over-eager filter look identical from the outside, and telling them
+    # apart is the difference between fixing the scrapers and fixing a rule.
+    rejected = int(
+        db.query(func.count(RawMention.id))
+        .filter(RawMention.run_id == run.id, RawMention.is_spam == 1)
+        .scalar()
+        or 0
+    )
     return {
         "mentions_by_platform": by_platform,
         "mentions_total": sum(by_platform.values()),
+        "rejected_as_spam": rejected,
         "credits_spent": run.credits_spent,
         "source_health": _source_health(db, run),
     }
@@ -585,7 +595,12 @@ def _store_mentions(
     unique key makes re-runs and cross-task overlaps idempotent."""
     if not mentions:
         return 0
-    cleaned = [m for m in cleaning.clean_mentions(mentions) if not m["is_spam"]]
+    # Flagged, not deleted. `is_spam` exists for exactly this and every reader
+    # already filters on it, so a rejected item costs nothing downstream — but
+    # it stays countable. Discarding them in memory is how a run that fetched
+    # 100 items came to store 2 with nothing anywhere saying so, and the report
+    # built on what was left looked like a model problem for weeks.
+    cleaned = cleaning.clean_mentions(mentions)
     if not cleaned:
         return 0
 
@@ -605,7 +620,7 @@ def _store_mentions(
                 "engagement_json": item.get("engagement") or {},
                 "raw_payload": raw,
                 "content_hash": item["content_hash"],
-                "is_spam": 0,
+                "is_spam": 1 if item.get("is_spam") else 0,
                 "run_id": run.id,
                 "source_endpoint": task.endpoint,
                 "source_url": _source_url(raw),
