@@ -674,6 +674,22 @@ def _publish_partial(job_id: str, politician, payload: dict,
                    sections_ready=ready, payload=shaped)
 
 
+def _set_stage(job_id: str, subject_key: str, kind: str, text: str) -> None:
+    """Record what a run is doing, in memory AND durably.
+
+    The stage used to be written to the job dict only. Everything before the
+    first section lands — ingestion, entity linking, people extraction,
+    whole-corpus sentiment — is the longest part of a run, and for all of it a
+    reader who came back was told "Starting…" however far along it actually
+    was. Storing it means the answer to "is this thing moving?" survives the
+    page, the poll window and the process.
+    """
+    job = _jobs.get(job_id)
+    if job is not None:
+        job["stage"] = text
+    _save_progress(subject_key, kind, job_id=job_id, status="running", stage=text)
+
+
 def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
     # Claim the subject's progress row BEFORE any work starts, clearing whatever
     # the last run left there.
@@ -683,7 +699,8 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
     # progress, and shows that old error as though it had just happened — with
     # its old stack trace, from a build that is no longer deployed. A fixed bug
     # then looks unfixed, and the fix gets debugged instead of the run.
-    _save_progress(_subject_key(name), "report", job_id=job_id,
+    subject_key = _subject_key(name)
+    _save_progress(subject_key, "report", job_id=job_id,
                    status="running", stage="Starting…", error=None)
     # Demo / degraded-infra mode: serve the full pre-generated report instantly
     # for matched names (no live pipeline, zero LLM credits). Off by default.
@@ -729,7 +746,8 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             politician = _ensure_politician(db, name, subject_type)
             window_end = datetime.utcnow()
             window_start = window_end - timedelta(days=210)
-            _jobs[job_id]["stage"] = f"Scanning social platforms and news for “{name}”…"
+            _set_stage(job_id, subject_key, "report",
+                       f"Scanning social platforms and news for “{name}”…")
             from engine.pipeline import run_analysis, run_ingestion
 
             live_payload: dict = {}
@@ -741,11 +759,15 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
             ingestion_run = run_ingestion(db, politician, window_start, window_end, credit_budget=300.0)
             stats = (ingestion_run.stats or {}) if ingestion_run else {}
             found = stats.get("mentions_total")
-            _jobs[job_id]["stage"] = (
-                f"Analyzing {found} collected mentions (sentiment, narratives, voices, network)…"
+            _set_stage(job_id, subject_key, "report", (
+                f"Read {found} new mentions. Now scoring sentiment, narratives, voices and "
+                "network across the whole stored corpus — this is the long part, and the "
+                "first section lands when it finishes."
                 if found
-                else "Analyzing collected mentions (sentiment, narratives, voices, network)…"
-            )
+                else "Scoring sentiment, narratives, voices and network across the stored "
+                     "corpus — this is the long part, and the first section lands when it "
+                     "finishes."
+            ))
             report = run_analysis(db, politician, "live-demo", window_start, window_end,
                                   ingestion_run=ingestion_run, on_section=_on_section)
             finished = _build_frontend_payload(politician, report)
@@ -766,7 +788,7 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
                 except Exception:
                     pass
                 _db_engine.dispose()  # drop stale pooled connections, force fresh ones
-                _jobs[job_id]["stage"] = "Reconnecting to the database…"
+                _set_stage(job_id, subject_key, "report", "Reconnecting to the database…")
                 time.sleep(3 * (attempt + 1))
                 continue
             _fail(exc)

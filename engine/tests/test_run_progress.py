@@ -9,6 +9,7 @@ Progress is now written per section, keyed by SUBJECT rather than by a job id
 that only means something to the process that minted it.
 """
 
+import time
 from datetime import datetime
 
 from fastapi.testclient import TestClient
@@ -146,3 +147,58 @@ def test_the_endpoint_addresses_an_issue_map_by_its_pair(db_session, monkeypatch
                       params={"name": "Ruto", "kind": "issue_map", "issue": "SHA"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "done"
+
+
+def test_the_stage_survives_the_page_and_the_process(db_session, monkeypatch):
+    """Everything before the first section — the scrape, entity linking,
+    whole-corpus sentiment — is the longest part of a run, and the stage was
+    written to the job dict only. A reader who came back was told "Starting…"
+    however far along it actually was."""
+    _use_test_session(monkeypatch, db_session)
+    job_id = "staged-job"
+    api_server._jobs[job_id] = {"status": "running", "created_at": time.time()}
+    try:
+        api_server._set_stage(job_id, "stage subject", "report", "Scanning news…")
+        assert api_server._jobs[job_id]["stage"] == "Scanning news…"
+        assert api_server._read_progress("stage subject", "report")["stage"] == "Scanning news…"
+
+        api_server._set_stage(job_id, "stage subject", "report", "Scoring sentiment…")
+        assert api_server._read_progress("stage subject", "report")["stage"] == "Scoring sentiment…"
+    finally:
+        api_server._jobs.pop(job_id, None)
+
+
+def test_a_second_generate_reattaches_instead_of_racing(monkeypatch):
+    """Two pipelines over the same rate-limited API and the same rows finish
+    slower than one would have, so the wait that prompted the second click gets
+    worse."""
+    started: list = []
+
+    class _Thread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self.args = args
+
+        def start(self):
+            started.append(self.args)
+
+    monkeypatch.setattr(api_server.threading, "Thread", _Thread)
+    monkeypatch.setattr(api_server, "_require_api_key", lambda key: None)
+    monkeypatch.setattr(api_server, "_check_rate_limit", lambda host: None)
+    api_server._jobs.clear()
+    client = TestClient(api_server.app)
+    try:
+        first = client.post("/api/report", json={"name": "Race Probe", "type": "politician"}).json()
+        assert first["ok"] and not first.get("already_running")
+        assert len(started) == 1
+
+        second = client.post("/api/report", json={"name": "Race Probe", "type": "politician"}).json()
+        assert second["job_id"] == first["job_id"], "a rival run was started"
+        assert second["already_running"] is True, "the UI cannot explain the reset timer without this"
+        assert len(started) == 1, "a second pipeline was launched"
+
+        # Casing and padding must not defeat it — the user retypes the name.
+        third = client.post("/api/report", json={"name": "  race probe ", "type": "politician"}).json()
+        assert third["job_id"] == first["job_id"]
+        assert len(started) == 1
+    finally:
+        api_server._jobs.clear()

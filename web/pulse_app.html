@@ -256,7 +256,27 @@
     return noteCard('Still running',
       'Everything below is finished and stored. The rest is still being written on the server — '
       + 'you can close this page and come back; searching the same subject picks it up where it is.'
-      + (when?' Last section arrived '+when+' UTC.':''));
+      + (when?' Last update '+when+' UTC.':''));
+  }
+
+  /** No sections yet is not the same as nothing happening. The stage says what
+      the run is actually doing, and everything before the first section — the
+      scrape, entity linking, whole-corpus sentiment — is the longest part of a
+      run. Reporting "not finished its first section" without saying that reads
+      as a stall. */
+  function workingNote(prog, what){
+    const stage=prog&&prog.stage;
+    const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
+    const c=el('div','card');
+    c.innerHTML=`<div class="row" style="gap:10px;align-items:center">
+        <span class="spinner"></span><b>Still working on ${esc(what)}.</b></div>
+      ${stage?`<div style="font-size:14px;margin-top:8px">${esc(stage)}</div>`:''}
+      <div class="muted" style="font-size:13px;margin-top:8px">
+        No section is finished yet. The scrape, entity linking and whole-corpus sentiment all
+        run before the first one lands, and that is the longest part of a run. You can close
+        this page — searching the same subject later picks it up where it is.
+        ${when?'Last update '+esc(when)+' UTC.':''}</div>`;
+    return c;
   }
 
   const TABS=[['search','Search'],['issue','Issue Map'],['network','Network'],['mission','Mission Control'],['settings','Settings']];
@@ -1227,6 +1247,15 @@
         tick('Planning ingestion…');
         const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type})});
         jobId=j.job_id;
+        // A second Generate re-attaches to the run already in flight rather
+        // than starting a rival one over the same rate-limited API. Say so:
+        // the elapsed counter restarts from zero on re-attach, which otherwise
+        // reads exactly like the run starting over.
+        if(j.already_running)
+          out.appendChild(noteCard('Already running',
+            'A run for this subject was already in progress, so this reconnected to it '
+            + 'instead of starting a second one. The timer below counts from when you '
+            + 'reconnected, not from when the run began.'));
         tick('Scraping sources & reading every mention…');
         // Render each section the moment the server publishes it. Re-rendering
         // only when the finished set actually changes keeps the page still
@@ -1261,9 +1290,7 @@
           } else if(errorBelongsToRun(prog,jobId)){
             out.appendChild(errCard(prog.error));
           } else {
-            out.appendChild(noteCard('Still working',
-              'The run is going on the server and has not finished its first section yet. '
-              + 'You can close this page — search the same name later and it picks up where it is.'));
+            out.appendChild(workingNote(prog, name));
           }
           return;
         }
@@ -1843,9 +1870,7 @@
               out.appendChild(noteCard('Recovered','This is the most recent stored map for this pair — re-run to refresh it.'));
               renderIssue(out,rec.issue_map);
             }catch(_){
-              out.appendChild(noteCard('Still working',
-                'The run is going on the server and has not finished its first section yet. '
-                + 'The corpus it scrapes is stored as it goes, so nothing is wasted — come back and search the same pair.'));
+              out.appendChild(workingNote(prog, principal+' × '+issue));
             }
           }
         }
