@@ -295,7 +295,14 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
                 "platform": mention.platform,
                 "metric": label,
                 "sentiment": sent.sentiment,
+                # `headline` is the historical key; `text` and `author` are what
+                # the UI actually reads. It read neither, so "Representative
+                # mentions" rendered six rows of a platform chip, a bare "@" and
+                # nothing else — the evidence section, empty, on every report.
                 "headline": (mention.text or "")[:140],
+                "text": (mention.text or "")[:400],
+                "author": mention.author_handle,
+                "posted_at": mention.posted_at.isoformat() if mention.posted_at else None,
                 "url": url,
                 "_score": score,
             }

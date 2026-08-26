@@ -1072,7 +1072,7 @@
       color:scoreVal>=50?TONE.positive:scoreVal>=30?'#fbbf24':TONE.negative,
       glow:scoreVal>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)',size:150}));
     g1.appendChild(deltaStat('Total mentions',vol.total!=null?vol.total:(v.total||0),vol.difference_pct));
-    g1.appendChild(kpiCard('Channels covered',fmt(ch.all.length),(v.platforms||ch.all.length)+' platforms'));
+    g1.appendChild(kpiCard('Channels covered',fmt(ch.all.length),(v.platforms||ch.all.length)+' sources'));
     g1.appendChild(kpiCard('Analysed',fmt(cov.mentions_analyzed||s.totalAnalyzed),
       cov.complete?'full coverage':(cov.chunks?cov.chunks+' passes':'partial')));
     c1.appendChild(g1);
@@ -1710,7 +1710,9 @@
     // KPI row
     const s=r.sentiment||{},v=r.volume||{},cov=r.coverage||{};
     const kpis=el('div','grid');kpis.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';
-    kpis.appendChild(kpiCard('Mentions',fmt(v.total),(v.platforms||0)+' platforms'));
+    // `platform` is the OUTLET for news (nation.africa, the-star.co.ke), so
+    // this counts sources, not platforms. "41 platforms" read as nonsense.
+    kpis.appendChild(kpiCard('Mentions',fmt(v.total),(v.platforms||0)+' sources'));
     kpis.appendChild(kpiCard('Positive',pct(s.positive),'sky'));
     kpis.appendChild(kpiCard('Negative',pct(s.negative),'neg'));
     kpis.appendChild(kpiCard('Analysed',fmt(cov.mentions_analyzed||s.totalAnalyzed),cov.complete?'full coverage':(cov.chunks?cov.chunks+' passes':'')));
@@ -1753,10 +1755,21 @@
     const tm=(r.volume&&r.volume.topMentions)||r.topComments||[];
     if(tm.length){
       const mc=el('div','card');mc.innerHTML='<div class="lbl">Representative mentions</div>';
+      // Three shapes reach this: the API's stored-mention payload, the corpus
+      // preview's, and the demo fixture's. Read every key any of them uses — a
+      // mismatch renders an empty evidence list, which is worse than no section
+      // at all because it looks like there is nothing to show.
       tm.slice(0,6).forEach(m=>{
-        mc.appendChild(el('div','mentr',`<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(m.platform||'')}</span>
-          <span class="muted">@${esc(m.author||m.handle||'')}</span></div>
-          <div style="font-size:14px;margin-top:6px">${esc((m.text||'').slice(0,240))}</div>`));
+        const who=m.author||m.author_handle||m.handle||'';
+        const body=m.text||m.headline||'';
+        const when=String(m.posted_at||'').slice(0,10);
+        mc.appendChild(el('div','mentr',`<div class="row" style="gap:8px;font-size:12px;flex-wrap:wrap">
+            <span class="chip">${esc(m.platform||'')}</span>
+            ${who?`<span class="muted">@${esc(String(who).replace(/^@/,''))}</span>`:''}
+            ${when?`<span class="muted">${esc(when)}</span>`:''}
+            ${m.metric?`<span class="muted">${esc(m.metric)}</span>`:''}</div>
+          <div style="font-size:14px;margin-top:6px">${body?esc(String(body).slice(0,300)):'<span class="muted">(no text captured)</span>'}</div>
+          ${m.url?`<div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(m.url)}</div>`:''}`));
       });
       wrap.appendChild(mc);
     }
