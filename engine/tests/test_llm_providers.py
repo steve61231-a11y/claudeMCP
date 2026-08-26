@@ -784,3 +784,70 @@ def test_a_400_naming_nothing_we_sent_still_fails_loudly(monkeypatch):
     with pytest.raises(llm.ProviderRejectedRequest) as excinfo:
         llm.call_json("respond with json", max_tokens=100)
     assert "context too long" in str(excinfo.value)
+
+
+# --- a cut-off reply is retried, not reported as unparseable -----------------
+
+def _truncating_post(monkeypatch, budget_that_succeeds: int):
+    """A provider that truncates until max_tokens reaches the given budget."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_api_key", "sk-test")
+    monkeypatch.setattr(llm.settings, "llm_model", "stealth/ox-alpha")
+    budgets: list[int] = []
+
+    class _Resp:
+        def __init__(self, body):
+            self.status_code = 200
+            self.text = ""
+            self.headers = {}
+            self._body = body
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._body
+
+    def post(url, headers=None, json=None, timeout=None):
+        budgets.append(json["max_tokens"])
+        if json["max_tokens"] < budget_that_succeeds:
+            # Real shape of the failure: valid JSON, cut off mid-string.
+            return _Resp({"choices": [{"message": {"content": '{"label": "Gachagua\'s DCP tours", "description": "Live-streamed cov'},
+                                       "finish_reason": "length"}]})
+        return _Resp({"choices": [{"message": {"content": '{"label": "DCP tours", "description": "done"}'},
+                                   "finish_reason": "stop"}]})
+
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
+    return budgets
+
+
+def test_a_cut_off_reply_is_retried_with_a_bigger_budget(monkeypatch):
+    """A model that MANDATES reasoning charges thinking against the same
+    budget, so a limit that used to be ample now runs out mid-sentence. The
+    Anthropic path has always retried this; this one reported "no JSON found"
+    with a fragment of perfectly good JSON attached."""
+    budgets = _truncating_post(monkeypatch, budget_that_succeeds=800)
+    assert llm.call_json("respond with json", max_tokens=200) == {"label": "DCP tours",
+                                                                  "description": "done"}
+    assert budgets == [200, 400, 800], f"expected a doubling ladder, got {budgets}"
+
+
+def test_a_truncated_fragment_is_never_parsed_as_an_answer(monkeypatch):
+    """The tail is missing by definition; a repaired fragment would be a
+    silently partial answer presented as a complete one."""
+    monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 200, raising=False)
+    _truncating_post(monkeypatch, budget_that_succeeds=10_000)
+    with pytest.raises(llm.TruncatedReply):
+        llm.call_json("respond with json", max_tokens=200)
+
+
+def test_the_ladder_stops_at_the_backend_ceiling(monkeypatch):
+    monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 800, raising=False)
+    budgets = _truncating_post(monkeypatch, budget_that_succeeds=10_000)
+    with pytest.raises(llm.TruncatedReply):
+        llm.call_json("respond with json", max_tokens=200)
+    assert max(budgets) == 800, f"ran past the ceiling: {budgets}"

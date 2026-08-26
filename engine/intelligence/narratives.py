@@ -66,8 +66,15 @@ The required JSON shape is: {"label": "2-4 word theme", "description": "1 senten
 def label_cluster(sample_texts: list[str]) -> dict:
     samples = "\n".join(f"- {t}" for t in sample_texts[:8])
     try:
-        return llm.call_json_untrusted(LABEL_PROMPT, samples, expected_keys={"label"}, max_tokens=200)
-    except ValueError:
+        # 200 tokens is plenty for a label and a sentence, and nowhere near
+        # enough on a model that MANDATES reasoning: thinking is charged
+        # against the same budget, so the answer was being cut off mid-word.
+        return llm.call_json_untrusted(LABEL_PROMPT, samples, expected_keys={"label"}, max_tokens=1500)
+    except Exception:  # noqa: BLE001
+        # An unlabelled cluster is a cosmetic loss — it falls back to
+        # "narrative-N" below. Catching only ValueError meant a provider error
+        # (a RuntimeError) escaped and took the ENTIRE report down over a
+        # two-word heading.
         return {}
 
 

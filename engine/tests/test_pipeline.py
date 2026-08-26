@@ -149,3 +149,16 @@ def test_pipeline_rerun_does_not_duplicate_mentions(db_session, monkeypatch):
 
     run_pipeline(db_session, politician, "weekly", *window)
     assert db_session.query(RawMention).count() == first_count
+
+
+def test_an_unlabelled_narrative_never_takes_the_report_down(monkeypatch):
+    """A cluster label is a two-word heading. Catching only ValueError meant a
+    provider error — a RuntimeError — escaped and killed the entire report over
+    one."""
+    from engine.intelligence import narratives
+
+    def boom(*a, **k):
+        raise RuntimeError("openai_compatible call failed after 4 attempts")
+
+    monkeypatch.setattr(narratives.llm, "call_json_untrusted", boom)
+    assert narratives.label_cluster(["a post", "another post"]) == {}

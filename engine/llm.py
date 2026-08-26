@@ -153,7 +153,14 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     if backend == "stub":
         return _stub_json(prompt)
     if backend == "openai_compatible":
-        parsed = _openai_compatible_json(prompt, max_tokens, resolved_model)
+        try:
+            parsed = _openai_compatible_json(prompt, max_tokens, resolved_model)
+        except TruncatedReply:
+            # Same ladder the Anthropic path below has always had.
+            ceiling = max_output_tokens()
+            if max_tokens < ceiling:
+                return call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
+            raise
         _cache_write(key, parsed)
         return parsed
 
@@ -334,6 +341,18 @@ def _reply_text(payload: dict) -> str:
     )
 
 
+class TruncatedReply(RuntimeError):
+    """The model was cut off at max_tokens before finishing its answer.
+
+    The Anthropic path has always retried this with a bigger budget; the
+    OpenAI-compatible path had no equivalent, so a cut-off reply surfaced as
+    "no JSON found" with a fragment of perfectly good JSON attached. It became
+    routine the moment a model that MANDATES reasoning arrived: thinking is
+    charged against the same budget as the answer, so a limit that used to be
+    ample now runs out mid-sentence.
+    """
+
+
 class ProviderRejectedRequest(RuntimeError):
     """A 4xx the provider will never accept, however many times it is sent.
 
@@ -438,7 +457,16 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                     f"(model={model!r}) — {response.text[:400] or '<empty body>'}"
                 )
             response.raise_for_status()
-            return _extract_json(_reply_text(response.json()))
+            payload = response.json()
+            text = _reply_text(payload)
+            if (payload.get("choices") or [{}])[0].get("finish_reason") == "length":
+                # Don't try to parse it: the tail is missing by definition, and
+                # a repaired fragment would be a silently partial answer.
+                raise TruncatedReply(
+                    f"reply cut off at max_tokens={body['max_tokens']} "
+                    f"(model={model!r}); retrying with a larger budget"
+                )
+            return _extract_json(text)
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             last_error = exc
             attempt += 1
