@@ -836,18 +836,124 @@ def test_a_cut_off_reply_is_retried_with_a_bigger_budget(monkeypatch):
     assert budgets == [200, 400, 800], f"expected a doubling ladder, got {budgets}"
 
 
-def test_a_truncated_fragment_is_never_parsed_as_an_answer(monkeypatch):
-    """The tail is missing by definition; a repaired fragment would be a
-    silently partial answer presented as a complete one."""
+def test_a_half_written_field_is_never_presented_as_complete(monkeypatch):
+    """Salvage keeps what closed cleanly and drops the rest. The cut-off field
+    must not appear at all — a truncated value served as a whole one is worse
+    than a missing section, because nothing downstream can tell."""
     monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 200, raising=False)
     _truncating_post(monkeypatch, budget_that_succeeds=10_000)
+    result = llm.call_json("respond with json", max_tokens=200)
+    assert result == {"label": "Gachagua's DCP tours"}
+    assert "description" not in result
+
+
+def test_nothing_recoverable_still_fails_loudly(monkeypatch):
+    """Salvage is not a licence to invent an answer."""
+    import requests
+
+    monkeypatch.setattr(llm.settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(llm.settings, "llm_base_url", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(llm.settings, "llm_model", "m")
+    monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 200, raising=False)
+
+    class _Resp:
+        status_code = 200
+        text = ""
+        headers: dict = {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            # Cut before a single member completes: nothing to keep.
+            return {"choices": [{"message": {"content": '{"key_actors":[{"name":"Ru'},
+                                 "finish_reason": "length"}]}
+
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _Resp())
+    monkeypatch.setattr(__import__("time"), "sleep", lambda s: None)
     with pytest.raises(llm.TruncatedReply):
         llm.call_json("respond with json", max_tokens=200)
 
 
 def test_the_ladder_stops_at_the_backend_ceiling(monkeypatch):
+    """It must climb to the ceiling and no further — asking for more than the
+    provider allows is a hard 400 on some backends."""
     monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 800, raising=False)
     budgets = _truncating_post(monkeypatch, budget_that_succeeds=10_000)
-    with pytest.raises(llm.TruncatedReply):
-        llm.call_json("respond with json", max_tokens=200)
+    llm.call_json("respond with json", max_tokens=200)
     assert max(budgets) == 800, f"ran past the ceiling: {budgets}"
+
+
+# --- the configured ceiling must reach the wire ------------------------------
+
+def test_the_configured_ceiling_is_what_is_actually_sent(monkeypatch):
+    """LLM_MAX_OUTPUT_TOKENS was accepted, reported by max_output_tokens(), and
+    then silently discarded: the request body clamped to DeepSeek's 8000 no
+    matter what an operator set. Raising it did nothing, and every section that
+    needed more truncated anyway."""
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 32000, raising=False)
+
+    llm.call_json("a prompt", max_tokens=20000)
+    assert captured["body"]["max_tokens"] == 20000, (
+        f"sent {captured['body']['max_tokens']}, not the requested budget"
+    )
+
+
+def test_the_provider_default_still_caps_an_unconfigured_run(monkeypatch):
+    captured = _use_openai_compatible(monkeypatch, json.dumps({"ok": True}))
+    monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 0, raising=False)
+    llm.call_json("a prompt", max_tokens=99999)
+    assert captured["body"]["max_tokens"] == llm.OPENAI_COMPATIBLE_MAX_TOKENS
+
+
+# --- salvaging a cut-off array ----------------------------------------------
+
+def test_a_flat_object_cut_mid_value_keeps_its_finished_fields():
+    """The real failure shape: three long prose fields, the third cut off."""
+    text = ('{"involvement":"long text here","tension_or_risk":"more text",'
+            '"verdict":"cut off ri')
+    out = llm.salvage_truncated_json(text)
+    assert out["involvement"] == "long text here"
+    assert out["tension_or_risk"] == "more text"
+    assert "verdict" not in out, "a half-written field must not be presented as complete"
+
+
+def test_complete_elements_survive_a_cut_off_array():
+    text = ('{"key_actors":[{"name":"Ruto","relation":"architect"},'
+            '{"name":"Treasury","relation":"funds it"},{"name":"Bou')
+    out = llm.salvage_truncated_json(text)
+    assert [a["name"] for a in out["key_actors"]] == ["Ruto", "Treasury"]
+
+
+def test_a_string_containing_brackets_does_not_confuse_the_salvage():
+    text = '{"items":[{"note":"see [1] and {2}"},{"note":"second"},{"note":"thi'
+    out = llm.salvage_truncated_json(text)
+    assert len(out["items"]) == 2
+    assert out["items"][0]["note"] == "see [1] and {2}"
+
+
+def test_an_escaped_quote_does_not_confuse_the_salvage():
+    text = '{"items":[{"note":"he said \\"yes\\""},{"note":"second"},{"no'
+    out = llm.salvage_truncated_json(text)
+    assert len(out["items"]) == 2
+
+
+def test_nothing_complete_salvages_to_nothing():
+    """Better to fail honestly than to present an empty object as an answer."""
+    assert llm.salvage_truncated_json('{"key_actors":[{"name":"Ru') is None
+    assert llm.salvage_truncated_json("") is None
+    assert llm.salvage_truncated_json("not json at all") is None
+
+
+def test_salvage_is_the_last_resort_not_the_first(monkeypatch):
+    """It must only run once the budget cannot grow — otherwise a section that
+    would have come back whole is quietly served short."""
+    monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 800, raising=False)
+    budgets = _truncating_post(monkeypatch, budget_that_succeeds=10_000)
+    result = llm.call_json("respond with json", max_tokens=200)
+    # It climbed first...
+    assert budgets == [200, 400, 800]
+    # ...then salvaged what was complete rather than losing the section.
+    assert result == {"label": "Gachagua's DCP tours"}
+    assert "description" not in result

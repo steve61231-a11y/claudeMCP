@@ -155,11 +155,21 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     if backend == "openai_compatible":
         try:
             parsed = _openai_compatible_json(prompt, max_tokens, resolved_model)
-        except TruncatedReply:
+        except TruncatedReply as cut:
             # Same ladder the Anthropic path below has always had.
             ceiling = max_output_tokens()
             if max_tokens < ceiling:
                 return call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
+            # Nowhere left to climb. An analyst asked for 15-40 actors and the
+            # reply was cut mid-element; failing here discards every complete
+            # one to avoid keeping a broken one, and the section renders empty.
+            # Salvage what closed cleanly instead — a short section is a
+            # finding, an empty one is a dead end.
+            salvaged = salvage_truncated_json(getattr(cut, "partial_text", "") or "")
+            if salvaged is not None:
+                # Deliberately NOT cached: it is a partial answer, and a later
+                # run with a bigger budget should get the whole thing.
+                return salvaged
             raise
         _cache_write(key, parsed)
         return parsed
@@ -176,6 +186,81 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     parsed = _extract_json(response.content[0].text)
     _cache_write(key, parsed)
     return parsed
+
+
+def salvage_truncated_json(text: str):
+    """Recover the complete part of a JSON reply that was cut off mid-write.
+
+    A section analyst asks for 15-40 actors, or for three long prose fields.
+    When the reply is truncated the tail is half-written, the whole thing fails
+    to parse, and thirty good actors are discarded to avoid keeping one broken
+    one. That is the wrong trade when the alternative is an empty section.
+
+    Two kinds of safe cut point are tracked, whichever comes later:
+      - just after a nested value closes inside a container, and
+      - just before a comma at container depth, which always separates one
+        finished member from the next.
+
+    Returns None when nothing complete can be recovered, so the caller fails
+    honestly rather than presenting an empty object as an answer.
+    """
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    last_good: int | None = None
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "[{":
+            stack.append(ch)
+        elif ch in "]}":
+            if not stack:
+                break
+            stack.pop()
+            if stack:  # a member of an enclosing container just completed
+                last_good = i + 1
+        elif ch == "," and stack:
+            # Everything before this comma is a finished member.
+            last_good = i
+
+    if last_good is None:
+        return None
+
+    head = text[:last_good]
+    open_stack: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in head:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "[{":
+            open_stack.append(ch)
+        elif ch in "]}":
+            if open_stack:
+                open_stack.pop()
+
+    closing = "".join("]" if b == "[" else "}" for b in reversed(open_stack))
+    try:
+        return json.loads(head + closing)
+    except ValueError:
+        return None
 
 
 def _extract_json(text: str):
@@ -386,7 +471,12 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
         # DeepSeek caps output at 8192; asking for more is a hard 400. Our
         # largest request is 8000 (the truncation retry), so this only ever
         # bites if a caller raises that.
-        "max_tokens": min(max_tokens, OPENAI_COMPATIBLE_MAX_TOKENS),
+        # Clamp to the CONFIGURED ceiling, not to DeepSeek's. Hard-coding 8000
+        # here meant LLM_MAX_OUTPUT_TOKENS was accepted, reported, and then
+        # silently discarded on the wire — so raising it did nothing at all,
+        # and every request that needed more than 8000 truncated no matter what
+        # the operator set.
+        "max_tokens": min(max_tokens, max_output_tokens()),
         "messages": [{"role": "user", "content": prompt}],
     }
     # JSON mode removes the fenced-code and preamble habits that break parsing.
@@ -460,12 +550,14 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
             payload = response.json()
             text = _reply_text(payload)
             if (payload.get("choices") or [{}])[0].get("finish_reason") == "length":
-                # Don't try to parse it: the tail is missing by definition, and
-                # a repaired fragment would be a silently partial answer.
-                raise TruncatedReply(
+                # Carry the text out so the caller can salvage it if there is
+                # nowhere left to grow the budget.
+                cut = TruncatedReply(
                     f"reply cut off at max_tokens={body['max_tokens']} "
                     f"(model={model!r}); retrying with a larger budget"
                 )
+                cut.partial_text = text
+                raise cut
             return _extract_json(text)
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             last_error = exc
