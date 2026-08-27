@@ -37,6 +37,10 @@ MAX_PER_DOMAIN = 40
 class WaybackConnector(IngestionConnector):
     def __init__(self, domains: list[str] | None = None):
         self.domains = domains or DEFAULT_DOMAINS
+        # Why the last fetch came back empty, when it came back empty. A
+        # per-domain `except: continue` hides a blocked host, a timeout and a
+        # genuine absence of captures behind the same silent zero.
+        self.last_error: str | None = None
 
     def fetch(
         self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
@@ -44,11 +48,17 @@ class WaybackConnector(IngestionConnector):
         surname = politician_name.strip().split()[-1].lower()
         mentions: list[IngestedMention] = []
         seen: set[str] = set()
+        failures: list[str] = []
         for domain in self.domains:
             try:
                 mentions.extend(self._cdx_domain(domain, surname, window_start, window_end, seen))
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 — one dead domain is not the run
+                failures.append(f"{domain}: {type(exc).__name__}: {exc}"[:120])
                 continue
+        # Only a complete sweep of failures is worth reporting: archive.org
+        # legitimately has no captures for some outlets, and calling that an
+        # error would cry wolf on every run.
+        self.last_error = "; ".join(failures[:3]) if len(failures) == len(self.domains) else None
         return mentions
 
     def _cdx_domain(self, domain, surname, window_start, window_end, seen) -> list[IngestedMention]:

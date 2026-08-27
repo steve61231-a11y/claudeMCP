@@ -1667,24 +1667,35 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
 
     def _probe(build):
         try:
-            items = build().fetch(q, aliases, ws, we)
+            connector = build()
+            items = connector.fetch(q, aliases, ws, we)
             sample = items[0].get("text", "")[:120] if items else None
-            return {"items": len(items), "error": None, "sample": sample}
+            # A connector that swallows its own failures per-source can report
+            # why it came back empty. Without that, a blocked host and a
+            # genuine absence of data are the same zero.
+            return {"items": len(items), "sample": sample,
+                    "error": getattr(connector, "last_error", None)}
         except Exception as exc:  # noqa: BLE001
             return {"items": 0, "error": f"{type(exc).__name__}: {exc}"[:200], "sample": None}
 
     from engine.ingestion.gdelt_connector import GdeltConnector
     from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
     from engine.ingestion.reddit_connector import RedditConnector
+    from engine.ingestion.wayback_connector import WaybackConnector
     from engine.ingestion.wikipedia_connector import WikipediaConnector
     from engine.ingestion.youtube_connector import YouTubeConnector
 
+    # Every connector `plan_run` can schedule belongs here. Wayback was enabled
+    # by default, scheduled on every single run, and absent from this table —
+    # so whether it returned anything was unknowable from outside. That is the
+    # same blind spot that let the discovery layer sit dead for weeks.
     probes = {
         "gdelt": (GdeltConnector, settings.enable_gdelt),
         "google_news": (GoogleNewsRssConnector, settings.enable_google_news),
         "reddit": (RedditConnector, settings.enable_reddit),
         "youtube": (YouTubeConnector, settings.enable_youtube),
         "wikipedia": (WikipediaConnector, settings.enable_wikipedia),
+        "wayback": (WaybackConnector, settings.enable_wayback),
     }
     if settings.enable_scweet:
         from engine.ingestion.scweet_connector import ScweetConnector
