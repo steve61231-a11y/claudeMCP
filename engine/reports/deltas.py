@@ -25,10 +25,20 @@ def compute_deltas(db: Session, politician: Politician, current_payload: dict) -
 
     cur_sent = current_payload.get("sentiment_breakdown") or {}
     prev_sent = prev.get("sentiment_breakdown") or {}
-    sentiment_shift = {
-        key: round(cur_sent.get(f"{key}_pct", 0) - prev_sent.get(f"{key}_pct", 0), 1)
-        for key in ("positive", "neutral", "negative")
-    }
+    def _shift(key: str) -> float | None:
+        """The move in a sentiment share, or None when it cannot be computed.
+
+        A period where nothing was scored now reports None rather than 0.0, so
+        subtracting is meaningless: "unchanged at 0" would be a claim about the
+        subject, when the truth is that one of the two periods has no reading.
+        """
+        current = cur_sent.get(f"{key}_pct")
+        previous = prev_sent.get(f"{key}_pct")
+        if current is None or previous is None:
+            return None
+        return round(current - previous, 1)
+
+    sentiment_shift = {key: _shift(key) for key in ("positive", "neutral", "negative")}
 
     cur_vol = (current_payload.get("volume_trends") or {}).get("total_mentions", 0)
     prev_vol = (prev.get("volume_trends") or {}).get("total_mentions", 0)

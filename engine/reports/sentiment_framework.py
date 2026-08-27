@@ -201,16 +201,22 @@ def build_sentiment_score_section(payload: dict, previous: dict | None,
                                   sentiments: dict | None = None) -> dict:
     """2.0 — the headline number, and what it was last period."""
     positive, negative, neutral = sentiment_counts(payload, sentiments)
-    score = sentiment_score(positive, negative, neutral)
+    analysed = positive + negative + neutral
+    # A headline "0.0%" off nothing scored is indistinguishable from a subject
+    # with genuinely no positive coverage, and one of those is a finding while
+    # the other is a failure.
+    score = sentiment_score(positive, negative, neutral) if analysed else None
 
     previous_score = None
     if previous:
         previous_score = previous.get("sentiment_framework", {}).get("sentiment_score", {}).get("score")
 
-    change = round(score - previous_score, 1) if previous_score is not None else None
+    change = (round(score - previous_score, 1)
+              if previous_score is not None and score is not None else None)
     return {
         "score": score,
         "definition": "Share of positive mentions over the reporting period (framework 3.0).",
+        "scoring_gap": _scoring_gap(payload, analysed),
         "previous_score": previous_score,
         "change": change,
         "direction": (
@@ -261,6 +267,25 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
     }
 
 
+def _scoring_gap(payload: dict, analysed: int) -> str | None:
+    """A warning when the corpus was collected but barely scored.
+
+    A report that reads 0.0% positive off nothing scored is not thin, it is
+    wrong — and it looks identical to a genuinely neutral subject. Say which
+    one it is.
+    """
+    total = int((payload.get("volume_trends") or {}).get("total_mentions") or 0)
+    if not total:
+        return None
+    if analysed == 0:
+        return (f"None of the {total} collected mentions were scored, so no sentiment "
+                "reading is possible. The figures below are absent, not zero.")
+    if analysed < total * 0.5:
+        return (f"Only {analysed} of {total} collected mentions were scored, so this "
+                "reading rests on a minority of the corpus.")
+    return None
+
+
 def build_sentiment_section(payload: dict, sentiments: dict | None = None) -> dict:
     """3.0 — positive / negative / neutral totals and the score (pie chart)."""
     positive, negative, neutral = sentiment_counts(payload, sentiments)
@@ -275,8 +300,10 @@ def build_sentiment_section(payload: dict, sentiments: dict | None = None) -> di
             "negative": _pct(negative, total),
             "neutral": _pct(neutral, total),
         },
-        "sentiment_score": sentiment_score(positive, negative, neutral),
+        "sentiment_score": sentiment_score(positive, negative, neutral) if total else None,
         "chart": "pie",  # the framework specifies a pie chart here
+        # Why the numbers look the way they do, when they look wrong.
+        "scoring_gap": _scoring_gap(payload, total),
     }
 
 

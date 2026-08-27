@@ -695,13 +695,22 @@
     const score=fw.sentiment_score||{}, vol=fw.overall_mentions||{};
     const grid2=el('div','grid');grid2.style.gridTemplateColumns='auto 1fr';grid2.style.alignItems='center';grid2.style.gap='24px';
     const ringWrap=el('div','');
-    ringWrap.appendChild(scoreRing(score.score||0,{label:'Sentiment score',suffix:'%',decimals:true,
-      delta:score.change,deltaSuffix:' pts',
-      color:(score.score||0)>=50?TONE.positive:(score.score||0)>=30?'#fbbf24':TONE.negative,
-      glow:(score.score||0)>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)'}));
+    if(score.score==null){
+      // No score at all is a different statement from a score of zero, and a
+      // ring reading 0.0% asserts the subject has no positive coverage when in
+      // fact nothing was scored.
+      ringWrap.appendChild(el('div','',`<div class="kpi tnum" style="color:var(--mut)">—</div>
+        <div class="muted" style="font-size:12px">not scored</div>`));
+    } else {
+      ringWrap.appendChild(scoreRing(score.score,{label:'Sentiment score',suffix:'%',decimals:true,
+        delta:score.change,deltaSuffix:' pts',
+        color:score.score>=50?TONE.positive:score.score>=30?'#fbbf24':TONE.negative,
+        glow:score.score>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)'}));
+    }
     grid2.appendChild(ringWrap);
     const meta=el('div','');
     meta.innerHTML=`<div class="muted" style="font-size:13px">${esc(score.definition||'')}</div>
+      ${score.scoring_gap?`<div class="qt" style="border-left-color:var(--amber);font-style:normal;color:var(--amber)">${esc(score.scoring_gap)}</div>`:''}
       <div class="row" style="margin-top:10px">
         <span class="chip">Previous: ${score.previous_score!=null?score.previous_score+'%':'—'}</span>
         <span class="pill ${score.direction==='improving'?'pos':score.direction==='declining'?'neg':''}">${esc(score.direction||'')}</span>

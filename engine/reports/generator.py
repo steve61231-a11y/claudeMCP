@@ -79,7 +79,12 @@ def generate_report_payload(
     network_snapshot: dict,
 ) -> dict:
     sentiment_counts = Counter(s["sentiment"] for s in sentiments.values())
-    total_sentiment = sum(sentiment_counts.values()) or 1
+    # The true count, and separately a divisor that cannot be zero. These were
+    # one variable: `sum(...) or 1`. The guard leaked into the payload, so a run
+    # that scored NOTHING reported "1 analysed" and a 0.0% sentiment score —
+    # presenting a total scoring failure as a real reading of the subject.
+    analysed = sum(sentiment_counts.values())
+    divisor = analysed or 1
 
     volume_by_platform = Counter(m["platform"] for m in mentions)
     volume_by_day = Counter(m["posted_at"].date().isoformat() for m in mentions)
@@ -91,10 +96,15 @@ def generate_report_payload(
 
     payload = {
         "sentiment_breakdown": {
-            "positive_pct": round(100 * sentiment_counts.get("positive", 0) / total_sentiment, 1),
-            "neutral_pct": round(100 * sentiment_counts.get("neutral", 0) / total_sentiment, 1),
-            "negative_pct": round(100 * sentiment_counts.get("negative", 0) / total_sentiment, 1),
-            "total_mentions_analyzed": total_sentiment,
+            # None, not 0.0, when nothing was scored. A zero asserts "none of
+            # this is positive"; None renders as "—" and says we do not know.
+            "positive_pct": round(100 * sentiment_counts.get("positive", 0) / divisor, 1) if analysed else None,
+            "neutral_pct": round(100 * sentiment_counts.get("neutral", 0) / divisor, 1) if analysed else None,
+            "negative_pct": round(100 * sentiment_counts.get("negative", 0) / divisor, 1) if analysed else None,
+            "total_mentions_analyzed": analysed,
+            # Scored out of eligible, so a silent scoring failure is a visible
+            # number rather than an invented percentage.
+            "coverage_pct": round(100 * analysed / max(len(mentions), 1), 1),
         },
         "volume_trends": {
             "by_platform": dict(volume_by_platform),
