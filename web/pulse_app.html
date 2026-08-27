@@ -665,6 +665,40 @@
      information, and a silently missing section is not.
      ================================================================= */
 
+  /** The evidence behind a framework issue.
+
+      An issue rendered as "a growing negative narrative" is something the
+      reader could have guessed. The same issue rendered with who is pushing
+      it, how each side frames it, and three things people actually said — with
+      the source each came from — is the thing being paid for. All of it is
+      already in the payload; it just never reached the page. */
+  function fwEvidence(ev){
+    if(!ev||!Object.keys(ev).length)return null;
+    const box=el('div','');
+    if(ev.how_it_unfolded)box.appendChild(el('div','',
+      `<div style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">${esc(ev.how_it_unfolded)}</div>`));
+    if((ev.driven_by||[]).length)box.appendChild(el('div','',
+      `<div class="muted" style="font-size:12.5px;margin-top:8px">Driven by: ${ev.driven_by.map(handle).join(' · ')}</div>`));
+    if(ev.supporter_framing||ev.critic_framing){
+      const fr=el('div','stance');fr.style.marginTop='10px';
+      if(ev.supporter_framing)fr.appendChild(el('div','stance-col',
+        `<h4 style="color:var(--pos)">Supporters frame it as</h4><div style="font-size:13px;margin-top:6px">${esc(ev.supporter_framing)}</div>`));
+      if(ev.critic_framing)fr.appendChild(el('div','stance-col',
+        `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13px;margin-top:6px">${esc(ev.critic_framing)}</div>`));
+      box.appendChild(fr);
+    }
+    const quotes=[...(ev.quotes||[]),...(ev.public_voice||[])].filter(q=>q&&q.text);
+    if(quotes.length){
+      box.appendChild(el('div','lbl','In their own words'));
+      quotes.slice(0,5).forEach(q=>box.appendChild(el('div','',
+        `<div class="qt">“${esc(q.text)}”<span class="qt-ref">${q.stance?esc(q.stance)+' · ':''}ref ${esc(q.ref||'—')}</span></div>`)));
+    }
+    const o=ev.origin||{};
+    if(o.first_seen&&o.first_seen.date)box.appendChild(el('div','',
+      `<div class="muted" style="font-size:12px;margin-top:10px">First seen ${esc(o.first_seen.date)} on ${esc(o.first_seen.platform||'—')}${o.peak?` · peaked ${esc(o.peak.date)}`:''}${o.platforms_reached?` · reached ${o.platforms_reached} platform(s)`:''}</div>`));
+    return box.children.length?box:null;
+  }
+
   function fwSection(number,title,subtitle){
     const head=el('div','fw-head');
     head.appendChild(el('span','fw-num',esc(number)));
@@ -773,10 +807,13 @@
         const c=el('div','card');c.style.marginTop='10px';c.style.borderLeft='3px solid '+colour;
         c.innerHTML=`<div style="font-weight:600">${esc(item.issue||'')}</div>
           ${item.description?`<div class="muted" style="font-size:13px;margin-top:6px">${esc(item.description)}</div>`:''}
-          <div class="row" style="margin-top:8px">
+          <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
             ${item.mentions!=null?`<span class="chip">${item.mentions} mention(s)</span>`:''}
             ${item.strength!=null?`<span class="chip">strength ${item.strength}</span>`:''}
+            ${item.growth!=null?`<span class="chip">${item.growth>0?'▲':'▼'} ${Math.abs(Math.round(item.growth*100))}%</span>`:''}
           </div>`;
+        const ev=fwEvidence(item.evidence);
+        if(ev)c.appendChild(ev);
         col.appendChild(c);
       });
       g4.appendChild(col);
@@ -811,6 +848,10 @@
     else{
       s6.appendChild(el('div','hero-one',esc(si.issue)));
       if(si.outline)s6.appendChild(el('div','muted',`<div style="margin-top:8px">${esc(si.outline)}</div>`));
+      // The single read the whole report exists to produce. It was generated,
+      // rendered on the Overview tab, and absent from the deliverable.
+      if(si.the_one_thing)s6.appendChild(el('div','',
+        `<div class="qt" style="border-left-color:var(--sky2);font-style:normal;font-size:15px">${esc(si.the_one_thing)}</div>`));
       const traj=si.trajectory;
       s6.appendChild(el('div','row',`<span class="pill ${traj==='escalating'?'neg':traj==='receding'?'pos':''}">${esc(traj||'')}</span>
         <span class="chip">${esc(si.status||'')}</span>`));
@@ -822,6 +863,8 @@
         s6.appendChild(el('div','lbl','Key people'));
         s6.appendChild(el('div','row',(si.key_people||[]).map(p=>`<span class="chip">${esc(p)}</span>`).join('')));
       }
+      const ev6=fwEvidence(si.evidence);
+      if(ev6){s6.appendChild(el('div','lbl','The evidence'));s6.appendChild(ev6);}
     }
     out.appendChild(s6);
   }

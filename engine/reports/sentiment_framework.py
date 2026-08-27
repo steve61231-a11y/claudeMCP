@@ -307,6 +307,61 @@ def build_sentiment_section(payload: dict, sentiments: dict | None = None) -> di
     }
 
 
+def _evidence_for(label: str | None, payload: dict) -> dict:
+    """The evidence behind one issue: who drives it, both framings, real quotes.
+
+    Every one of these already exists in the payload. `narrative_deep_dives`
+    carries how a storyline unfolded, who is pushing it and how supporters and
+    critics each frame it; `public_voice` carries what ordinary people said, in
+    their own words, with the mention each quote came from.
+
+    None of it reached the framework. Section 4.0 rendered an issue as one
+    generic sentence — "a growing negative narrative" — while the sentences
+    that make it worth reading sat unused in the same payload. That is the
+    difference between a report a client pays for and one they could have
+    written themselves.
+    """
+    if not label:
+        return {}
+    wanted = label.strip().lower()
+
+    dive = next(
+        (d for d in (payload.get("narrative_deep_dives") or [])
+         if isinstance(d, dict) and str(d.get("label", "")).strip().lower() == wanted),
+        None,
+    )
+
+    # Citizen voice is not keyed by narrative, so take the themes whose wording
+    # overlaps the issue — better an honest near-match than an empty section.
+    voice_quotes: list[dict] = []
+    voice = payload.get("public_voice") or {}
+    terms = {w for w in wanted.split() if len(w) > 3}
+    for stance in ("critical", "supportive", "neutral"):
+        for theme in (voice.get(stance) or []):
+            if not isinstance(theme, dict):
+                continue
+            haystack = f"{theme.get('theme','')} {theme.get('summary','')}".lower()
+            if terms and not any(t in haystack for t in terms):
+                continue
+            for quote in (theme.get("quotes") or [])[:2]:
+                voice_quotes.append({**quote, "stance": stance})
+
+    evidence = {}
+    if dive:
+        evidence.update({
+            "how_it_unfolded": dive.get("how_it_unfolded"),
+            "driven_by": dive.get("who_is_driving_it") or [],
+            "supporter_framing": dive.get("supporter_framing"),
+            "critic_framing": dive.get("critic_framing"),
+            "quotes": (dive.get("quotes") or [])[:4],
+            "origin": dive.get("origin") or {},
+        })
+    if voice_quotes:
+        evidence.setdefault("quotes", [])
+        evidence["public_voice"] = voice_quotes[:4]
+    return evidence
+
+
 def build_current_issues(payload: dict) -> dict:
     """4.0 — potential levers (positive) and potential barriers (negative).
 
@@ -316,13 +371,15 @@ def build_current_issues(payload: dict) -> dict:
     narratives = payload.get("narratives") or []
 
     def _issue(narrative: dict, kind: str) -> dict:
+        label = narrative.get("label")
         return {
-            "issue": narrative.get("label"),
+            "issue": label,
             "description": narrative.get("description"),
             "mentions": narrative.get("mentions"),
             "strength": narrative.get("strength"),
             "growth": narrative.get("growth"),
             "type": kind,
+            "evidence": _evidence_for(label, payload),
         }
 
     positives, negatives = [], []
@@ -486,13 +543,19 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
     )
 
     timeline = payload.get("timeline") or []
-    key_dates = [
-        {"date": item.get("date"), "event": item.get("event")}
-        for item in timeline[:5]
-        if item.get("date")
-    ]
     key_people = [
         entry.get("who") for entry in (payload.get("influence") or [])[:5] if entry.get("who")
+    ]
+
+    # The dated timeline entries the analyst wrote are mini-briefings, not
+    # headlines — carry the whole thing, because "what happened and why it
+    # mattered" is the section's entire job.
+    key_dates = [
+        {"date": item.get("date"), "event": item.get("event"),
+         "quotes": (item.get("quotes") or [])[:2],
+         "mentions_that_day": item.get("mentions_that_day")}
+        for item in timeline[:5]
+        if item.get("date")
     ]
 
     return {
@@ -502,6 +565,9 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
         "trajectory": trajectory,
         "key_dates": key_dates,
         "key_people": key_people,
+        # The same evidence 4.0 carries, for the issue that matters most.
+        "evidence": _evidence_for(leading.get("label"), payload),
+        "the_one_thing": ((payload.get("deep_insights") or {}).get("the_one_thing") or None),
     }
 
 
