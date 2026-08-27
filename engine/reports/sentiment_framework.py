@@ -29,12 +29,29 @@ Where the framework asks for something we cannot yet evidence, the section says
 so rather than inventing it — a blank in a due-diligence report is information.
 """
 
+import re
 from datetime import datetime, timedelta
 
 # The framework's own threshold for "high impact" on social media.
 HIGH_ENGAGEMENT_THRESHOLD = 100
 EMERGENT_WINDOW_HOURS = 72
 MAX_CURRENT_ISSUES = 3  # "we can stick to 3 maximum"
+MAX_EMERGENT_ITEMS = 10
+
+# Channel-promotion boilerplate. These phrases are an advertisement for the
+# uploader, not coverage of the subject, and the items carrying them are
+# reliably the highest-engagement things in a Kenyan political corpus:
+# "Ruto Finished", "Uhuru COmpletely Destroys Ruto", each wrapped in a plea to
+# subscribe. Ranking on raw engagement handed every slot in the flagship
+# section to them while 238 news items never appeared at all.
+#
+# This detects SELF-PROMOTION, not opinion. A furious editorial stays; a video
+# whose description is mostly a pitch for its own channel is demoted.
+_PROMO_MARKERS = (
+    "subscribe", "join this channel", "get access to perks", "like and share",
+    "hit the bell", "turn on notifications", "support our work",
+    "follow us on", "click the link", "don't forget to",
+)
 
 # Outlet segmentation. The framework asks for local media / international media
 # / social media, and notes the exact list is agreed with each client — so this
@@ -88,6 +105,37 @@ def sentiment_score(positive: int, negative: int, neutral: int) -> float:
     return _pct(positive, total)
 
 
+def subject_profile_from_corpus(mentions: list[dict]) -> str | None:
+    """Who the subject actually is, taken from the reference material we hold.
+
+    The Wikipedia connector fetches the subject's article and files it as
+    source_type="reference" with relation="subject" — precisely so the report
+    can say "President of Kenya" instead of "public figure". Nothing ever read
+    it: `payload["subject_profile"]` was consumed here and written nowhere, so
+    every auto-created subject was described as a "public figure" while their
+    encyclopedia entry sat unread in the corpus.
+
+    Takes the opening sentences, which is where an encyclopedia puts the
+    identity. Returns None rather than a guess when no reference was collected.
+    """
+    for mention in mentions or []:
+        if (mention.get("source_type") or "") != "reference":
+            continue
+        raw = mention.get("raw_payload") or {}
+        if raw.get("relation") not in (None, "subject"):
+            continue
+        text = " ".join((mention.get("text") or "").split())
+        if not text:
+            continue
+        # Two sentences is enough for an identity line and short enough to sit
+        # in a header without pushing the numbers off the screen.
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        profile = " ".join(sentences[:2]).strip()
+        if len(profile) > 40:
+            return profile[:400]
+    return None
+
+
 def build_summary_of_subject(politician, payload: dict) -> dict:
     """1.0 — who the subject is, their position, and an executive summary.
 
@@ -103,6 +151,7 @@ def build_summary_of_subject(politician, payload: dict) -> dict:
         "subject_type": subject_type,
         "who_they_are": payload.get("subject_profile")
         or _identity_line(politician, is_person, titles),
+        "identity_source": "reference material" if payload.get("subject_profile") else "operator record",
         # Position applies to individuals only, per the framework.
         "position": (titles[0] if titles else None) if is_person else None,
         "executive_summary": payload.get("executiveBrief") or payload.get("summary") or "",
@@ -315,17 +364,68 @@ def build_emergent_issues(mentions: list[dict], now: datetime | None = None) -> 
             }
         )
 
-    emergent.sort(key=lambda item: item["engagement"], reverse=True)
     return {
         "window_hours": EMERGENT_WINDOW_HOURS,
         "engagement_threshold": HIGH_ENGAGEMENT_THRESHOLD,
         "count": len(emergent),
-        "items": emergent[:10],
+        "items": rank_emergent(emergent, MAX_EMERGENT_ITEMS),
         "note": (
             f"Social items qualify above {HIGH_ENGAGEMENT_THRESHOLD} engagements; "
-            "editorial coverage in the window qualifies on publication."
+            "editorial coverage in the window qualifies on publication. Ranked "
+            "within each outlet type and interleaved, so one platform's view "
+            "counts cannot take every slot."
         ),
     }
+
+
+def promo_ratio(text: str) -> float:
+    """How much of an item is a pitch for its own channel.
+
+    Returns the share of promo markers per 100 words, roughly. Used to demote,
+    never to exclude: a genuine news video may still say "subscribe" once.
+    """
+    body = (text or "").lower()
+    if not body.strip():
+        return 0.0
+    hits = sum(1 for marker in _PROMO_MARKERS if marker in body)
+    words = max(len(body.split()), 1)
+    return hits / (words / 100.0)
+
+
+def rank_emergent(items: list[dict], limit: int) -> list[dict]:
+    """Order emergent coverage so no single outlet type can take every slot.
+
+    Sorting on raw engagement is the obvious thing and it is wrong here: a
+    YouTube video carries a view count in the hundreds of thousands and a
+    newspaper article carries no engagement figure at all, so editorial
+    coverage loses every comparison and never appears. The numbers are not
+    commensurable and pretending they are is what produced a clickbait feed.
+
+    So: rank WITHIN each outlet type, where the comparison is meaningful, then
+    interleave. Self-promoting items sink within their own segment rather than
+    being suppressed outright — the judgement stays visible and reversible.
+    """
+    by_segment: dict[str, list[dict]] = {}
+    for item in items:
+        item["promo_ratio"] = round(promo_ratio(item.get("headline")), 2)
+        by_segment.setdefault(item.get("outlet_type") or "other", []).append(item)
+
+    for segment in by_segment.values():
+        segment.sort(key=lambda i: (i["promo_ratio"] > 0, -i["engagement"]))
+
+    # Round-robin, strongest of each segment first.
+    ordered: list[dict] = []
+    queues = [iter(v) for _, v in sorted(by_segment.items())]
+    while queues and len(ordered) < limit:
+        for queue in list(queues):
+            item = next(queue, None)
+            if item is None:
+                queues.remove(queue)
+                continue
+            ordered.append(item)
+            if len(ordered) >= limit:
+                break
+    return ordered
 
 
 def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
@@ -381,6 +481,12 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
 def build(politician, payload: dict, mentions: list[dict], previous: dict | None = None,
           now: datetime | None = None, sentiments: dict | None = None) -> dict:
     """Assemble the full framework payload in its documented order."""
+    # Fill in who the subject is from the reference material in the corpus,
+    # unless a caller supplied a profile of its own.
+    if not payload.get("subject_profile"):
+        profile = subject_profile_from_corpus(mentions)
+        if profile:
+            payload = {**payload, "subject_profile": profile}
     current_issues = build_current_issues(payload)
     return {
         "framework": "Sentiment Analysis Framework V1.0",
