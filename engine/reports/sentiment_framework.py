@@ -154,7 +154,7 @@ def build_summary_of_subject(politician, payload: dict) -> dict:
         "identity_source": "reference material" if payload.get("subject_profile") else "operator record",
         # Position applies to individuals only, per the framework.
         "position": (titles[0] if titles else None) if is_person else None,
-        "executive_summary": payload.get("executiveBrief") or payload.get("summary") or "",
+        "executive_summary": payload.get("summary") or "",
         "covers_parameters": ["3.0 Sentiment", "4.0 Current issues", "5.0 Emergent issues"],
     }
 
@@ -505,9 +505,70 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
     }
 
 
+def normalise_payload(payload: dict) -> dict:
+    """Accept either the pipeline payload or the frontend-shaped one.
+
+    This module was written against the shape `_build_frontend_payload`
+    produces — `narratives`, `influence`, `summary` — and the pipeline hands it
+    the raw payload, which calls those `narrative_breakdown`,
+    `influence_summary` and `executive_summary`. Every read of the three
+    returned None.
+
+    The cost was not subtle. 6.0 picks the leading narrative to decide the most
+    important issue, so with narratives permanently invisible it answered "No
+    dominant issue identified in this period's coverage" on every report ever
+    produced, whatever the data said. 4.0 lost its narrative route entirely and
+    fell back to risks/opportunities, and 1.0's executive summary was blank
+    because neither key it looked for existed either.
+
+    Normalising here rather than renaming keys elsewhere: both shapes are real
+    and both callers are legitimate, so the adapter belongs at the boundary
+    that consumes them.
+    """
+    out = dict(payload)
+
+    narratives = payload.get("narratives") or payload.get("narrative_breakdown") or []
+    out["narratives"] = [
+        {
+            "label": n.get("label"),
+            "description": n.get("description"),
+            # strength_score/mention_count/growth_rate are the pipeline's names
+            # for the same three numbers.
+            "strength": n.get("strength", n.get("strength_score")),
+            "mentions": n.get("mentions", n.get("mention_count")),
+            "growth": n.get("growth", n.get("growth_rate")),
+            "tone": n.get("tone") or n.get("sentiment"),
+            "mention_ids": n.get("mention_ids") or [],
+        }
+        for n in narratives
+        if isinstance(n, dict)
+    ]
+
+    influence = payload.get("influence") or payload.get("influence_summary") or []
+    out["influence"] = [
+        {
+            "who": i.get("who") or i.get("author_handle"),
+            "score": i.get("score"),
+            "sentiment": i.get("sentiment", i.get("sentiment_contribution")),
+        }
+        for i in influence
+        if isinstance(i, dict)
+    ]
+
+    out["summary"] = (
+        payload.get("executiveBrief")
+        or payload.get("executive_brief")
+        or payload.get("summary")
+        or payload.get("executive_summary")
+        or ""
+    )
+    return out
+
+
 def build(politician, payload: dict, mentions: list[dict], previous: dict | None = None,
           now: datetime | None = None, sentiments: dict | None = None) -> dict:
     """Assemble the full framework payload in its documented order."""
+    payload = normalise_payload(payload)
     # Fill in who the subject is from the reference material in the corpus,
     # unless a caller supplied a profile of its own.
     if not payload.get("subject_profile"):
