@@ -1569,6 +1569,24 @@
     return c;
   }
 
+  /** How much of the corpus was actually scored, and what went wrong.
+
+      A run that scored nothing rendered as a confident 0.0% and looked exactly
+      like a subject with no positive coverage. The counts make the difference
+      visible; the failure reasons make it fixable. */
+  function renderScoringCoverage(sc){
+    if(!sc||!sc.eligible)return null;
+    const pct=Math.round(100*(sc.scored||0)/sc.eligible);
+    const bad=pct<50;
+    const c=deepCard('Sentiment coverage',
+      `${fmt(sc.scored)} of ${fmt(sc.eligible)} mentions scored (${pct}%) across ${fmt(sc.batches)} batches`);
+    if(bad)c.appendChild(el('div','',`<div class="qt" style="border-left-color:var(--neg);font-style:normal;color:var(--neg)">
+      Most of the corpus was not scored, so any sentiment figure in this report rests on a minority of it.</div>`));
+    (sc.failures||[]).forEach(f=>c.appendChild(el('div','mentr',
+      `<div style="font-size:13.5px;font-family:ui-monospace,monospace">${esc(f)}</div>`)));
+    return c;
+  }
+
   /** What the disambiguation gate filtered out. Filtering nobody can see is
       indistinguishable from data loss. */
   function renderEvidenceGate(gate){
@@ -1614,7 +1632,8 @@
      renderInfluencerStances(r.influencerStances)]
       .filter(Boolean).forEach(c=>host.appendChild(c));
     renderNarrativeDeepDives(r.narrativeDeepDives).forEach(c=>host.appendChild(c));
-    [renderOpenQuestions(r.open_questions,r.investigation_leads),
+    [renderScoringCoverage(r.sentimentScoring),
+     renderOpenQuestions(r.open_questions,r.investigation_leads),
      renderJudgementLists(r),
      renderSinceLastReport(r.sinceLastReport),
      renderSentimentHistory(r.sentimentHistory),

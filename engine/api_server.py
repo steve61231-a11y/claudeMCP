@@ -480,6 +480,10 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # and the Status section was permanently blank. snake_case here because
         # that is the name the renderers already use.
         "sentiment_framework": payload.get("sentiment_framework"),
+        # How much of the corpus the sentiment reading actually rests on, and
+        # why anything was lost. Without it, "0 scored" and "genuinely neutral"
+        # are the same report.
+        "sentimentScoring": payload.get("sentiment_scoring", {}),
         "verification": payload.get("verification", {}),
         "evidence_gate": payload.get("evidence_gate", {}),
         # Every factual claim in the prose, with the sources that back it and

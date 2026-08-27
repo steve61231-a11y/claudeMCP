@@ -19,7 +19,7 @@ def test_every_item_is_scored_no_cap(monkeypatch):
     monkeypatch.setattr(settings, "agent_batch_size", 25, raising=False)
     seen: list[int] = []
 
-    def fake_batch(subject, batch):
+    def fake_batch(subject, batch, failures=None):
         seen.append(len(batch))
         return {
             item_id: {"sentiment": "neutral", "intensity": 3, "context_tag": None,
@@ -37,25 +37,57 @@ def test_every_item_is_scored_no_cap(monkeypatch):
 
 
 def test_batch_failure_leaves_items_unscored_for_retry(monkeypatch):
-    """A failed batch must not invent values; the items stay unscored so a
-    later run retries them."""
+    """A failed batch must not invent values.
+
+    It is no longer abandoned either: it is split and retried, because losing
+    twenty-five mentions to one bad reply is how a 109-mention corpus scored
+    nothing. What must never happen is a guessed value standing in for a real
+    one — an item that keeps failing stays unscored for a later run.
+    """
     monkeypatch.setattr(settings, "agent_batch_size", 10, raising=False)
 
-    calls = {"n": 0}
+    # The first ten items can never be scored; the rest always can.
+    doomed = {f"id-{i}" for i in range(10)}
 
-    def flaky(subject, batch):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return {}  # this batch failed
+    def flaky(subject, batch, failures=None):
+        if any(item_id in doomed for item_id, _ in batch):
+            if failures is not None:
+                failures.append("RuntimeError: reply cut off")
+            return {}
         return {i: {"sentiment": "negative", "intensity": 4, "context_tag": None,
                     "topic": None, "language": None, "confidence": 0.8,
                     "source": "llm_batch"} for i, _ in batch}
 
     monkeypatch.setattr(score_agent, "_score_batch", flaky)
-    scored = score_agent.score_items("Subject", _items(20))
+    report: dict = {}
+    scored = score_agent.score_items("Subject", _items(20), report=report)
 
-    assert len(scored) == 10, "only the successful batch contributes"
+    assert set(scored) == {f"id-{i}" for i in range(10, 20)}, (
+        "a doomed item was scored anyway — a guess stood in for a real value"
+    )
     assert all(v["sentiment"] == "negative" for v in scored.values())
+    assert report["scored"] == 10 and report["eligible"] == 20
+    assert report["failures"], "the reason half the corpus is unscored was not recorded"
+
+
+def test_a_partly_bad_batch_keeps_what_it_can(monkeypatch):
+    """The whole point of splitting: one poisonous item costs itself, not the
+    twenty-four mentions it happened to share a call with."""
+    monkeypatch.setattr(settings, "agent_batch_size", 20, raising=False)
+
+    def flaky(subject, batch, failures=None):
+        if any(item_id == "id-7" for item_id, _ in batch):
+            return {}
+        return {i: {"sentiment": "neutral", "intensity": 3, "context_tag": None,
+                    "topic": None, "language": None, "confidence": 0.8,
+                    "source": "llm_batch"} for i, _ in batch}
+
+    monkeypatch.setattr(score_agent, "_score_batch", flaky)
+    report: dict = {}
+    scored = score_agent.score_items("Subject", _items(20), report=report)
+
+    assert "id-7" not in scored
+    assert len(scored) >= 15, f"one bad item still cost {20 - len(scored)} mentions"
 
 
 def test_scores_map_back_to_the_right_items(monkeypatch):

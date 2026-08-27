@@ -316,8 +316,13 @@ def run_analysis(
     from engine.agents import score as score_agent
     from engine.db.models import MentionClassification
 
+    # The scoring stage reports its own coverage. A run that scored 0 of 109
+    # used to be indistinguishable from a genuinely neutral subject, and the
+    # report presented it as a sentiment reading either way.
+    scoring_report: dict = {}
     scores = score_agent.score_items(
-        politician.name, [(m.id, m.text or "") for m in needing_sentiment]
+        politician.name, [(m.id, m.text or "") for m in needing_sentiment],
+        report=scoring_report,
     )
     for mention in needing_sentiment:
         scored = scores.get(mention.id)
@@ -405,6 +410,10 @@ def run_analysis(
         influence_ranking,
         network_snapshot,
     )
+    if scoring_report:
+        payload["sentiment_scoring"] = scoring_report
+        publish("sentiment_scoring", scoring_report)
+
     # The rule-based payload is complete here — sentiment, volume, narratives,
     # influence and the network are all computed. That is the entire overview,
     # available minutes before the first analyst returns. Publish it.
