@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from engine import llm as _llm
+from engine import health
 from engine.config import settings
 from engine.db.models import MentionSentiment, Politician, RawMention
 from engine.db.session import SessionLocal
@@ -482,6 +483,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # and the Status section was permanently blank. snake_case here because
         # that is the name the renderers already use.
         "sentiment_framework": payload.get("sentiment_framework"),
+        "runHealth": payload.get("run_health"),
         # How much of the corpus the sentiment reading actually rests on, and
         # why anything was lost. Without it, "0 scored" and "genuinely neutral"
         # are the same report.
@@ -734,6 +736,17 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
         # falling back to a pre-generated report for matched names so a live-path
         # failure degrades to a real-looking report instead of a dead end.
         traceback.print_exc()
+        # A dead model is an operator instruction, not a stack trace. Preflight
+        # already turned the provider's error into the specific thing to change,
+        # so say that instead of a file and line number nobody can act on.
+        if isinstance(exc, health.PreflightFailed):
+            diag = f"{exc} — {exc.remedy} (provider said: {exc.error})"[:800]
+            _save_progress(_subject_key(name), "report", job_id=job_id,
+                           status="failed", error=diag)
+            _jobs[job_id] = {"status": "done", "ok": False, "error": diag,
+                             "preflight": exc.to_dict(), "created_at": time.time()}
+            return
+
         tb = traceback.format_exc()
         frames = [ln.strip() for ln in tb.splitlines()
                   if ln.strip().startswith('File "') and "/engine/" in ln]
@@ -1657,6 +1670,29 @@ def admin_timeseries(metric: str = "mentions", days: int = 30, x_api_key: str | 
         return {"ok": True, "metric": metric, "series": series}
     finally:
         db.close()
+
+
+@app.get("/api/admin/model-check")
+def model_check(x_api_key: str | None = Header(default=None)):
+    """Is the analysis model answering RIGHT NOW? One cheap call, ten seconds.
+
+    The single URL to hit before wondering why a report came back empty. A
+    retired model, a rejected key and an exhausted balance all produce the same
+    empty report; this says which one it is and what to change."""
+    _require_api_key(x_api_key)
+    from engine import llm
+
+    try:
+        result = health.preflight()
+    except health.PreflightFailed as failed:
+        return {"ok": False, "answering": False, **failed.to_dict(),
+                "configured_model": llm.strong_model(),
+                "configured_bulk_model": llm.bulk_model(),
+                "backend": llm.provider()}
+    return {"ok": True, "answering": True, **result,
+            "configured_model": llm.strong_model(),
+            "configured_bulk_model": llm.bulk_model(),
+            "note": "the model answered a minimal JSON request"}
 
 
 @app.get("/api/admin/source-check")

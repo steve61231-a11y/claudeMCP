@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
+from engine import health
 from engine.config import settings
 from engine.db.models import (
     Entity,
@@ -160,6 +161,13 @@ def run_analysis(
             on_section(key, value)
         except Exception:  # noqa: BLE001 — never let a reader cost the report
             pass
+
+    # Ask the model one trivial question before doing anything expensive. A run
+    # that cannot reach its model produces an empty report that looks exactly
+    # like a thin subject — that is how a retired OpenRouter preview model went
+    # unnoticed while every stage silently degraded around it.
+    health.reset()
+    health.preflight()
 
     politician_entity = _upsert_entity(db, "politician", politician.name)
 
@@ -554,6 +562,12 @@ def run_analysis(
         publish("sentiment_framework", payload["sentiment_framework"])
     except Exception:  # noqa: BLE001 — the framework view must not break a report
         traceback.print_exc()
+
+    # The run's own account of whether the model answered. Stamped onto the
+    # payload so a reader is never shown empty sections without being told the
+    # backend was down, and so a broken run cannot be presented as an analysis.
+    payload["run_health"] = health.current().summary()
+    publish("run_health", payload["run_health"])
 
     report = IntelligenceReport(
         politician_id=politician.id,

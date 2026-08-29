@@ -135,6 +135,27 @@ def max_output_tokens() -> int:
 
 
 def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> dict | list:
+    """See `_call_json`. This wrapper only does health accounting.
+
+    Every stage catches its own exceptions so a failed section cannot break a
+    run — around 120 handlers do this, each one reasonable on its own. The
+    consequence is that a total backend outage and a genuinely thin subject
+    produce the same empty report. Counting outcomes HERE, at the one seam they
+    all pass through, is what lets the run say which of the two happened.
+    """
+    from engine import health  # local import: health imports llm
+
+    tracker = health.current()
+    try:
+        result = _call_json(prompt, max_tokens=max_tokens, model=model)
+    except BaseException as exc:
+        tracker.record_failure(exc)
+        raise
+    tracker.record_success()
+    return result
+
+
+def _call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> dict | list:
     """Calls Claude and parses a JSON object/array from the response text.
 
     If the response was cut off at max_tokens (truncated JSON), retries once
@@ -159,7 +180,7 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
             # Same ladder the Anthropic path below has always had.
             ceiling = max_output_tokens()
             if max_tokens < ceiling:
-                return call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
+                return _call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
             # Nowhere left to climb. An analyst asked for 15-40 actors and the
             # reply was cut mid-element; failing here discards every complete
             # one to avoid keeping a broken one, and the section renders empty.
@@ -182,7 +203,7 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     _record_usage(response)
     ceiling = max_output_tokens()
     if response.stop_reason == "max_tokens" and max_tokens < ceiling:
-        return call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
+        return _call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
     parsed = _extract_json(response.content[0].text)
     _cache_write(key, parsed)
     return parsed

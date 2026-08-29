@@ -1893,6 +1893,31 @@
       </div>`;
     wrap.appendChild(head);
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
+
+    // A run where the model did not answer is NOT a report. Empty sections
+    // then mean "the backend was down", not "there was nothing to find", and
+    // the two look identical on the page unless this says otherwise. It goes
+    // above everything, including the test-grade notice.
+    const hx=r.runHealth||{};
+    if(hx.headline){
+      const broken=hx.usable===false;
+      const bar=el('div','card');
+      bar.style.cssText=broken
+        ?'border-color:var(--neg);background:rgba(251,113,133,.14)'
+        :'border-color:var(--amber);background:rgba(251,191,36,.08)';
+      bar.innerHTML=`<div class="row" style="gap:10px;align-items:flex-start">
+        <div style="font-size:22px">${broken?'⛔':'⚠'}</div>
+        <div><b style="font-size:15px">${broken
+          ?'This is not an analysis — the model did not answer.'
+          :'Parts of this report are incomplete.'}</b>
+        <div style="font-size:13.5px;margin-top:6px;line-height:1.6">${esc(hx.headline)}</div>
+        <div class="row" style="margin-top:8px">
+          <span class="chip">${fmt(hx.failures)} of ${fmt(hx.calls)} calls failed</span>
+          <span class="chip">${Math.round((hx.failure_rate||0)*100)}% failure rate</span>
+        </div></div></div>`;
+      wrap.appendChild(bar);
+    }
+
     if(r.grade&&r.grade.production===false){
       // A cheap run must never read as a client deliverable. The pill above is
       // easy to miss; this is not.
