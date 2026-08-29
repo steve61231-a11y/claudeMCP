@@ -410,6 +410,21 @@ def run_analysis(
         influence_ranking,
         network_snapshot,
     )
+    # The client dashboard is built on movement between periods, not a single
+    # snapshot. Pure arithmetic over data already held, so it never costs a
+    # model call.
+    try:
+        from engine.reports.periods import build_period_series
+
+        payload["period_series"] = build_period_series(
+            stored_mentions, sentiments_by_mention, built_narratives,
+            (network_snapshot.get("top_people") or []),
+            window_start, window_end,
+        )
+        publish("period_series", payload["period_series"])
+    except Exception:  # noqa: BLE001 — charts must never break a report
+        traceback.print_exc()
+
     if scoring_report:
         payload["sentiment_scoring"] = scoring_report
         publish("sentiment_scoring", scoring_report)

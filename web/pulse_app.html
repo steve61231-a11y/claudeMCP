@@ -1111,6 +1111,10 @@
     const score=fw.sentiment_score||{}, vol=fw.overall_mentions||{};
     const s=r.sentiment||{}, v=r.volume||{}, cov=r.coverage||{}, di=r.deepInsights||{};
     const ch=dashChannels(r), periods=dashPeriods(r);
+    // Period-over-period series computed by the engine: tone, personalities
+    // and theme mix. The reference dashboard is built on movement between
+    // periods, not on a single snapshot.
+    const ps=r.periodSeries||{};
     const sentKeys=[{key:'positive',label:'Positive',color:TONE.positive},
                     {key:'neutral',label:'Neutral',color:TONE.neutral},
                     {key:'negative',label:'Negative',color:TONE.negative}];
@@ -1164,8 +1168,14 @@
                   {label:'Neutral',value:s.neutral||0,color:TONE.neutral},
                   {label:'Negative',value:s.negative||0,color:TONE.negative}];
     g3.appendChild(slices.some(x=>x.value)?donut(slices,{label:'Tone',size:190}):fwEmpty('no sentiment scored yet'));
-    g3.appendChild(periods.length?stackedBars(periods,sentKeys,{width:600,height:230})
-                                 :fwEmpty('no dated series to chart movement'));
+    // Tone per reporting period — the reference dashboard's
+    // "Tonalité des articles sur <subject>". This used to read
+    // payload.timeline, which is the ANALYST's dated event list and carries no
+    // sentiment fields at all, so it plotted zeros on every report.
+    const tone=(ps.tone||[]).filter(t=>t&&t.values);
+    g3.appendChild(tone.length
+      ? stackedBars(tone,sentKeys,{width:600,height:230})
+      : fwEmpty('no scored mentions to chart movement between periods'));
     c3.appendChild(g3);
     out.appendChild(c3);
 
@@ -1175,16 +1185,31 @@
     if(narr.length){
       c4.appendChild(hBars(narr.map((n,i)=>({label:n.label,value:n.mentions||n.strength||0,
         color:SERIES[i%SERIES.length],note:n.description})),{}));
-      if(periods.length>1){
-        const keys=narr.slice(0,4).map((n,i)=>({key:'n'+i,label:n.label,color:SERIES[i%SERIES.length]}));
-        // Narrative strength projected across the period gives the climate curve;
-        // it is a share view, so absolute counts are deliberately not implied.
-        const shaped=periods.map((p,pi)=>({label:p.label,values:Object.fromEntries(
-          narr.slice(0,4).map((n,i)=>['n'+i,(n.mentions||1)*(1+0.15*Math.sin(pi+i))]))}));
-        c4.appendChild(stackedArea(shaped,keys,{width:640,height:220}));
-      }
     } else c4.appendChild(fwEmpty('no narratives identified'));
+    // "Climat politique" — which themes own the conversation, period by
+    // period. Previously drawn from (mentions * (1 + 0.15*sin(i))): a sine
+    // wave. It looked like movement and was invented, which in a
+    // due-diligence product is worse than an empty chart.
+    const themes=ps.themes||{};
+    if((themes.keys||[]).length && (themes.periods||[]).length>1){
+      c4.appendChild(el('div','lbl','Theme mix over the period'));
+      c4.appendChild(stackedArea(themes.periods,
+        themes.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
+        {width:640,height:220}));
+    }
     out.appendChild(c4);
+
+    /* 4b — Personalities: who owns the conversation, period by period. */
+    const pers=ps.personalities||{};
+    if((pers.keys||[]).length && (pers.periods||[]).length>1){
+      const cP=dashCard('4b','Personalities','Who owns the conversation, period by period');
+      cP.appendChild(stackedArea(pers.periods,
+        pers.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
+        {width:640,height:230}));
+      cP.appendChild(el('div','muted chart-note',
+        'Occurrences of each name in the collected text, by period.'));
+      out.appendChild(cP);
+    }
 
     /* 5 / 6 / 7 — Media, Digital, Others: the corpus, partitioned. */
     const channelSection=(num,title,sub,rows,empty)=>{

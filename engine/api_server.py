@@ -484,6 +484,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # why anything was lost. Without it, "0 scored" and "genuinely neutral"
         # are the same report.
         "sentimentScoring": payload.get("sentiment_scoring", {}),
+        # Period-over-period series behind the client's dashboard charts.
+        "periodSeries": payload.get("period_series", {}),
         "verification": payload.get("verification", {}),
         "evidence_gate": payload.get("evidence_gate", {}),
         # Every factual claim in the prose, with the sources that back it and
