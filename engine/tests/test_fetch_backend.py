@@ -17,9 +17,11 @@ class FakeResponse:
 
 
 class FakePage:
+    """curl_cffi's response shape — status_code/text, like requests."""
+
     def __init__(self, status=200, html="<html>" + "body " * 3000 + "</html>"):
-        self.status = status
-        self.html_content = html
+        self.status_code = status
+        self.text = html
 
 
 @pytest.fixture(autouse=True)
@@ -57,7 +59,7 @@ def test_empty_body_is_blocked():
 
 def test_plain_requests_wins_when_not_blocked(monkeypatch):
     monkeypatch.setattr(fb.http, "get", lambda url, **kw: FakeResponse())
-    monkeypatch.setattr(fb, "_scrapling_fetcher", lambda: pytest.fail("tier 2 must not run"))
+    monkeypatch.setattr(fb, "_impersonating_session", lambda: pytest.fail("tier 2 must not run"))
     result = fb.fetch_html("https://news.example/story")
     assert result.ok and result.backend == fb.BACKEND_REQUESTS
     assert fb.snapshot() == {fb.BACKEND_REQUESTS: 1}
@@ -71,7 +73,7 @@ def test_403_escalates_to_scrapling(monkeypatch):
         def get(url, **kw):
             return FakePage()
 
-    monkeypatch.setattr(fb, "_scrapling_fetcher", lambda: Fake)
+    monkeypatch.setattr(fb, "_impersonating_session", lambda: Fake)
     result = fb.fetch_html("https://nation.africa/story")
     assert result.ok and result.backend == fb.BACKEND_SCRAPLING
     assert fb.snapshot() == {fb.BACKEND_SCRAPLING: 1}
@@ -80,7 +82,7 @@ def test_403_escalates_to_scrapling(monkeypatch):
 def test_scrapling_is_skipped_when_disabled(monkeypatch):
     monkeypatch.setattr(settings, "enable_scrapling", False, raising=False)
     monkeypatch.setattr(fb.http, "get", lambda url, **kw: FakeResponse(status_code=403, text="denied"))
-    monkeypatch.setattr(fb, "_scrapling_fetcher", lambda: pytest.fail("tier 2 is disabled"))
+    monkeypatch.setattr(fb, "_impersonating_session", lambda: pytest.fail("tier 2 is disabled"))
     result = fb.fetch_html("https://nation.africa/story")
     assert not result.ok
     assert fb.snapshot() == {"blocked": 1}
@@ -93,7 +95,7 @@ def test_missing_scrapling_degrades_instead_of_raising(monkeypatch):
     def no_module():
         raise ModuleNotFoundError("No module named 'curl_cffi'")
 
-    monkeypatch.setattr(fb, "_scrapling_fetcher", no_module)
+    monkeypatch.setattr(fb, "_impersonating_session", no_module)
     result = fb.fetch_html("https://nation.africa/story")
     assert result.html == "" and result.blocked
     assert fb.snapshot() == {"blocked": 1}
@@ -109,7 +111,7 @@ def test_requests_exception_does_not_stop_escalation(monkeypatch):
             return FakePage()
 
     monkeypatch.setattr(fb.http, "get", boom)
-    monkeypatch.setattr(fb, "_scrapling_fetcher", lambda: Fake)
+    monkeypatch.setattr(fb, "_impersonating_session", lambda: Fake)
     assert fb.fetch_html("https://nation.africa/story").backend == fb.BACKEND_SCRAPLING
 
 

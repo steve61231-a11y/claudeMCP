@@ -19,12 +19,17 @@ requests==2.32.3
 # Full-article body extraction (keyless): turns headline-only article mentions
 # into the whole readable article. Powers engine/ingestion/article_text.py.
 trafilatura==2.1.0
-# Scrapling (BSD-3): tier-2 page fetch with a real Chrome TLS/HTTP2
-# fingerprint (curl_cffi) for hosts that 403 plain `requests`. The [fetchers]
-# extra is what pulls curl_cffi; the playwright/patchright wheels it also
-# brings are import-time deps of scrapling's engine module, not browsers —
-# no `scrapling install` is run, so no Chromium is downloaded into the image.
-scrapling[fetchers]==0.4.15
+# Tier-2 page fetch: a real Chrome TLS/HTTP2 fingerprint for the Kenyan
+# newsrooms that answer 403 to plain `requests` on fingerprint alone.
+#
+# curl_cffi directly, NOT scrapling[fetchers]. The extra pulls playwright and
+# patchright as import-time deps of scrapling's engine module — 285MB of
+# browser bindings in an image that never launches a browser, versus 39MB for
+# the client that actually does the impersonating. Scrapling's own value is
+# its parser and we parse with trafilatura, so the wrapper bought nothing.
+# Install scrapling[fetchers] only if the browser stealth tier is ever turned
+# on (ENABLE_SCRAPLING_STEALTH), which also needs `scrapling install`.
+curl_cffi==0.16.2
 # yt-dlp (keyless): YouTube search + comments for engine/ingestion/youtube_connector.py.
 # Google News RSS + Reddit connectors use only the stdlib + requests (no new dep).
 yt-dlp>=2025.1.1

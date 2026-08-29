@@ -7,17 +7,16 @@ answer 403 with a challenge page. Our body-extraction step reads that as "no
 article body" and the report loses the deepest source we have: the reporting
 itself.
 
-Scrapling (BSD-3, D4Vinci/Scrapling) fixes exactly that layer. Its `Fetcher`
-rides curl_cffi and impersonates a real Chrome TLS + HTTP/2 fingerprint, so
-the request looks like a browser without being one — no Chromium process, no
-per-page second of latency. `StealthyFetcher` goes further (a real patched
-browser that can solve Cloudflare interstitials) but needs a browser install,
-so it stays opt-in and last.
+curl_cffi impersonates a real Chrome TLS + HTTP/2 fingerprint, so the request
+looks like a browser without being one — no Chromium process, no per-page
+second of latency. Scrapling's `StealthyFetcher` (BSD-3, D4Vinci/Scrapling)
+goes further — a patched browser that can solve Cloudflare interstitials — but
+needs a browser install, so it stays opt-in and last.
 
 Order is deliberate: cheapest that works.
 
   1. `requests` — free, ~0.2s, and enough for the majority of hosts.
-  2. Scrapling `Fetcher` — used only when tier 1 came back blocked.
+  2. curl_cffi with a Chrome TLS fingerprint — only when tier 1 was blocked.
   3. Scrapling `StealthyFetcher` — off unless `enable_scrapling_stealth`.
 
 Every tier is best-effort: an unavailable dependency or a raised exception
@@ -114,30 +113,39 @@ def _via_requests(url: str, timeout: int) -> FetchResult:
     return FetchResult(url, html, status, BACKEND_REQUESTS, looks_blocked(status, html))
 
 
-def _scrapling_fetcher():
-    """Import lazily: scrapling pulls curl_cffi and playwright bindings, and a
-    deployment without them must degrade to tier 1 rather than fail to boot."""
-    from scrapling.fetchers import Fetcher  # noqa: PLC0415
+def _impersonating_session():
+    """The TLS-impersonating client, imported lazily.
 
-    return Fetcher
+    This is curl_cffi directly rather than scrapling's `Fetcher` wrapper. The
+    thing tier 2 needs is the Chrome TLS/HTTP2 fingerprint, which lives in
+    curl_cffi (39MB); scrapling's own value is its parser, and we parse with
+    trafilatura. Going through the wrapper meant importing scrapling's engine
+    module, which imports playwright AND patchright at module load — 285MB of
+    browser bindings, in an image that never launches a browser, to reach a
+    client we could import in one line. Measured, not assumed.
+
+    Scrapling is still what tier 3 uses: solving a Cloudflare interstitial
+    genuinely needs the patched browser it wraps."""
+    from curl_cffi import requests as curl_requests  # noqa: PLC0415
+
+    return curl_requests
 
 
 def _via_scrapling(url: str, timeout: int) -> FetchResult:
     try:
-        fetcher = _scrapling_fetcher()
-        page = fetcher.get(
+        client = _impersonating_session()
+        resp = client.get(
             url,
             impersonate=settings.scrapling_impersonate,
             timeout=timeout,
-            stealthy_headers=True,
-            # A bot wall's redirect to a challenge host is itself the answer;
-            # following it just buries the status we want to see.
-            follow_redirects=True,
+            allow_redirects=True,
+            headers={"Accept-Language": "en-GB,en;q=0.9",
+                     "Referer": "https://www.google.com/"},
         )
     except Exception:
         return FetchResult(url, "", None, BACKEND_SCRAPLING, True)
-    status = getattr(page, "status", None)
-    html = getattr(page, "html_content", "") or ""
+    status = getattr(resp, "status_code", None)
+    html = getattr(resp, "text", "") or ""
     if status is not None and status != 200:
         html = ""
     return FetchResult(url, html, status, BACKEND_SCRAPLING, looks_blocked(status, html))
@@ -192,11 +200,11 @@ def fetch_html(url: str, timeout: int = 20) -> FetchResult:
 def availability() -> dict:
     """Which tiers this deploy can actually use, and what each has fetched.
 
-    `enable_scrapling` being true is not the same as scrapling being installed;
-    a missing wheel degrades silently to tier 1, which looks identical to a
-    site that simply never blocked us. This makes the difference visible."""
+    `enable_scrapling` being true is not the same as the wheel being installed;
+    a missing one degrades silently to tier 1, which looks identical to a site
+    that simply never blocked us. This makes the difference visible."""
     try:
-        _scrapling_fetcher()
+        _impersonating_session()
         scrapling_ready: bool | str = True
     except Exception as exc:  # noqa: BLE001
         scrapling_ready = f"{type(exc).__name__}: {exc}"[:120]
