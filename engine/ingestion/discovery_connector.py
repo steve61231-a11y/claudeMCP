@@ -111,7 +111,8 @@ class DiscoveryConnector:
             return self._fetcher(url)
         from engine.ingestion.article_text import extract_body
 
-        return extract_body(url, settings.article_text_max_chars)
+        body, _backend = extract_body(url, settings.article_text_max_chars)
+        return body
 
     # --- public API --------------------------------------------------------
 

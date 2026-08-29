@@ -180,6 +180,15 @@ class Settings(BaseSettings):
     enable_article_text: bool = True
     article_text_max_chars: int = 6000   # per-article body cap fed downstream
     article_text_max_fetch: int = 60      # max URLs enriched per run (bounded)
+    # Scrapling (BSD-3): retry a blocked fetch with a real Chrome TLS/HTTP2
+    # fingerprint via curl_cffi. Kenyan newsrooms behind Cloudflare answer 403
+    # to `requests` on fingerprint alone, so without this their bodies are
+    # simply absent from the corpus. Costs nothing and adds no browser.
+    enable_scrapling: bool = True
+    scrapling_impersonate: str = "chrome"
+    # Browser tier (camoufox/patchright) that can sit through a Cloudflare
+    # interstitial. OFF: needs `scrapling install` and seconds per page.
+    enable_scrapling_stealth: bool = False
     # Wikipedia (keyless MediaWiki REST API): authoritative background on the
     # subject + linked entities. ON by default: free, no key, no extra packages.
     enable_wikipedia: bool = True

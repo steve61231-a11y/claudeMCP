@@ -19,6 +19,12 @@ requests==2.32.3
 # Full-article body extraction (keyless): turns headline-only article mentions
 # into the whole readable article. Powers engine/ingestion/article_text.py.
 trafilatura==2.1.0
+# Scrapling (BSD-3): tier-2 page fetch with a real Chrome TLS/HTTP2
+# fingerprint (curl_cffi) for hosts that 403 plain `requests`. The [fetchers]
+# extra is what pulls curl_cffi; the playwright/patchright wheels it also
+# brings are import-time deps of scrapling's engine module, not browsers —
+# no `scrapling install` is run, so no Chromium is downloaded into the image.
+scrapling[fetchers]==0.4.15
 # yt-dlp (keyless): YouTube search + comments for engine/ingestion/youtube_connector.py.
 # Google News RSS + Reddit connectors use only the stdlib + requests (no new dep).
 yt-dlp>=2025.1.1

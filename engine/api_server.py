@@ -1753,10 +1753,16 @@ def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default
     else:
         discovery["hint"] = "set SEARXNG_URL to enable web discovery"
 
+    # Which fetch tier is available to get past a bot wall. A thin corpus is
+    # usually blocked rather than absent, and that distinction is invisible
+    # unless the tiers report themselves.
+    from engine.ingestion import fetch_backend
+
     return {
         "ok": True,
         "query": q,
         "checked_at": str(we),
+        "fetch_backends": fetch_backend.availability(),
         "total_items": total,
         "working_sources": [n for n, r in results.items() if r["items"] > 0],
         "social_tier": {"tier": tier, "socialcrawl_balance": balance, "reason": reason},

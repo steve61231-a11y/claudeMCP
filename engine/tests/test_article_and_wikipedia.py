@@ -24,7 +24,7 @@ def _article(url="https://news.example.com/story", text="Headline only"):
 
 def test_enrich_appends_full_body_and_records_provenance(monkeypatch):
     monkeypatch.setattr(settings, "enable_article_text", True, raising=False)
-    monkeypatch.setattr(at, "extract_body", lambda url, max_chars: "The full article body with lots of detail.")
+    monkeypatch.setattr(at, "extract_body", lambda url, max_chars: ("The full article body with lots of detail.", "requests"))
     m = _article()
     n = at.enrich_with_article_text([m])
     assert n == 1
@@ -37,7 +37,7 @@ def test_enrich_skips_non_articles_and_is_bounded(monkeypatch):
     monkeypatch.setattr(settings, "enable_article_text", True, raising=False)
     monkeypatch.setattr(settings, "article_text_max_fetch", 2, raising=False)
     calls = []
-    monkeypatch.setattr(at, "extract_body", lambda url, mc: calls.append(url) or "body")
+    monkeypatch.setattr(at, "extract_body", lambda url, mc: (calls.append(url) or "body", "requests"))
     posts = [
         IngestedMention(platform="tiktok", source_type="post", author_handle="u",
                         text="not an article", posted_at=datetime(2026, 6, 10),
@@ -59,8 +59,10 @@ def test_enrich_noop_when_disabled(monkeypatch):
 def test_extract_body_never_raises_on_failure(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("network down")
-    monkeypatch.setattr(at.http, "get", boom)
-    assert at.extract_body("https://x/y", 6000) == ""
+    monkeypatch.setattr(settings, "enable_scrapling", False, raising=False)
+    monkeypatch.setattr(settings, "enable_scrapling_stealth", False, raising=False)
+    monkeypatch.setattr(at.fetch_backend.http, "get", boom)
+    assert at.extract_body("https://x/y", 6000)[0] == ""
 
 
 # --- wikipedia connector -----------------------------------------------------

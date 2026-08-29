@@ -22,7 +22,7 @@ sentiment and grounding all read it) and stashed in
 from concurrent.futures import ThreadPoolExecutor
 
 from engine.config import settings
-from engine.ingestion import http
+from engine.ingestion import fetch_backend
 from engine.ingestion.base import IngestedMention
 
 # Only these source types are article-shaped and worth a full-body fetch.
@@ -40,29 +40,34 @@ def _mention_url(mention: IngestedMention) -> str | None:
     return None
 
 
-def extract_body(url: str, max_chars: int) -> str:
-    """Fetch `url` and return the boilerplate-free article body, or "" on any
-    failure. Never raises."""
+def extract_body(url: str, max_chars: int) -> tuple[str, str | None]:
+    """Fetch `url` and return `(body, backend)` — the boilerplate-free article
+    text and which fetch tier produced it. `("", backend)` on any failure.
+
+    The fetch goes through `fetch_backend`, which retries a bot-walled request
+    with a browser TLS fingerprint before giving up; a 403 from Cloudflare is
+    the single commonest reason a Kenyan article contributes only its headline.
+    Never raises."""
     try:
         import trafilatura
     except Exception:
-        return ""
+        return "", None
+    result = fetch_backend.fetch_html(url, timeout=_FETCH_TIMEOUT)
+    if not result.ok:
+        return "", result.backend
     try:
-        resp = http.get(url, timeout=_FETCH_TIMEOUT)
-        if resp.status_code != 200 or not resp.text:
-            return ""
         body = trafilatura.extract(
-            resp.text,
+            result.html,
             include_comments=False,
             include_tables=False,
             no_fallback=False,
             favor_precision=True,
         )
     except Exception:
-        return ""
+        return "", result.backend
     if not body:
-        return ""
-    return body.strip()[:max_chars]
+        return "", result.backend
+    return body.strip()[:max_chars], result.backend
 
 
 def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
@@ -95,15 +100,18 @@ def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
 
     def _work(pair):
         m, url = pair
-        return m, extract_body(url, max_chars)
+        body, backend = extract_body(url, max_chars)
+        return m, body, backend
 
     enriched = 0
     with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(candidates))) as pool:
-        for m, body in pool.map(_work, candidates):
+        for m, body, backend in pool.map(_work, candidates):
             if not body:
                 continue
             raw = m.get("raw_payload") or {}
             raw["article_text"] = body
+            # Provenance: which tier got past the site's door.
+            raw["article_text_backend"] = backend
             m["raw_payload"] = raw
             title = (m.get("text") or "").strip()
             # Don't duplicate the title if the body already leads with it.
