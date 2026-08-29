@@ -125,6 +125,10 @@ def generate_report_payload(
                 "strength_score": round(n["strength_score"], 2),
                 "growth_rate": round(n["growth_rate"], 2),
                 "mention_count": len(n["mention_ids"]),
+                # Carried, not summarised away: the page has to be able to open
+                # a narrative and show the posts it was built from.
+                "evidence": n.get("evidence", []),
+                "labelled_by": n.get("labelled_by", "model"),
             }
             for n in sorted(narratives, key=lambda n: n["strength_score"], reverse=True)
         ],

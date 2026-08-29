@@ -153,6 +153,11 @@
   #zenith .fw-head{display:flex;align-items:center;gap:2px;margin-bottom:14px}
   #zenith .fw-title{font-size:17px;font-weight:700;letter-spacing:-.01em}
   #zenith .fw-sub{font-size:12px;color:var(--mut);margin-top:2px}
+.drill{background:none;border:1px solid var(--line,#2a3444);color:var(--sky2,#7dd3fc);border-radius:8px;padding:5px 10px;font-size:12.5px;cursor:pointer;margin-top:10px}
+.drill:hover{background:rgba(125,211,252,.08)}
+.drill-body{margin-top:8px;max-height:520px;overflow-y:auto;padding-right:4px}
+.src-link{color:var(--sky2,#7dd3fc);font-size:12.5px;text-decoration:none}
+.src-link:hover{text-decoration:underline}
 </style>
 
 <div id="zenith">
@@ -710,6 +715,45 @@
   }
   const fwEmpty=msg=>el('div','muted','— '+msg);
 
+  /* Receipts. A narrative, source or issue the reader cannot open is an
+     assertion; the posts it was built from are what make it a finding. Every
+     row carries the author, date, engagement, an excerpt and — where the
+     collector captured one — a link out to the original.
+
+     Collapsed by default so a page with forty narratives stays readable, and
+     expanded in place rather than navigating away. */
+  function receipts(items,opts){
+    opts=opts||{};
+    const list=(items||[]).filter(x=>x&&(x.excerpt||x.url||x.author));
+    if(!list.length)return fwEmpty(opts.empty||'no underlying mentions carried for this item');
+    const box=el('div','');
+    const shown=opts.open?list.length:0;
+    const btn=el('button','drill');
+    btn.type='button';
+    const body=el('div','drill-body');
+    body.hidden=!opts.open;
+    const setLabel=()=>{btn.textContent=(body.hidden?'▸ Show':'▾ Hide')+' the '+list.length+' mention'+(list.length===1?'':'s')+' behind this';};
+    btn.addEventListener('click',()=>{body.hidden=!body.hidden;setLabel();});
+    setLabel();
+    list.forEach(item=>{
+      const when=(item.posted_at||'').slice(0,10);
+      const tone=(item.sentiment||'').toLowerCase();
+      const pill=tone==='positive'?'pos':tone==='negative'?'neg':tone?'sky':'';
+      const head=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+          <b style="font-size:13.5px">${esc(item.author||item.platform||'unattributed')}</b>
+          <span class="muted" style="font-size:12px">${esc(item.platform||'')}${when?' · '+esc(when):''}${item.engagement?' · '+fmt(item.engagement)+' engagements':''}${tone?' · ':''}${tone?`<span class="pill ${pill}">${esc(tone)}</span>`:''}</span>
+        </div>`;
+      const quote=item.excerpt?`<div style="font-size:13px;margin-top:5px;white-space:pre-wrap">${esc(item.excerpt)}</div>`:'';
+      // An href only when the collector actually captured one. A dead link
+      // that looks live is worse than no link: it reads as a citation.
+      const link=item.url?`<div style="margin-top:6px"><a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" class="src-link">open the original ↗</a></div>`
+        :`<div class="muted" style="font-size:12px;margin-top:6px">no link captured for this item</div>`;
+      body.appendChild(el('div','mentr',head+quote+link));
+    });
+    box.appendChild(btn);box.appendChild(body);
+    return box;
+  }
+
   /* ---- Sentiment Analysis Framework V1.0 ---- */
   function renderSentimentFramework(out,fw){
     if(!fw){out.appendChild(noteCard('Sentiment framework','Not present in this report.'));return;}
@@ -751,6 +795,18 @@
       </div>`;
     grid2.appendChild(meta);
     s2.appendChild(grid2);
+    // What the number actually means. A headline percentage with nothing under
+    // it is unreadable — "12.2%" told the reader neither what was counted nor
+    // how much to trust it. Every sentence here is arithmetic over counts
+    // shown elsewhere on the page, so it can be checked.
+    const reading=score.reading||[];
+    if(reading.length){
+      const rd=el('div','');rd.style.marginTop='18px';
+      rd.appendChild(el('div','lbl','How to read this number'));
+      reading.forEach(par=>rd.appendChild(el('div','',
+        `<div style="font-size:13.5px;margin-top:9px;line-height:1.62">${esc(par)}</div>`)));
+      s2.appendChild(rd);
+    }
     out.appendChild(s2);
 
     // 2.0 Overall mentions
@@ -765,13 +821,39 @@
     segBox.appendChild(segs.length?hBars(segs):fwEmpty('no coverage segmented yet'));
     mg.appendChild(segBox);
     s2b.appendChild(mg);
+    // Sources, as a dossier rather than a headcount. "Sources covered (73)"
+    // told a reader nothing they could use: not which outlet said what, not
+    // which way it leaned, and nothing they could go and verify. Each source
+    // now carries its volume, its scored tone split, and its loudest items
+    // with links.
+    const detail=vol.sources_detail||[];
     const covered=vol.sources_covered||{};
-    const allCovered=[].concat(...Object.values(covered));
-    if(allCovered.length){
-      const det=el('details','');det.style.marginTop='14px';
-      det.innerHTML=`<summary class="muted" style="cursor:pointer;font-size:12px">Sources covered (${allCovered.length})</summary>
-        <div class="row" style="margin-top:10px">${allCovered.slice(0,60).map(x=>'<span class="chip">'+esc(x)+'</span>').join('')}</div>`;
-      s2b.appendChild(det);
+    if(detail.length){
+      const sc=el('div','');sc.style.marginTop='16px';
+      sc.appendChild(el('div','lbl',`Sources covered (${detail.length}) — what each of them was actually saying`));
+      detail.slice(0,40).forEach(src=>{
+        const lean=src.lean;
+        const pill=lean==='positive'?'pos':lean==='negative'?'neg':lean?'sky':'';
+        const row=el('div','mentr');
+        row.appendChild(el('div','',`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+          <b style="font-size:14px">${esc(src.source)}</b>
+          <span>${lean?`<span class="pill ${pill}">${esc(lean)}</span>`:'<span class="chip">lean not established</span>'}
+          <span class="chip" style="margin-left:6px">${fmt(src.mentions)} mentions</span></span></div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">${esc((src.outlet_type||'').replace(/_/g,' '))} ·
+          ${fmt(src.positive)} positive / ${fmt(src.neutral)} neutral / ${fmt(src.negative)} negative
+          ${src.unscored?` · ${fmt(src.unscored)} unscored`:''}${src.scored<3?' · too few scored to call a lean':''}</div>`));
+        row.appendChild(receipts(src.top_mentions,{empty:'no items carried for this source'}));
+        sc.appendChild(row);
+      });
+      s2b.appendChild(sc);
+    } else {
+      const allCovered=[].concat(...Object.values(covered));
+      if(allCovered.length){
+        const det=el('details','');det.style.marginTop='14px';
+        det.innerHTML=`<summary class="muted" style="cursor:pointer;font-size:12px">Sources covered (${allCovered.length})</summary>
+          <div class="row" style="margin-top:10px">${allCovered.slice(0,60).map(x=>'<span class="chip">'+esc(x)+'</span>').join('')}</div>`;
+        s2b.appendChild(det);
+      }
     }
     out.appendChild(s2b);
 
@@ -859,9 +941,22 @@
         s6.appendChild(el('div','lbl','Key dates'));
         s6.appendChild(timelineChart(si.key_dates));
       }
+      // People named in the coverage. These used to be the top influence
+      // handles — YouTube channels — presented as the people in the story.
       if((si.key_people||[]).length){
-        s6.appendChild(el('div','lbl','Key people'));
-        s6.appendChild(el('div','row',(si.key_people||[]).map(p=>`<span class="chip">${esc(p)}</span>`).join('')));
+        s6.appendChild(el('div','lbl','Key people named in the coverage'));
+        s6.appendChild(el('div','row',(si.key_people||[]).map(p=>{
+          const nm=(p&&p.name)?p.name:p, role=(p&&p.role)?p.role:'', co=(p&&p.co_mentions)?p.co_mentions:null;
+          return `<span class="chip">${esc(nm)}${role?' · '+esc(role):''}${co?' · '+fmt(co)+' co-mentions':''}</span>`;
+        }).join('')));
+      }
+      if((si.key_amplifiers||[]).length){
+        s6.appendChild(el('div','lbl','Accounts amplifying it'));
+        s6.appendChild(el('div','row',(si.key_amplifiers||[]).map(a=>
+          `<span class="chip">${esc(a.handle||'')}${a.platform?' · '+esc(a.platform):''}</span>`).join('')));
+      }
+      if((si.narrative_evidence||[]).length){
+        s6.appendChild(receipts(si.narrative_evidence));
       }
       const ev6=fwEvidence(si.evidence);
       if(ev6){s6.appendChild(el('div','lbl','The evidence'));s6.appendChild(ev6);}
@@ -1110,6 +1205,7 @@
     const fw=r.sentiment_framework||{};
     const score=fw.sentiment_score||{}, vol=fw.overall_mentions||{};
     const s=r.sentiment||{}, v=r.volume||{}, cov=r.coverage||{}, di=r.deepInsights||{};
+    const sc=r.sentimentScoring||{};
     const ch=dashChannels(r), periods=dashPeriods(r);
     // Period-over-period series computed by the engine: tone, personalities
     // and theme mix. The reference dashboard is built on movement between
@@ -1129,8 +1225,16 @@
       glow:scoreVal>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)',size:150}));
     g1.appendChild(deltaStat('Total mentions',vol.total!=null?vol.total:(v.total||0),vol.difference_pct));
     g1.appendChild(kpiCard('Channels covered',fmt(ch.all.length),(v.platforms||ch.all.length)+' sources'));
-    g1.appendChild(kpiCard('Analysed',fmt(cov.mentions_analyzed||s.totalAnalyzed),
-      cov.complete?'full coverage':(cov.chunks?cov.chunks+' passes':'partial')));
+    // Two different numbers were both labelled "Analysed" on one page: how many
+    // mentions the digest READ (every item, documents included) and how many
+    // were SCORED for sentiment (a much smaller set). Shown together they
+    // contradicted each other — "852 · full coverage" beside "only 74 of 661
+    // were scored". Name each for what it is.
+    g1.appendChild(kpiCard('Read by the analyst',fmt(cov.mentions_analyzed||s.totalAnalyzed),
+      cov.complete?'every item read':(cov.chunks?cov.chunks+' passes':'partial')));
+    const scoredN=(sc.scored!=null?sc.scored:s.totalAnalyzed), eligibleN=(sc.eligible!=null?sc.eligible:(v.total||0));
+    g1.appendChild(kpiCard('Scored for sentiment',fmt(scoredN),
+      eligibleN?`${Math.round(100*(scoredN||0)/eligibleN)}% of ${fmt(eligibleN)} mentions`:'not scored'));
     c1.appendChild(g1);
     if(periods.length){
       c1.appendChild(el('div','lbl','Volume through the period'));
@@ -1185,6 +1289,18 @@
     if(narr.length){
       c4.appendChild(hBars(narr.map((n,i)=>({label:n.label,value:n.mentions||n.strength||0,
         color:SERIES[i%SERIES.length],note:n.description})),{}));
+      // Each bar is openable. A bar chart of narrative names answers "how big"
+      // and nothing else; the reader's next question is always "big saying
+      // WHAT?", and the answer is the posts themselves.
+      narr.forEach((n,i)=>{
+        const row=el('div','');row.style.marginTop='14px';
+        row.appendChild(el('div','',`<b style="font-size:14px;color:${SERIES[i%SERIES.length]}">${esc(n.label)}</b>
+          <span class="chip" style="margin-left:8px">${fmt(n.mentions)} mentions</span>
+          ${n.labelled_by==='derived'?'<span class="chip" style="margin-left:6px">named from the text</span>':''}`));
+        if(n.description)row.appendChild(el('div','muted',`<div style="font-size:13px;margin-top:4px">${esc(n.description)}</div>`));
+        row.appendChild(receipts(n.evidence));
+        c4.appendChild(row);
+      });
     } else c4.appendChild(fwEmpty('no narratives identified'));
     // "Climat politique" — which themes own the conversation, period by
     // period. Previously drawn from (mentions * (1 + 0.15*sin(i))): a sine
@@ -1811,7 +1927,7 @@
     kpis.appendChild(kpiCard('Mentions',fmt(v.total),(v.platforms||0)+' sources'));
     kpis.appendChild(kpiCard('Positive',pct(s.positive),'sky'));
     kpis.appendChild(kpiCard('Negative',pct(s.negative),'neg'));
-    kpis.appendChild(kpiCard('Analysed',fmt(cov.mentions_analyzed||s.totalAnalyzed),cov.complete?'full coverage':(cov.chunks?cov.chunks+' passes':'')));
+    kpis.appendChild(kpiCard('Read by the analyst',fmt(cov.mentions_analyzed||s.totalAnalyzed),cov.complete?'every item read':(cov.chunks?cov.chunks+' passes':'')));
     wrap.appendChild(kpis);
 
     // sentiment bars
@@ -1836,10 +1952,12 @@
     // narratives
     if((r.narratives||[]).length){
       const nc=el('div','card');nc.innerHTML='<div class="lbl">Narratives</div>';
-      r.narratives.slice(0,6).forEach(n=>{
-        nc.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between"><b>${esc(n.label)}</b>
+      r.narratives.slice(0,8).forEach(n=>{
+        const row=el('div','mentr',`<div class="row" style="justify-content:space-between"><b>${esc(n.label)}</b>
           <span class="chip">${fmt(n.mentions)} mentions</span></div>
-          <div class="muted" style="font-size:13.5px;margin-top:4px">${esc(n.description||'')}</div>`));
+          <div class="muted" style="font-size:13.5px;margin-top:4px">${esc(n.description||'')}</div>`);
+        row.appendChild(receipts(n.evidence));
+        nc.appendChild(row);
       });
       wrap.appendChild(nc);
     }

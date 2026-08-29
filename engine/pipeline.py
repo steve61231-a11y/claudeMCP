@@ -359,7 +359,11 @@ def run_analysis(
         row.mention_id: {"sentiment": row.sentiment, "intensity": row.intensity} for row in sentiment_rows
     }
 
-    built_narratives = narrative_module.build_narratives(stored_mentions)
+    # The subject's own name distinguishes nothing inside their own corpus, so
+    # it is excluded from any label derived from cluster text.
+    subject_terms = {w.lower() for w in (politician.name or "").split() if len(w) > 2}
+    subject_terms.update(w.lower() for a in (politician.aliases or []) for w in str(a).split() if len(w) > 2)
+    built_narratives = narrative_module.build_narratives(stored_mentions, subject_terms=subject_terms)
     for n in built_narratives:
         narrative_row = Narrative(politician_id=politician.id, label=n["label"], description=n["description"])
         db.add(narrative_row)

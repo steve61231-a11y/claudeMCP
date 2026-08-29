@@ -71,12 +71,16 @@ def test_the_executive_summary_is_not_silently_blank():
     assert "2027 succession" in section["executive_summary"]
 
 
-def test_key_people_come_from_the_influence_ranking():
+def test_broadcast_channels_are_amplifiers_not_key_people():
+    """"Key people" once listed cpnnewz, plugtvkenya, simbatv_ke — YouTube
+    channels — as the people in a senator's story. Amplifiers and the people
+    named in the coverage are different questions and now answer separately."""
     payload = _pipeline_payload()
     section = fw.build_strategic_implications(
         fw.normalise_payload(payload), {"potential_barriers": []}
     )
-    assert "ktnnews" in section["key_people"]
+    assert "ktnnews" in [a["handle"] for a in section["key_amplifiers"]]
+    assert "ktnnews" not in [p["name"] for p in section["key_people"]]
 
 
 def test_the_frontend_shape_still_works():

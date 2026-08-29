@@ -210,7 +210,9 @@ def test_strategic_implications_cover_outline_status_trajectory_dates_people():
     assert section["issue"] == "Budget scrutiny"
     assert section["trajectory"] == "escalating"
     assert section["key_dates"][0]["event"] == "Budget tabled"
-    assert "ntvkenya" in section["key_people"]
+    # A broadcaster's handle is an amplifier, not a person in the story.
+    assert "ntvkenya" in [a["handle"] for a in section["key_amplifiers"]]
+    assert "ntvkenya" not in [p["name"] for p in section["key_people"]]
 
 
 def test_absent_dominant_issue_is_stated_not_invented():

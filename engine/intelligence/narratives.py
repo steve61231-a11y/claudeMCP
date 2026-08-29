@@ -1,6 +1,5 @@
+import re
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
 import numpy as np
 
@@ -58,27 +57,172 @@ def cluster_mentions(texts: list[str]) -> list[int]:
     return clusterer.fit_predict(embeddings).tolist()
 
 
-LABEL_PROMPT = """You are summarizing a cluster of social-media posts about a politician into a short narrative theme. Posts may be in English, Swahili, or Sheng; write the label/description in English.
+LABEL_PROMPT = """You name narrative clusters found in coverage of a Kenyan politician. Posts may be in English, Swahili or Sheng; ALWAYS write the label and description in English.
 
-The required JSON shape is: {"label": "2-4 word theme", "description": "1 sentence description"}"""
+You are given numbered clusters, each with sample posts. For every cluster return:
+  - "label": 2-5 words naming the ACTUAL STORY, as a newsroom would headline it.
+    Good: "Kitale mega rally", "TIFA poll surge", "Clash with Ruto".
+    Bad: "Cluster 3", "Political posts", "Mixed sentiment", "Social media".
+    Never number a label. Never describe the medium instead of the story.
+  - "description": one sentence saying what is being claimed or reported and by whom.
+
+The required JSON shape is:
+{"clusters": [{"id": <the cluster id given to you>, "label": "...", "description": "..."}]}
+Return one entry for EVERY cluster id you were given."""
+
+# Words that carry no topical signal in Kenyan political coverage, so a derived
+# label built from them would name nothing. Includes the boilerplate that
+# YouTube descriptions and news footers repeat on every single item.
+_STOPWORDS = frozenset("""
+a an the and or but if of to in on at by for with from as is are was were be been being
+this that these those it its his her their our your my we you they he she i not no nor so
+than then there here when what which who whom how why all any both each few more most other
+some such only own same too very can will just should now about after before over under
+video news kenya kenyan live watch subscribe channel latest today daily update updates
+comment comments like share follow following click link bio join access perks get out up
+say says said new one two three ke com www https http tv show shows full part episode
+county senator mp mca hon president governor political politics
+""".split())
+
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]{2,}")
+
+
+def derived_label(texts: list[str], exclude: set[str] | None = None) -> tuple[str, str]:
+    """Name a cluster from its own words, with no model call.
+
+    This is the floor, not a nicety. When labelling fails — a rate limit, a
+    provider outage, a model that returns prose — the previous fallback emitted
+    "narrative-3", which tells a reader nothing and cannot be acted on. A label
+    built from the cluster's most distinctive terms is always at least a
+    description of what the posts are about.
+
+    Terms are scored by how many DISTINCT posts contain them, not raw frequency,
+    so one 400-word article cannot name the whole cluster on its own.
+    """
+    exclude = {w.lower() for w in (exclude or set())}
+    doc_freq: dict[str, int] = {}
+    for text in texts:
+        seen = set()
+        for match in _WORD_RE.findall(text or ""):
+            word = match.lower()
+            if word in _STOPWORDS or word in exclude or len(word) < 4:
+                continue
+            seen.add(word)
+        for word in seen:
+            doc_freq[word] = doc_freq.get(word, 0) + 1
+
+    if not doc_freq:
+        return "Unlabelled coverage", ""
+    ranked = sorted(doc_freq.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    label = " ".join(word.capitalize() for word, _ in ranked)
+    description = (
+        f"Recurring coverage around {', '.join(w for w, _ in ranked)} "
+        f"across {len(texts)} mentions. Named from the text of the cluster itself, "
+        "because automatic labelling did not return a name for it."
+    )
+    return label, description
+
+
+def _looks_useless(label: str) -> bool:
+    """Reject a label that names nothing — including the numbered placeholders
+    a struggling model reaches for."""
+    if not label or not label.strip():
+        return True
+    cleaned = label.strip().lower()
+    if re.fullmatch(r"(narrative|cluster|topic|theme|group)[\s._-]*\d*", cleaned):
+        return True
+    return cleaned in {"unknown", "n/a", "none", "other", "misc", "miscellaneous", "general"}
 
 
 def label_cluster(sample_texts: list[str]) -> dict:
-    samples = "\n".join(f"- {t}" for t in sample_texts[:8])
-    try:
-        # 200 tokens is plenty for a label and a sentence, and nowhere near
-        # enough on a model that MANDATES reasoning: thinking is charged
-        # against the same budget, so the answer was being cut off mid-word.
-        return llm.call_json_untrusted(LABEL_PROMPT, samples, expected_keys={"label"}, max_tokens=1500)
-    except Exception:  # noqa: BLE001
-        # An unlabelled cluster is a cosmetic loss — it falls back to
-        # "narrative-N" below. Catching only ValueError meant a provider error
-        # (a RuntimeError) escaped and took the ENTIRE report down over a
-        # two-word heading.
+    """Label one cluster. Kept for callers that label a single cluster."""
+    labelled = label_clusters([(0, sample_texts)])
+    return labelled.get(0, {})
+
+
+def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0) -> dict[int, dict]:
+    """Label every cluster in ONE call, splitting the batch when a call fails.
+
+    Previously each cluster got its own concurrent call — up to two dozen at
+    once. A provider rate limit then failed all of them together and every
+    narrative in the report came out as "narrative-N". One request for the whole
+    set is both cheaper and far less likely to be throttled, and a failure that
+    does happen degrades a half, not the report.
+    """
+    if not clusters:
         return {}
 
+    blocks = []
+    for cluster_id, texts in clusters:
+        samples = "\n".join(f"  - {(t or '')[:300]}" for t in texts[:6])
+        blocks.append(f"Cluster {cluster_id} ({len(texts)} posts):\n{samples}")
+    user = "\n\n".join(blocks)
 
-def build_narratives(mentions: list[dict]) -> list[dict]:
+    try:
+        reply = llm.call_json_untrusted(
+            LABEL_PROMPT, user, expected_keys={"clusters"},
+            max_tokens=min(llm.max_output_tokens(), 400 * len(clusters) + 600),
+        )
+        entries = reply.get("clusters") or []
+        if not isinstance(entries, list):
+            raise ValueError("clusters was not a list")
+    except Exception:  # noqa: BLE001
+        if len(clusters) > 1:
+            middle = len(clusters) // 2
+            return {
+                **label_clusters(clusters[:middle], _depth + 1),
+                **label_clusters(clusters[middle:], _depth + 1),
+            }
+        return {}
+
+    valid_ids = {cid for cid, _ in clusters}
+    out: dict[int, dict] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            cluster_id = int(entry.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if cluster_id not in valid_ids:
+            continue
+        label = str(entry.get("label") or "").strip()
+        if _looks_useless(label):
+            continue
+        out[cluster_id] = {"label": label[:80],
+                           "description": str(entry.get("description") or "").strip()[:400]}
+    return out
+
+
+def _evidence_for(cluster_mentions: list[dict], limit: int = 8) -> list[dict]:
+    """The receipts for a narrative: the mentions a reader can go and check.
+
+    A narrative that cannot be opened is an assertion. Carrying the actual
+    posts — with their URL, author, date and engagement — is what turns it into
+    a finding, and it is the difference between "trust me" and "here, look".
+    """
+    def weight(mention: dict) -> int:
+        eng = mention.get("engagement") or {}
+        return sum(int(eng.get(k, 0) or 0) for k in ("views", "likes", "shares", "comments"))
+
+    ranked = sorted(cluster_mentions, key=weight, reverse=True)[:limit]
+    evidence = []
+    for mention in ranked:
+        text = (mention.get("text") or "").strip()
+        evidence.append({
+            "mention_id": mention.get("id"),
+            "platform": mention.get("platform"),
+            "author": mention.get("author_handle"),
+            "url": mention.get("source_url"),
+            "posted_at": mention.get("posted_at").isoformat()
+            if hasattr(mention.get("posted_at"), "isoformat") else mention.get("posted_at"),
+            "engagement": weight(mention),
+            "excerpt": text[:400],
+        })
+    return evidence
+
+
+def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None) -> list[dict]:
     """Groups mentions into narrative clusters, labels each via the LLM,
     and computes strength/growth metrics per cluster.
 
@@ -86,6 +230,10 @@ def build_narratives(mentions: list[dict]) -> list[dict]:
     """
     if not mentions:
         return []
+
+    # The subject's own name is in nearly every mention, so it distinguishes
+    # nothing and must not become the derived label of every cluster.
+    subject_terms = subject_terms or set()
 
     texts = [m["text"] for m in mentions]
     labels = cluster_mentions(texts)
@@ -96,12 +244,25 @@ def build_narratives(mentions: list[dict]) -> list[dict]:
             continue
         clusters[label].append(mention)
 
-    cluster_items = list(clusters.items())
-    with ThreadPoolExecutor(max_workers=max(1, len(cluster_items))) as pool:
-        metas = list(pool.map(lambda kv: label_cluster([m["text"] for m in kv[1]]), cluster_items))
+    # Largest clusters first: if labelling degrades, the narratives that carry
+    # the most of the corpus are the ones that got a real name.
+    cluster_items = sorted(clusters.items(), key=lambda kv: len(kv[1]), reverse=True)
+    labelled = label_clusters([(cid, [m["text"] for m in items]) for cid, items in cluster_items])
 
     results = []
-    for (cluster_id, cluster_mentions_), meta in zip(cluster_items, metas):
+    for cluster_id, cluster_mentions_ in cluster_items:
+        meta = labelled.get(cluster_id) or {}
+        if not meta.get("label"):
+            # No model label. Name it from its own text rather than by number —
+            # "narrative-3" is unreadable and unusable, and it was what every
+            # narrative in a rate-limited run came out as.
+            fallback_label, fallback_description = derived_label(
+                [m["text"] for m in cluster_mentions_], exclude=subject_terms
+            )
+            meta = {"label": fallback_label, "description": fallback_description,
+                    "labelled_by": "derived"}
+        else:
+            meta = {**meta, "labelled_by": "model"}
         engagement_total = sum(
             m["engagement"].get("likes", 0) + m["engagement"].get("shares", 0) * 2 + m["engagement"].get("comments", 0)
             for m in cluster_mentions_
@@ -116,9 +277,13 @@ def build_narratives(mentions: list[dict]) -> list[dict]:
 
         results.append(
             {
-                "label": meta.get("label", f"narrative-{cluster_id}"),
+                "label": meta["label"],
                 "description": meta.get("description", ""),
+                "labelled_by": meta.get("labelled_by", "derived"),
                 "mention_ids": [m["id"] for m in cluster_mentions_],
+                # The receipts travel WITH the narrative all the way to the
+                # page, so a reader can open it instead of taking it on faith.
+                "evidence": _evidence_for(cluster_mentions_),
                 "strength_score": strength_score,
                 "growth_rate": growth_rate,
                 "window_start": min(timestamps),

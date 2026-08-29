@@ -451,6 +451,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
                 "growth": n["growth_rate"],
                 "mentions": n["mention_count"],
                 "description": n["description"],
+                "evidence": n.get("evidence", []),
+                "labelled_by": n.get("labelled_by"),
             }
             for n in payload["narrative_breakdown"]
         ],

@@ -216,6 +216,10 @@ def build_sentiment_score_section(payload: dict, previous: dict | None,
     return {
         "score": score,
         "definition": "Share of positive mentions over the reporting period (framework 3.0).",
+        # A bare "12.2%" is not a finding, it is a number. Say what it counts,
+        # what it excludes, how confident it is, and what would move it.
+        "reading": _score_reading(score, positive, negative, neutral, analysed,
+                                  payload, previous_score),
         "scoring_gap": _scoring_gap(payload, analysed),
         "previous_score": previous_score,
         "change": change,
@@ -226,7 +230,93 @@ def build_sentiment_score_section(payload: dict, previous: dict | None,
     }
 
 
-def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict | None) -> dict:
+def _score_reading(score, positive: int, negative: int, neutral: int, analysed: int,
+                   payload: dict, previous_score) -> list[str]:
+    """Paragraphs explaining the headline number, in plain English.
+
+    Every sentence here is arithmetic over counts already on the page. Nothing
+    is inferred and nothing is asked of a model, because a fabricated
+    interpretation of a real number is worse than no interpretation.
+    """
+    collected = int((payload.get("volume_trends") or {}).get("total_mentions") or 0)
+    if not analysed:
+        return [
+            f"No sentiment reading is possible for this period. Of the {collected} "
+            "mentions collected, none were scored, so the figures on this page are "
+            "absent rather than zero.",
+            "Treat every percentage in this section as missing data. A subject with "
+            "genuinely no positive coverage and a run that scored nothing produce the "
+            "same 0%, and they mean opposite things.",
+        ]
+
+    out = [
+        f"The score is {score}%. It is the share of scored mentions that read as "
+        f"positive: {positive} positive out of {analysed} scored "
+        f"({neutral} neutral, {negative} negative). It is not a rating of the "
+        "subject, an approval figure, or a prediction — it is the tone of what was "
+        "published about them in this window.",
+    ]
+
+    if collected:
+        pct = round(100 * analysed / collected)
+        out.append(
+            f"{analysed} of the {collected} mentions collected were scored ({pct}%). "
+            + ("That is most of the corpus, so the reading is reasonably firm."
+               if pct >= 50 else
+               "That is a minority of the corpus, so treat the number as indicative "
+               "rather than settled — the unscored remainder could move it in either "
+               "direction.")
+        )
+
+    dominant = max((positive, "positive"), (neutral, "neutral"), (negative, "negative"))[1]
+    if dominant == "neutral":
+        out.append(
+            f"The largest block is neutral ({neutral} of {analysed}, "
+            f"{round(100 * neutral / analysed)}%). Neutral is the normal resting state of "
+            "news coverage: reporting that states what happened without praising or "
+            "attacking. A high neutral share usually means the subject is being covered "
+            "rather than argued about, and it caps how high the positive share can go."
+        )
+    else:
+        out.append(
+            f"The largest block is {dominant}. Positive and negative together account for "
+            f"{positive + negative} of {analysed} scored mentions "
+            f"({round(100 * (positive + negative) / analysed)}%), which is the genuinely "
+            "opinionated share of the coverage — the part that is arguing rather than "
+            "reporting."
+        )
+
+    if negative:
+        ratio = round(positive / negative, 2) if negative else None
+        out.append(
+            f"The positive-to-negative ratio is {ratio}:1 ({positive} against {negative}). "
+            + ("Criticism outweighs praise in the scored coverage." if ratio and ratio < 1 else
+               "Praise outweighs criticism in the scored coverage." if ratio and ratio > 1 else
+               "Praise and criticism are evenly matched.")
+            + " The narratives and per-source breakdowns below show which stories and "
+              "which outlets that split comes from."
+        )
+
+    if previous_score is not None and score is not None:
+        delta = round(score - previous_score, 1)
+        out.append(
+            f"Last period the score was {previous_score}%, so it has moved by {delta:+} "
+            "points. A move of a few points on a corpus this size is noise; what matters "
+            "is whether the narratives underneath it changed, which the Share of Voice "
+            "section answers."
+        )
+    else:
+        out.append(
+            "There is no prior period to compare against, so the score has no trend yet. "
+            "It becomes far more useful on the second run, when the movement between "
+            "periods can be read rather than the level alone."
+        )
+
+    return out
+
+
+def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict | None,
+                           sentiments: dict | None = None) -> dict:
     """2.0 — total mentions, change vs the previous period, outlet segmentation.
 
     The framework notes clients must be told which sites/apps are covered, so
@@ -244,14 +334,63 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
     )
 
     segments = {"local_media": 0, "international_media": 0, "social_media": 0}
-    covered: dict[str, set] = {k: set() for k in segments}
+    # A bare count of sources ("Sources covered (73)") is unusable: the reader
+    # cannot tell which outlet said what, which way it leaned, or go and check
+    # any of it. Build a per-source dossier instead — volume, tone split, and
+    # the loudest items with their links.
+    sources: dict[str, dict] = {}
+    sentiments = sentiments or {}
     for mention in mentions:
         platform = mention.get("platform")
         domain = platform if mention.get("source_type") == "article" else None
         segment = classify_outlet(platform, domain)
         segments[segment] += 1
-        if platform:
-            covered[segment].add(platform)
+        if not platform:
+            continue
+        entry = sources.setdefault(platform, {
+            "source": platform, "outlet_type": segment, "mentions": 0,
+            "positive": 0, "neutral": 0, "negative": 0, "unscored": 0, "items": [],
+        })
+        entry["mentions"] += 1
+        tone = (sentiments.get(mention.get("id")) or {}).get("sentiment")
+        entry[tone if tone in ("positive", "neutral", "negative") else "unscored"] += 1
+        entry["items"].append((_engagement_of(mention), mention, tone))
+
+    sources_detail = []
+    for entry in sources.values():
+        top = sorted(entry.pop("items"), key=lambda t: t[0], reverse=True)[:5]
+        entry["top_mentions"] = [
+            {
+                "author": m.get("author_handle"),
+                "url": m.get("source_url"),
+                "posted_at": m["posted_at"].isoformat()
+                if hasattr(m.get("posted_at"), "isoformat") else m.get("posted_at"),
+                "engagement": weight,
+                "sentiment": tone,
+                "platform": m.get("platform"),
+                "excerpt": (m.get("text") or "").strip()[:400],
+            }
+            for weight, m, tone in top
+        ]
+        scored = entry["positive"] + entry["neutral"] + entry["negative"]
+        # Lean is stated only where enough of that outlet was actually scored.
+        # Calling an outlet negative off one scored item out of forty is a
+        # fabricated editorial judgement about a real newsroom.
+        if scored >= 3:
+            if entry["positive"] > entry["negative"] * 1.5:
+                entry["lean"] = "positive"
+            elif entry["negative"] > entry["positive"] * 1.5:
+                entry["lean"] = "negative"
+            else:
+                entry["lean"] = "mixed"
+        else:
+            entry["lean"] = None
+        entry["scored"] = scored
+        sources_detail.append(entry)
+    sources_detail.sort(key=lambda e: e["mentions"], reverse=True)
+    covered: dict[str, set] = {k: set() for k in segments}
+    for entry in sources_detail:
+        covered[entry["outlet_type"]].add(entry["source"])
 
     return {
         "total": total,
@@ -264,7 +403,13 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
         ],
         # Clarity on coverage is a framework requirement, not a nicety.
         "sources_covered": {k: sorted(v)[:40] for k, v in covered.items()},
+        "sources_detail": sources_detail,
     }
+
+
+def _engagement_of(mention: dict) -> int:
+    eng = mention.get("engagement") or {}
+    return sum(int(eng.get(k, 0) or 0) for k in ("views", "likes", "shares", "comments"))
 
 
 def _scoring_gap(payload: dict, analysed: int) -> str | None:
@@ -533,6 +678,8 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
             "trajectory": None,
             "key_dates": [],
             "key_people": [],
+            "key_amplifiers": [],
+            "narrative_evidence": [],
         }
 
     growth = leading.get("growth")
@@ -543,8 +690,23 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
     )
 
     timeline = payload.get("timeline") or []
+    # People named IN the coverage, not the accounts posting it. This read the
+    # influence ranking, so "key people" on a Kenyan senator's report came out
+    # as cpnnewz, plugtvkenya, simbatv_ke — YouTube channels. Those are
+    # amplifiers, and they belong under influence; the people in the story come
+    # from entity extraction over the mention text.
+    named = (payload.get("network_insights") or {}).get("top_people") or []
     key_people = [
-        entry.get("who") for entry in (payload.get("influence") or [])[:5] if entry.get("who")
+        {"name": person.get("name"), "role": person.get("role"),
+         "affiliation": person.get("affiliation"), "co_mentions": person.get("co_mentions")}
+        for person in named[:8] if person.get("name")
+    ]
+    # Amplifiers stay, labelled as what they are, so the distinction is on the
+    # page rather than lost.
+    key_amplifiers = [
+        {"handle": entry.get("who"), "platform": entry.get("platform"),
+         "reach": entry.get("reach") or entry.get("score")}
+        for entry in (payload.get("influence") or [])[:5] if entry.get("who")
     ]
 
     # The dated timeline entries the analyst wrote are mini-briefings, not
@@ -565,6 +727,9 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
         "trajectory": trajectory,
         "key_dates": key_dates,
         "key_people": key_people,
+        "key_amplifiers": key_amplifiers,
+        # The posts behind the leading narrative, so 6.0 can be opened too.
+        "narrative_evidence": leading.get("evidence") or [],
         # The same evidence 4.0 carries, for the issue that matters most.
         "evidence": _evidence_for(leading.get("label"), payload),
         "the_one_thing": ((payload.get("deep_insights") or {}).get("the_one_thing") or None),
@@ -647,7 +812,7 @@ def build(politician, payload: dict, mentions: list[dict], previous: dict | None
         "generated_at": (now or datetime.utcnow()).isoformat(),
         "summary_of_subject": build_summary_of_subject(politician, payload),
         "sentiment_score": build_sentiment_score_section(payload, previous, sentiments),
-        "overall_mentions": build_overall_mentions(payload, mentions, previous),
+        "overall_mentions": build_overall_mentions(payload, mentions, previous, sentiments),
         "sentiment": build_sentiment_section(payload, sentiments),
         "current_issues": current_issues,
         "emergent_issues": build_emergent_issues(mentions, now=now),
