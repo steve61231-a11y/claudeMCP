@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from engine import health
+from engine import health, stages
 from engine.config import settings
 from engine.db.models import (
     Entity,
@@ -167,6 +167,7 @@ def run_analysis(
     # like a thin subject — that is how a retired OpenRouter preview model went
     # unnoticed while every stage silently degraded around it.
     health.reset()
+    stages.reset()
     health.preflight()
 
     politician_entity = _upsert_entity(db, "politician", politician.name)
@@ -198,7 +199,8 @@ def run_analysis(
             )
             for _key, _value in preview.items():
                 publish(_key, _value)
-        except Exception:  # noqa: BLE001 — a preview must never risk the report
+        except Exception as exc:  # noqa: BLE001 — a preview must never risk the report
+            stages.current().failed("corpus_preview", exc)
             traceback.print_exc()
 
     _llm_cap = settings.low_memory_max_llm_mentions if settings.low_memory else settings.max_llm_mentions
@@ -434,7 +436,8 @@ def run_analysis(
             window_start, window_end,
         )
         publish("period_series", payload["period_series"])
-    except Exception:  # noqa: BLE001 — charts must never break a report
+    except Exception as exc:  # noqa: BLE001 — charts must never break a report
+        stages.current().failed("period_series", exc)
         traceback.print_exc()
 
     if scoring_report:
@@ -459,7 +462,8 @@ def run_analysis(
         from engine.agents import disambiguate
 
         gate_stats = disambiguate.gate_documents(db, politician)
-    except Exception:  # noqa: BLE001 — gating must never break a report
+    except Exception as exc:  # noqa: BLE001 — gating must never break a report
+        stages.current().failed("relevance_gate", exc)
         gate_stats = {"error": "disambiguation gate failed; documents kept unfiltered"}
 
     corpus = stored_mentions + _document_corpus(db, politician, window_start, window_end)
@@ -525,7 +529,8 @@ def run_analysis(
             payload["signals"] = anomaly_agent.detect_all(db, politician)
             for _key in ("resolution", "source_credibility", "knowledge_graph", "temporal", "signals"):
                 publish(_key, payload.get(_key))
-        except Exception:  # noqa: BLE001 — resolution must never break a report
+        except Exception as exc:  # noqa: BLE001 — resolution must never break a report
+            stages.current().failed("entity_event_resolution", exc)
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}
 
@@ -560,14 +565,22 @@ def run_analysis(
             sentiments=sentiments_by_mention,
         )
         publish("sentiment_framework", payload["sentiment_framework"])
-    except Exception:  # noqa: BLE001 — the framework view must not break a report
+    except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
+        # The client deliverable. Silently absent, this tab simply never
+        # appeared and nobody could tell whether it was empty or broken.
+        stages.current().failed("sentiment_framework", exc)
         traceback.print_exc()
 
     # The run's own account of whether the model answered. Stamped onto the
     # payload so a reader is never shown empty sections without being told the
     # backend was down, and so a broken run cannot be presented as an analysis.
     payload["run_health"] = health.current().summary()
+    # Which sections were produced, which found nothing, and which failed
+    # trying. Without this a failed section is indistinguishable from a section
+    # whose subject was simply quiet — the defect behind four separate bugs.
+    payload["section_status"] = stages.current().summary()
     publish("run_health", payload["run_health"])
+    publish("section_status", payload["section_status"])
 
     report = IntelligenceReport(
         politician_id=politician.id,
@@ -611,7 +624,8 @@ def run_analysis(
             report.payload = payload
             flag_modified(report, "payload")
             db.commit()
-        except Exception:  # noqa: BLE001 — an audit failure must not lose the report
+        except Exception as exc:  # noqa: BLE001 — an audit failure must not lose the report
+            stages.current().failed("verification", exc)
             traceback.print_exc()
 
     return report

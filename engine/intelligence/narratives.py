@@ -3,7 +3,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from engine import llm
+from engine import llm, stages
 
 _embedder = None
 _embedder_unavailable = False
@@ -38,11 +38,20 @@ def embed_texts(texts: list[str]) -> np.ndarray:
     crashing the pipeline.
     """
     try:
-        return get_embedder().encode(texts, show_progress_bar=False)
-    except Exception:
+        embeddings = get_embedder().encode(texts, show_progress_bar=False)
+    except Exception as exc:  # noqa: BLE001
         from sklearn.feature_extraction.text import TfidfVectorizer
 
+        # TF-IDF clusters by shared WORDS, not shared meaning, so narratives get
+        # noticeably worse — items about one event in different wording stop
+        # grouping. Worth having; not worth having silently, because the report
+        # then looks like the corpus had no coherent storylines.
+        stages.current().record(
+            "narrative_embeddings", stages.STATUS_OK,
+            detail=f"sentence embeddings unavailable, fell back to TF-IDF "
+                   f"(weaker clustering): {type(exc).__name__}: {exc}"[:200])
         return TfidfVectorizer(max_features=512).fit_transform(texts).toarray()
+    return embeddings
 
 
 def cluster_mentions(texts: list[str]) -> list[int]:
@@ -166,7 +175,8 @@ def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0) -> di
         entries = reply.get("clusters") or []
         if not isinstance(entries, list):
             raise ValueError("clusters was not a list")
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed(f"narrative_labelling[{len(clusters)}]", exc)
         if len(clusters) > 1:
             middle = len(clusters) // 2
             return {

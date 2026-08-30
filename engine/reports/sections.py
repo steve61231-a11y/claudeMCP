@@ -9,7 +9,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from engine import llm
+from engine import llm, stages
 from engine.reports import analysts
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
@@ -230,10 +230,10 @@ def enrich_report_payload(
 
     def run(key):
         fn, fallback = jobs[key]
-        try:
-            return key, fn()
-        except Exception:
-            return key, fallback
+        # THE seam: every analyst section passes through here, and a failure
+        # used to return the fallback ([] or "") with no trace. An analyst that
+        # died and a corpus with nothing to say produced the identical page.
+        return key, stages.run_guarded(key, fn, fallback=fallback)
 
     from engine.config import settings
 
@@ -268,10 +268,10 @@ def enrich_report_payload(
                 "sentiment_breakdown",
             )
         }
-        try:
-            payload["executive_brief"] = analysts.synthesize_executive_brief(politician_name, analyst_outputs)
-        except Exception:
-            payload["executive_brief"] = payload.get("executive_summary", "")
+        payload["executive_brief"] = stages.run_guarded(
+            "executive_brief",
+            lambda: analysts.synthesize_executive_brief(politician_name, analyst_outputs),
+            fallback=payload.get("executive_summary", ""))
 
         source_quotes = _collect_quotes(payload)
         prose = {

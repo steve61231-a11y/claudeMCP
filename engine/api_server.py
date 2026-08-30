@@ -484,6 +484,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # that is the name the renderers already use.
         "sentiment_framework": payload.get("sentiment_framework"),
         "runHealth": payload.get("run_health"),
+        "sectionStatus": payload.get("section_status"),
         # How much of the corpus the sentiment reading actually rests on, and
         # why anything was lost. Without it, "0 scored" and "genuinely neutral"
         # are the same report.

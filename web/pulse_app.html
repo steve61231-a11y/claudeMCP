@@ -1780,6 +1780,11 @@
     g.appendChild(kpiCard('Examined',fmt(gate.examined),''));
     if(gate.on_topic!=null)g.appendChild(kpiCard('On topic',fmt(gate.on_topic),''));
     if(gate.off_topic!=null)g.appendChild(kpiCard('Set aside',fmt(gate.off_topic),'different subject, same name'));
+    // The third bucket. Examined = on topic + set aside + unresolved, but only
+    // two were shown, so "79 examined / 59 on topic / 0 set aside" left twenty
+    // items unaccounted for on the page and looked like an arithmetic error.
+    if(gate.ambiguous!=null)g.appendChild(kpiCard('Couldn\'t decide',fmt(gate.ambiguous),
+      'kept in the analysis, flagged'));
     c.appendChild(g);
     return c;
   }
@@ -1916,6 +1921,26 @@
           <span class="chip">${Math.round((hx.failure_rate||0)*100)}% failure rate</span>
         </div></div></div>`;
       wrap.appendChild(bar);
+    }
+
+    // Sections that FAILED, named. An empty section that ran is a finding; an
+    // empty section that never ran is not, and the two look identical without
+    // this. Four separate bugs in this system have hidden behind that.
+    const ss=r.sectionStatus||{};
+    if(ss.headline){
+      const sb=el('div','card');
+      sb.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.08)';
+      const failed=(ss.stages||[]).filter(x=>x&&x.status==='failed');
+      sb.innerHTML=`<div class="row" style="gap:10px;align-items:flex-start">
+        <div style="font-size:20px">⚠</div>
+        <div style="flex:1"><b>Some sections could not be produced.</b>
+        <div class="muted" style="font-size:13px;margin-top:4px">These are blank because the
+        stage that fills them failed — not because there was nothing to report.</div>
+        <div style="margin-top:8px">${failed.map(x=>
+          `<div class="mentr" style="padding:8px 10px"><b style="font-size:13px">${esc(x.stage)}</b>
+           <div class="muted" style="font-size:12px;margin-top:3px">${esc(x.error||'')}</div></div>`
+        ).join('')}</div></div></div>`;
+      wrap.appendChild(sb);
     }
 
     if(r.grade&&r.grade.production===false){

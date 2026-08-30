@@ -15,7 +15,7 @@ Grounding contract shared by every analyst:
 
 from datetime import datetime
 
-from engine import llm
+from engine import llm, stages
 
 # Shared grounding preamble — the defense against stale-training-data claims
 # (e.g. describing someone as alive/in office when they are not).
@@ -417,7 +417,10 @@ def analyze_narrative_deep_dives(
                 max_tokens=4000,
                 max_untrusted_chars=32000,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # A storyline that vanishes without trace looks like a storyline
+            # the corpus never had.
+            stages.current().failed(f"narrative_deep_dive:{n.get('label', '?')}", exc)
             continue
         dive = result["deep_dive"]
         dive["label"] = n["label"]
@@ -487,7 +490,10 @@ def analyze_deep_insights(name: str, corpus_digest: dict) -> dict:
         )
         insights = [i for i in (result.get("insights") or []) if isinstance(i, dict)]
         return {"insights": insights, "the_one_thing": result.get("the_one_thing", "")}
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # "The one thing" is the headline of the whole report. Blank, it read
+        # as "nothing stood out" when the call had simply failed.
+        stages.current().failed("deep_insights", exc)
         return {"insights": [], "the_one_thing": ""}
 
 
@@ -625,9 +631,11 @@ def analyze_issue_intersection(
                               grounding=GROUNDING_RULES, digest=digest),
                 max_tokens=llm.max_output_tokens(),
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            stages.current().failed(f"issue_analyst:{name}", exc)
             return name, {}
         if not isinstance(reply, dict):
+            stages.current().failed(f"issue_analyst:{name}", "reply was not a JSON object")
             return name, {}
         return name, {k: reply.get(k) for k in keys if k in reply}
 
@@ -680,6 +688,6 @@ def verify_grounding(prose_sections: dict[str, str], source_quotes: list[str]) -
         cleaned = result.get("cleaned")
         if isinstance(cleaned, dict):
             return {k: cleaned.get(k) or v for k, v in prose_sections.items()}
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — unverified prose beats no prose
+        stages.current().failed("grounding_verification", exc)
     return prose_sections

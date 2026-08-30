@@ -257,11 +257,43 @@ def build_desired_outcome(desired_outcome: str | None) -> dict:
             "note": "Strategic recommendations below are oriented to this outcome."}
 
 
+_POSITION_ALIASES = {
+    "for": "for", "pro": "for", "support": "for", "supportive": "for",
+    "supporter": "for", "champion": "for", "in favour": "for", "in favor": "for",
+    "favourable": "for", "favorable": "for", "positive": "for", "ally": "for",
+    "against": "against", "anti": "against", "opposed": "against",
+    "opposition": "against", "opponent": "against", "critic": "against",
+    "critical": "against", "hostile": "against", "negative": "against",
+    "neutral": "neutral", "undecided": "neutral", "mixed": "neutral",
+    "unclear": "neutral", "unknown": "neutral", "none": "neutral", "": "neutral",
+}
+
+
+def normalise_position(value) -> str:
+    """Map a model's stance label onto for/against/neutral.
+
+    Anything unrecognised becomes "neutral" rather than disappearing: a
+    stakeholder the analyst identified belongs in the section whatever word was
+    used for their stance, and neutral is the honest default when the label
+    cannot be read."""
+    text = str(value or "").strip().lower()
+    if text in _POSITION_ALIASES:
+        return _POSITION_ALIASES[text]
+    for alias, canonical in _POSITION_ALIASES.items():
+        if alias and alias in text:
+            return canonical
+    return "neutral"
+
+
 def build_strategic_recommendations(desired: dict, contours: dict, stakeholders: list[dict]) -> dict:
     """4 — probability of outcomes, then messaging and engagement targets."""
-    champions = [s for s in stakeholders if s.get("position") == "for"]
-    challengers = [s for s in stakeholders if s.get("position") == "against"]
-    neutrals = [s for s in stakeholders if s.get("position") == "neutral"]
+    # Exact string matching on a model's label silently dropped stakeholders
+    # from ALL THREE buckets: "For", "supportive", "pro" and "opposed" are the
+    # same three positions written differently, and each one vanished the
+    # person from the section entirely. Same failure shape as the quote matcher.
+    champions = [s for s in stakeholders if normalise_position(s.get("position")) == "for"]
+    challengers = [s for s in stakeholders if normalise_position(s.get("position")) == "against"]
+    neutrals = [s for s in stakeholders if normalise_position(s.get("position")) == "neutral"]
 
     def _top(group: list[dict], limit: int = 5) -> list[dict]:
         return [
