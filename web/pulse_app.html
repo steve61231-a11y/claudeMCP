@@ -2235,6 +2235,35 @@
 
   function renderIssue(out,m){
     out.innerHTML='';
+    // Collected plenty, none of it on topic. This is a different result from
+    // "no coverage exists", and the old page could not tell them apart — it
+    // rendered eight empty framework sections and let the reader conclude the
+    // story did not exist.
+    const nt=m.nothing_on_topic;
+    if(nt){
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+      c.innerHTML=`<div class="row" style="gap:12px;align-items:flex-start">
+        <div style="font-size:26px">🎯</div>
+        <div style="flex:1">
+          <b style="font-size:16px">Nothing collected was about this intersection.</b>
+          <div class="muted" style="font-size:13.5px;margin-top:6px">
+            ${fmt(nt.examined)} documents were collected and ${fmt(nt.kept)} were about
+            “${esc(m.principal)}” × “${esc(m.issue)}”. No analysis was run, because there was
+            nothing on topic to analyse — this is not a finding that the story does not exist.</div>
+          <div class="lbl" style="margin-top:12px">Why they were set aside</div>
+          <div class="muted" style="font-size:13px">${esc(nt.why)}</div>
+          ${Object.keys(nt.examples||{}).length?`<div class="lbl" style="margin-top:12px">What came back instead</div>
+            ${Object.entries(nt.examples).map(([why,ex])=>
+              `<div class="mentr" style="padding:8px 10px"><div class="muted" style="font-size:12px">${esc(why)}</div>
+               <div style="font-size:13px;margin-top:3px">${esc(ex)}…</div></div>`).join('')}`:''}
+          ${(nt.guidance||[]).length?`<div class="lbl" style="margin-top:12px">What to try</div>
+            <ul style="font-size:13.5px;margin:6px 0 0 18px;line-height:1.6">
+            <li>${nt.guidance.map(esc).join('</li><li>')}</li></ul>`:''}
+        </div></div>`;
+      out.appendChild(c);
+      return;
+    }
     if(m.thin){out.appendChild(el('div','card',`<div class="empty"><div class="em">🧭</div>
       <b>Limited public material connects these two right now.</b>
       <div style="margin-top:6px">We didn't find enough coverage to build a defensible intersection. Try a wider look-back or a related institution.</div></div>`));return;}

@@ -382,7 +382,12 @@ def build_data_overview(payload: dict, stakeholders: list[dict], events: list[di
     The framework's stated purpose is to make the user aware of weak spots, so
     limitations are listed as prominently as strengths.
     """
-    gate = payload.get("evidence_gate") or {}
+    # The gate result lives under `acquisition`, where _acquire_and_store puts
+    # it. Reading the top level meant "relevance gate: not run" was printed on
+    # every issue map ever produced, including the ones where it did run.
+    acquisition = payload.get("acquisition") or {}
+    gate = payload.get("evidence_gate") or acquisition.get("evidence_gate") or {}
+    relevance_filter = acquisition.get("relevance_filter") or {}
     verification = payload.get("verification") or {}
     credibility = payload.get("source_credibility") or {}
 
@@ -415,6 +420,11 @@ def build_data_overview(payload: dict, stakeholders: list[dict], events: list[di
             "stakeholders_per_segment": MAX_STAKEHOLDERS_PER_SEGMENT,
             "profile_word_limit": PROFILE_WORD_LIMIT,
             "relevance_gate": "applied" if gate else "not run",
+            "relevance_filter": (
+                f"{relevance_filter['kept']} of {relevance_filter['examined']} documents "
+                f"mentioned both terms"
+                + (" and this market" if relevance_filter.get("market_anchored") else "")
+                if relevance_filter else "not run"),
             "claim_verification": "applied" if verification else "not run",
         },
         "limitations": limitations or ["No material limitations identified in this run."],

@@ -25,6 +25,7 @@ from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
 from engine.ingestion.gdelt_connector import GdeltConnector
+from engine.reports import relevance
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -354,6 +355,18 @@ def build_issue_map(
                                                    issue_aliases, publish)
 
     label = f"{principal} × {issue}"
+
+    # Stop before spending twenty minutes and a corpus of model calls on
+    # material that cannot answer the question. A run that reads 370 documents
+    # about the wrong country and returns empty sections is worse than one that
+    # says in ten seconds that it found nothing on topic: the first looks like
+    # the subject has no story, the second tells you the search was wrong.
+    usable = (acquisition.get("relevance_filter") or {}).get("kept")
+    if usable is not None and usable < MIN_USABLE_DOCUMENTS:
+        report = acquisition["relevance_filter"]
+        publish("stage", "Nothing on topic — stopping before analysis.")
+        return _nothing_on_topic(principal, issue, ws, we, mentions, acquisition, report)
+
     publish("stage", f"Reading {len(mentions)} intersection sources…")
     digest = build_corpus_digest(label, mentions)
     publish("coverage", digest["coverage"])
@@ -396,6 +409,52 @@ def build_issue_map(
     return payload
 
 
+#: Below this many on-topic documents there is nothing to analyse, and running
+#: the analysts anyway produces empty sections that read as an absent story.
+MIN_USABLE_DOCUMENTS = 3
+
+
+def _nothing_on_topic(principal: str, issue: str, ws, we, mentions: list[dict],
+                      acquisition: dict, report: dict) -> dict:
+    """A truthful empty result, delivered immediately, saying what to change."""
+    reasons = report.get("reasons") or {}
+    top = sorted(reasons.items(), key=lambda kv: kv[1], reverse=True)
+    detail = "; ".join(f"{count} {reason}" for reason, count in top[:3])
+    guidance = []
+    if report.get("market_anchored"):
+        guidance.append(
+            f"“{principal}” and “{issue}” are generic terms, so the search was anchored to "
+            "Kenya. Naming the specific body or person — “Senate Committee on Lands”, "
+            "“Kenya Forest Service”, a named senator — will find the intersection where "
+            "the generic pair cannot.")
+    if any("principal" in r for r in reasons):
+        guidance.append(f"Nothing collected mentioned “{principal}” at all.")
+    if any("issue" in r for r in reasons):
+        guidance.append(f"Nothing collected mentioned “{issue}” at all.")
+    return {
+        "principal": principal,
+        "issue": issue,
+        "window": {"start": ws, "end": we},
+        "generated_at": datetime.utcnow(),
+        "coverage": {"mentions_total": len(mentions), "mentions_analyzed": 0,
+                     "chunks": 0, "complete": False,
+                     "note": f"{report['examined']} documents were collected and none were "
+                             "about this intersection, so no analysis was run."},
+        "intersection": {},
+        "evidence_sample": [],
+        "thin": True,
+        "nothing_on_topic": {
+            "examined": report.get("examined", 0),
+            "kept": report.get("kept", 0),
+            "why": detail or "no documents matched both terms",
+            "examples": report.get("examples") or {},
+            "guidance": guidance,
+        },
+        "acquisition": acquisition,
+        "issue_framework": None,
+    }
+
+
 def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
                        issue_aliases: list[str] | None,
                        publish) -> tuple[list[dict], dict]:
@@ -427,6 +486,12 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         return _as_corpus(fresh), {"stored": False, "reason": "database unavailable"}
 
     try:
+        # "senate" and "forestry" match every English-speaking legislature on
+        # earth. A distinctive name anchors its own search; a generic term does
+        # not, and without geography the corpus is the whole world's coverage.
+        if relevance.needs_market_anchor(principal, issue):
+            discovery = [relevance.anchor_query(q) for q in discovery]
+            publish("stage", "Generic terms — anchoring every query to Kenya…")
         publish("stage", f"Searching {len(identities)} name variants × "
                          f"{len(issue_terms)} issue terms across every source…")
         fresh = acquire_intersection(principal, issue, ws, we,
@@ -445,6 +510,16 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # full-text search ranks out) is still evidence — union, never replace.
         corpus = _merge_corpus(corpus, _as_corpus(fresh))
 
+        # Gate the MERGED corpus, not just the stored half. Freshly acquired
+        # items were unioned in after the gate ran, so nothing collected during
+        # a run was ever checked — which is how 370 documents of American local
+        # news reached the analysts for a Kenyan "senate × forestry" mapping.
+        require_market = relevance.needs_market_anchor(principal, issue)
+        corpus, relevance_report = relevance.filter_corpus(
+            corpus, identities, issue_terms, require_market)
+        publish("stage", f"Kept {relevance_report['kept']} of "
+                         f"{relevance_report['examined']} documents that mention both terms…")
+
         resolution = _resolve_intersection(db, subject, corpus)
         return corpus, {
             "stored": True,
@@ -456,6 +531,7 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             "fresh_documents": len(documents),
             **stored,
             "evidence_gate": gate,
+            "relevance_filter": relevance_report,
             "resolution": {k: v for k, v in (resolution or {}).items() if k != "events"},
             "corpus_from_store": len(corpus),
         }
