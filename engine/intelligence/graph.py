@@ -1,4 +1,37 @@
+"""Neo4j projections of the corpus — strictly best-effort.
+
+Postgres is the source of truth for every view the product renders; Neo4j is a
+convenience projection that is NOT provisioned on the Render deployment. Until
+now these writes were unwrapped, so on a deploy without Neo4j the very first
+`session.run` raised "Cannot resolve address neo4j:7687" in the middle of
+run_analysis — after entity linking, transcript fetching and whole-corpus
+scoring had already been paid for, and three lines above a comment stating that
+Neo4j is not provisioned there.
+
+Every write here is now guarded and recorded. A missing graph database costs the
+graph projection and nothing else.
+"""
+
+import functools
+
+from engine import stages
 from engine.db.neo4j_client import get_driver
+
+
+def _best_effort(default):
+    """Neo4j is a projection, never the source of truth. A write that cannot
+    reach it records the fact and returns; it does not take down the run that
+    produced the data."""
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:  # noqa: BLE001
+                stages.current().failed(f"neo4j:{fn.__name__}", exc)
+                return default() if callable(default) else default
+        return wrapper
+    return decorate
 
 UPSERT_USER = "MERGE (u:User {handle: $handle}) RETURN u"
 UPSERT_POLITICIAN = "MERGE (p:Politician {id: $id}) SET p.name = $name RETURN p"
@@ -18,6 +51,7 @@ ON MATCH SET r.shares = r.shares + $shares
 """
 
 
+@_best_effort(None)
 def upsert_mentions(politician_id: str, politician_name: str, mentions: list[dict]) -> None:
     """Incrementally upserts nodes/edges for this run's mentions (not a full rebuild)."""
     driver = get_driver()
@@ -66,6 +100,7 @@ ON MATCH SET r.posts = r.posts + $posts
 """
 
 
+@_best_effort(None)
 def upsert_people(politician_id: str, people: list[dict]) -> None:
     """Person↔politician co-mention edges plus person→org affiliations.
 
@@ -96,6 +131,7 @@ def upsert_people(politician_id: str, people: list[dict]) -> None:
                 )
 
 
+@_best_effort(None)
 def upsert_influencers(politician_id: str, influencers: list[dict]) -> None:
     """Creators (≥ follower threshold) making content about the politician.
     `influencers` items: platform, handle, followers, posts."""
@@ -114,6 +150,7 @@ def upsert_influencers(politician_id: str, influencers: list[dict]) -> None:
             )
 
 
+@_best_effort(dict)
 def get_network_snapshot(politician_id: str, limit: int = 50) -> dict:
     """People-first network view: who specifically surrounds the politician
     (named people with roles/affiliations, influencers by reach), plus the

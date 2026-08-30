@@ -607,7 +607,11 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
             position = actor.get("position")
             stakeholders.append({
                 "name": name,
-                "position": position if position in ("for", "against", "neutral") else "neutral",
+                # Same exact-match defect fixed in issue_framework: a model
+                # writing "For" or "supportive" was silently reclassified as
+                # neutral, so a champion and a challenger both landed in the
+                # middle and the baseline probability read as a stalemate.
+                "position": ifw.normalise_position(position),
                 "segment": ifw.segment_stakeholder(actor.get("entity_type") or "organization", name),
                 "influence": actor.get("influence") if isinstance(actor.get("influence"), (int, float)) else 0,
                 "rationale": actor.get("relation") or "",
