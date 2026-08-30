@@ -35,11 +35,35 @@ GROUNDING_RULES = """CRITICAL GROUNDING RULES:
 # the backend's, not an arbitrary number. Input is the cheaper half of the bill
 # on every backend we use, so the read budget is generous too.
 ANALYST_MAX_TOKENS = 8000
-CORPUS_CHARS_PER_CALL = 60000
+# 60k characters is ~15k tokens — a quarter of what the smallest model we target
+# can hold, and it was capping a 661-mention corpus at roughly 300 short posts.
+# Every rendered line also carries ~100 characters of ref/platform/date header,
+# which on short social items is half the payload, so the effective loss was
+# worse than the raw number suggests. Raised to ~40k tokens of input, which
+# every current model handles and which is still the cheap half of the bill.
+CORPUS_CHARS_PER_CALL = 160000
 # Characters of whole-corpus digest a corpus-level analyst reads. The digest is
 # already a compression of everything collected; truncating it again is where
 # the second loss of detail happened.
 DIGEST_CONTEXT_CHARS = 90000
+
+
+# Per-item text budget inside an analyst's corpus window.
+#
+# An analyst asked "what are people ACTUALLY saying" needs BREADTH: many voices,
+# not a few in full. Full-article enrichment (6000 chars an item) turned the
+# 60k window into nine articles out of a 661-mention corpus — the analyst was
+# answering from 1.4% of the material and doing so faithfully. The whole body
+# still reaches the digest path, which chunks the entire corpus; here the lede
+# is what matters, because the lede is where a story says what it is.
+_MENTION_CHARS_SOCIAL = 1200   # posts and comments are short; keep them whole
+_MENTION_CHARS_ARTICLE = 700   # headline + lede is the story's claim
+
+
+def _mention_budget(source_type: str | None) -> int:
+    return (_MENTION_CHARS_ARTICLE
+            if source_type in ("article", "news", "reference", "video")
+            else _MENTION_CHARS_SOCIAL)
 
 
 def _render_mention(m: dict) -> str:
@@ -49,7 +73,20 @@ def _render_mention(m: dict) -> str:
     date_s = date.date().isoformat() if isinstance(date, datetime) else str(date)[:10]
     ref = str(m.get("id", ""))[:8]
     text = (m.get("text") or "").strip().replace("\n", " ")
+    budget = _mention_budget(m.get("source_type"))
+    if len(text) > budget:
+        text = text[:budget].rsplit(" ", 1)[0] + " …"
     return f"[ref={ref} | {m.get('platform')} {m.get('source_type')} | @{m.get('author_handle')} | {date_s} | engagement={eng_score}] {text}"
+
+
+# How much of the corpus the last analyst window actually held. A section built
+# on 1.4% of the material is not wrong, but nobody could tell it apart from one
+# built on all of it.
+_last_blob_stats: dict[str, int] = {"read": 0, "available": 0}
+
+
+def corpus_window_stats() -> dict:
+    return dict(_last_blob_stats)
 
 
 def _corpus_blob(mentions: list[dict], budget_chars: int = CORPUS_CHARS_PER_CALL) -> str:
@@ -74,15 +111,72 @@ def _corpus_blob(mentions: list[dict], budget_chars: int = CORPUS_CHARS_PER_CALL
     for m in ordered:
         line = _render_mention(m)
         if used + len(line) > budget_chars:
+            _last_blob_stats.update(read=len(lines), available=len(ordered))
             break
         lines.append(line)
         used += len(line) + 1
+    else:
+        _last_blob_stats.update(read=len(lines), available=len(ordered))
     return "\n".join(lines)
 
 
+# Characters a model routinely rewrites while quoting accurately: smart quotes
+# straightened, em dashes flattened, elisions marked with an ellipsis. Matching
+# on the raw bytes treats every one of those as a fabricated quote.
+_QUOTE_FOLD = {
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u201f": '"',
+    "\u2013": "-", "\u2014": "-", "\u2015": "-", "\u2212": "-",
+    "\u00a0": " ", "\u200b": "", "\u2026": " ",
+}
+
+
+def _fold(text: str) -> str:
+    """Normalise text to what it SAYS, for comparison only."""
+    import unicodedata
+
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    for source_char, replacement in _QUOTE_FOLD.items():
+        text = text.replace(source_char, replacement)
+    return " ".join(text.lower().split())
+
+
+def _words(text: str) -> list[str]:
+    import re
+
+    return re.findall(r"[a-z0-9']+", _fold(text))
+
+
+def quote_is_grounded(quoted: str, source: str, min_run: int = 6) -> bool:
+    """Is this quote actually in that mention?
+
+    Substring matching on normalised text handles the ordinary cases. The word
+    fallback handles elision — a model quoting "we won't accept it ... decide in
+    January" is quoting faithfully, and demanding one contiguous run calls it a
+    fabrication.
+
+    The bar is deliberately still high: a run of `min_run` consecutive words
+    must appear in the source in order. That cannot be met by paraphrase.
+    """
+    folded_quote, folded_source = _fold(quoted), _fold(source)
+    if not folded_quote or not folded_source:
+        return False
+    if folded_quote[:60] in folded_source:
+        return True
+
+    quote_words, source_words = _words(quoted), _words(source)
+    if len(quote_words) < min_run:
+        # Too short for the run test: require the whole thing, words only, so
+        # added punctuation cannot sink it.
+        return bool(quote_words) and " ".join(quote_words) in " ".join(source_words)
+    joined_source = " ".join(source_words)
+    return any(" ".join(quote_words[i : i + min_run]) in joined_source
+               for i in range(len(quote_words) - min_run + 1))
+
+
 def _validate_quotes(quotes: list, mentions_by_ref: dict[str, dict]) -> list[dict]:
-    """Keeps only quotes that are traceable: the ref exists and the quoted
-    text actually appears in that mention (normalized substring)."""
+    """Keeps only quotes that are traceable: the ref exists and the quoted text
+    is genuinely present in that mention."""
     valid = []
     for q in quotes or []:
         if not isinstance(q, dict):
@@ -91,9 +185,7 @@ def _validate_quotes(quotes: list, mentions_by_ref: dict[str, dict]) -> list[dic
         src = mentions_by_ref.get(ref)
         if not src:
             continue
-        quoted = " ".join(str(q.get("text") or "").split()).lower()
-        source_text = " ".join((src.get("text") or "").split()).lower()
-        if not quoted or quoted[:60] not in source_text:
+        if not quote_is_grounded(q.get("text") or "", src.get("text") or ""):
             continue
         valid.append(
             {
@@ -139,7 +231,19 @@ def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
         for theme in themes:
             if isinstance(theme, dict):
                 theme["quotes"] = _validate_quotes(theme.get("quotes"), refs)
-        voice[stance] = [t for t in themes if isinstance(t, dict) and t.get("quotes")]
+        # A theme is NOT deleted for failing quote validation. The theme is the
+        # analysis — 80-150 words on what people are saying and how strongly —
+        # and the quotes are its illustration. Dropping the whole finding
+        # because one quote had a curly apostrophe was silently emptying entire
+        # sections on runs where the model had worked perfectly well.
+        kept = []
+        for theme in themes:
+            if not isinstance(theme, dict) or not (theme.get("summary") or theme.get("theme")):
+                continue
+            if not theme.get("quotes"):
+                theme["quotes_unverified"] = True
+            kept.append(theme)
+        voice[stance] = kept
     return voice
 
 
