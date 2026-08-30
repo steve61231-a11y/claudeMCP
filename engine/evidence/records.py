@@ -24,6 +24,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 
+from engine import stages
 from engine import llm
 
 # What a record asserts.
@@ -151,11 +152,15 @@ def extract_batch(subject: str, mentions: list[dict]) -> list[EvidenceRecord]:
         entries = reply.get("records") if isinstance(reply, dict) else None
         if not isinstance(entries, list):
             raise ValueError("records was not a list")
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         if len(mentions) > 1:
             middle = len(mentions) // 2
             return (extract_batch(subject, mentions[:middle])
                     + extract_batch(subject, mentions[middle:]))
+        # A single mention that yields nothing after splitting all the way down
+        # contributes no evidence, and coverage would read that as a mention
+        # with nothing in it rather than one we failed to read.
+        stages.current().failed("evidence_extraction", exc)
         return []
 
     out: list[EvidenceRecord] = []

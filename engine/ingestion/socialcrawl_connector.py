@@ -276,11 +276,13 @@ class SocialCrawlConnector(IngestionConnector):
         candidates: dict[str, list[str]] = {}
         try:
             candidates["tiktok"] = self._discover_tiktok_users(politician_name)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"tiktok discovery: {type(exc).__name__}: {exc}"[:200]
             candidates["tiktok"] = []
         try:
             candidates["youtube"] = self._discover_youtube_channels(politician_name)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"youtube discovery: {type(exc).__name__}: {exc}"[:200]
             candidates["youtube"] = []
         return candidates
 
@@ -338,7 +340,8 @@ class SocialCrawlConnector(IngestionConnector):
                 continue
             try:
                 mentions.extend(fetcher(self, handle, window_start, window_end, source_type))
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"{platform}/{handle}: {type(exc).__name__}: {exc}"[:200]
                 continue
         return mentions
 
@@ -404,7 +407,10 @@ class SocialCrawlConnector(IngestionConnector):
         for platform, path, default_source_type in discovery_calls:
             try:
                 posts = self._call_search_endpoint(platform, path, default_source_type, politician_name)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                # A paid endpoint refusing us must be visible: this is money
+                # spent for nothing, reported as a platform with no chatter.
+                self.last_error = f"{platform} search: {type(exc).__name__}: {exc}"[:200]
                 continue
             mentions.extend(posts)
             comment_endpoint = self._COMMENT_ENDPOINTS.get(platform)
@@ -413,7 +419,8 @@ class SocialCrawlConnector(IngestionConnector):
             for post in posts:
                 try:
                     mentions.extend(self._fetch_comments_for_post(platform, comment_endpoint, post))
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    self.last_error = f"{platform} comments: {type(exc).__name__}: {exc}"[:200]
                     continue
         return mentions
 

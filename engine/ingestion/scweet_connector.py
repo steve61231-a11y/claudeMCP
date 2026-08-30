@@ -47,7 +47,8 @@ class ScweetConnector(IngestionConnector):
         for term in terms:
             try:
                 rows = scraper.scrape(words=[term], since=since, until=until, limit=limit)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"'{term}': {type(exc).__name__}: {exc}"[:200]
                 continue
             for row in rows or []:
                 mapped = self._map_row(row, seen, window_start, window_end)

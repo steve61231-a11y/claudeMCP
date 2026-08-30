@@ -35,6 +35,8 @@ class YouTubeConnector(IngestionConnector):
     def __init__(self, ydl_factory=None):
         # Injectable for tests; real one builds a yt_dlp.YoutubeDL.
         self._ydl_factory = ydl_factory
+        self._comment_failures = 0
+        self.last_error: str | None = None
 
     def fetch(
         self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
@@ -125,7 +127,13 @@ class YouTubeConnector(IngestionConnector):
             with ydl as y:
                 info = y.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
             return (info or {}).get("comments", []) or []
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # Comments are the grassroots voice the public-voice analyst leans
+            # on hardest. Losing them all silently reads as a subject nobody
+            # commented on.
+            self._comment_failures += 1
+            self.last_error = (f"comments unavailable ({self._comment_failures} video(s)): "
+                               f"{type(exc).__name__}: {exc}")[:200]
             return []
 
     def _build_ydl(self, opts: dict):

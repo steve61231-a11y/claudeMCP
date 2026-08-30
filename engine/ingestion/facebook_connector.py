@@ -59,7 +59,8 @@ class FacebookConnector(IngestionConnector):
                     cookies=self.cookies,
                     options={"comments": True, "reactions": True},
                 )
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"{page}: {type(exc).__name__}: {exc}"[:200]
                 continue
             for post in posts:
                 mentions.extend(self._map_post(post, page, terms, window_start, window_end, seen_posts))

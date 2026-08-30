@@ -232,7 +232,11 @@ def build_people_graph(db: Session, politician: Politician, now: datetime | None
         relationship_edges = _classify_pairs(
             politician.name, subject_pairs + pair_list[:PAIRS_TO_CLASSIFY], person_mentions
         )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # Every edge in the network stays untyped: the map still draws, but no
+        # relationship is named, which reads as a subject with no discernible
+        # relationships rather than a classification pass that died.
+        stages.current().failed("people_graph:relationship_classification", exc)
         relationship_edges = []
     edge_index = {(e["source"], e["target"]): e for e in edges}
     for rel in relationship_edges:
@@ -244,7 +248,8 @@ def build_people_graph(db: Session, politician: Politician, now: datetime | None
 
     try:
         profiles_by_name = _profile_people(politician.name, ranked_people[:50], person_mentions)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("people_graph:profiles", exc)
         profiles_by_name = {}
     for node in nodes:
         prof = profiles_by_name.get(node["id"])
@@ -368,7 +373,8 @@ def _profile_people(subject: str, ranked_people: list, person_mentions: dict) ->
                 max_tokens=2500,
                 max_untrusted_chars=25000,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            stages.current().failed(f"people_graph:profile_batch[{len(batch)}]", exc)
             continue
         corpus_norm = " ".join(" ".join(source_texts).split()).lower()
         for item in result.get("people") or []:

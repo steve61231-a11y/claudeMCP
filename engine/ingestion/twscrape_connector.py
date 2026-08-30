@@ -33,7 +33,8 @@ class TwscrapeConnector(IngestionConnector):
     ) -> list[IngestedMention]:
         try:
             return asyncio.run(self._fetch_async(politician_name, aliases, window_start, window_end))
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return []
 
     async def _fetch_async(self, politician_name, aliases, window_start, window_end) -> list[IngestedMention]:

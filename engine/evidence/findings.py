@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
+from engine import stages
 from engine import llm
 from engine.evidence.independence import group_duplicates
 from engine.evidence.records import (
@@ -53,6 +54,8 @@ class Finding:
     supporting: list[dict] = field(default_factory=list)
     contradicting: list[dict] = field(default_factory=list)
     open_questions: list[str] = field(default_factory=list)
+    #: False when the contradiction search could not run for this finding.
+    contradiction_checked: bool = True
     review: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -165,22 +168,25 @@ Respond with ONLY this JSON:
 
 
 def find_contradictions(claim: str, pool: list[EvidenceRecord],
-                        limit: int = 24) -> tuple[list[int], list[str]]:
+                        limit: int = 24) -> tuple[list[int], list[str], bool]:
     """Actively look for evidence AGAINST a claim. Returns indices into `pool`.
 
     Runs over the WHOLE record set, including the claim's own cluster: topic
     clustering puts a claim and its refutation side by side, so the refutation
     would otherwise be filed as support for the thing it refutes."""
     if not claim or not pool:
-        return [], []
+        return [], [], False
     sample = pool[:limit]
     listing = "\n".join(f"[{i}] {r.statement}" for i, r in enumerate(sample, start=1))
     try:
         reply = llm.call_json(
             CONTRADICT_PROMPT.format(claim=claim[:300], evidence=listing),
             max_tokens=1200, model=llm.bulk_model())
-    except Exception:  # noqa: BLE001
-        return [], []
+    except Exception as exc:  # noqa: BLE001
+        # No contradiction search ran. "Nothing contradicts this" and "we never
+        # looked" must not read the same on a claim we are about to publish.
+        stages.current().failed("contradiction_search", exc)
+        return [], [], False
     indices = []
     for value in (reply.get("contradicting") or []):
         try:
@@ -190,7 +196,7 @@ def find_contradictions(claim: str, pool: list[EvidenceRecord],
         if 1 <= position <= len(sample):
             indices.append(position - 1)
     questions = [str(q).strip()[:200] for q in (reply.get("open_questions") or []) if str(q).strip()]
-    return indices, questions[:3]
+    return indices, questions[:3], True
 
 
 SKEPTIC_PROMPT = """You are the sceptic. Your job is to try to DISPROVE a finding before it
@@ -324,7 +330,8 @@ def build_findings(records: list[EvidenceRecord], mentions: list[dict],
             # are the same topic. Excluding the cluster would file the refutation
             # as support for the thing it refutes, which is worse than missing
             # it. Anything flagged is moved out of supporting.
-            indices, questions = find_contradictions(finding.summary or finding.title, records)
+            indices, questions, searched = find_contradictions(
+                finding.summary or finding.title, records)
             against = [records[i] for i in indices]
             finding.contradicting = [_evidence_row(r) for r in against]
             finding.open_questions = questions
@@ -338,6 +345,18 @@ def build_findings(records: list[EvidenceRecord], mentions: list[dict],
                 finding.confidence, finding.confidence_reason = _confidence(
                     finding.independent_sources, finding.distinct_platforms,
                     [row["status"] for row in finding.supporting], len(finding.contradicting))
+            elif not searched:
+                # "Nothing contradicts this" is a claim about the corpus. If the
+                # search never ran we have not earned it — HIGH confidence
+                # reading "with nothing contradicting" would be an assertion
+                # about evidence nobody looked at.
+                finding.contradiction_checked = False
+                if finding.confidence == CONFIDENCE_HIGH:
+                    finding.confidence = CONFIDENCE_MEDIUM
+                finding.confidence_reason = (
+                    finding.confidence_reason.replace(", with nothing contradicting", "")
+                    + " — the contradiction search did not run, so this is not a statement "
+                      "that the corpus fails to contradict it")
             finding.review = challenge(finding)
 
     return findings

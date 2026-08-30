@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from engine import stages
 from engine.config import settings
 from engine.db.models import Alert, MentionSentiment, Politician, RawMention
 
@@ -187,5 +188,8 @@ def _deliver_webhook(db: Session, alert: Alert, politician: Politician) -> None:
         urllib.request.urlopen(req, timeout=10)
         alert.delivered = 1
         db.commit()
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — a webhook must not break alerting
+        # `delivered` stays 0, which is correct, but silently: an alert that was
+        # never sent looks the same as one still queued. Record why, so a
+        # misconfigured webhook is visible rather than inferred from silence.
+        stages.current().failed("alert_webhook", exc)

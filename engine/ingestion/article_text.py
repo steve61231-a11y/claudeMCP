@@ -22,6 +22,7 @@ sentiment and grounding all read it) and stashed in
 from concurrent.futures import ThreadPoolExecutor
 
 from engine.config import settings
+from engine import stages
 from engine.ingestion import fetch_backend
 from engine.ingestion.base import IngestedMention
 
@@ -50,7 +51,10 @@ def extract_body(url: str, max_chars: int) -> tuple[str, str | None]:
     Never raises."""
     try:
         import trafilatura
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # Without trafilatura EVERY article contributes only its headline, and
+        # the report simply looks like a corpus of thin items.
+        stages.current().failed("article_text:trafilatura_missing", exc)
         return "", None
     result = fetch_backend.fetch_html(url, timeout=_FETCH_TIMEOUT)
     if not result.ok:
@@ -104,6 +108,7 @@ def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
         return m, body, backend
 
     enriched = 0
+    attempted = len(candidates)
     with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(candidates))) as pool:
         for m, body, backend in pool.map(_work, candidates):
             if not body:
@@ -117,4 +122,13 @@ def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
             # Don't duplicate the title if the body already leads with it.
             m["text"] = body if title and body.startswith(title) else f"{title}\n\n{body}".strip()
             enriched += 1
+    # How much of the journalism actually made it in. Nobody read this return
+    # value, so a run where every body fetch was refused looked exactly like a
+    # run of headline-only sources.
+    if enriched < attempted:
+        stages.current().record(
+            "article_text", stages.STATUS_OK if enriched else stages.STATUS_FAILED,
+            detail=f"{enriched} of {attempted} article bodies extracted; the rest "
+                   f"contribute only their headline "
+                   f"(fetch tiers: {fetch_backend.snapshot()})")
     return enriched

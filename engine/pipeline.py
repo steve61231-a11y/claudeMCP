@@ -862,7 +862,11 @@ def _fetch_transcripts_for_top_videos(
             continue
         try:
             transcript = connector.fetch_transcript(video.platform, str(post_id))
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — one video is not the run
+            # Transcripts are the only way the words spoken in a 90-minute
+            # broadcast enter the corpus at all. Losing them all silently reads
+            # as coverage that happened to be text-only.
+            stages.current().failed(f"transcript:{video.platform}", exc)
             continue
         if ingestion_run is not None:
             ingestion_run.credits_spent += credit_cost(

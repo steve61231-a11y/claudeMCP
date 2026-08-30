@@ -53,13 +53,15 @@ class AgentReachConnector(IngestionConnector):
         for term in terms:
             try:
                 mentions.extend(self._web_search(term, window_end, seen_urls))
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"web search '{term}': {type(exc).__name__}: {exc}"[:200]
                 continue
         if self._backend_ok("twitter"):
             for term in terms[:2]:
                 try:
                     mentions.extend(self._twitter_search(term, window_end))
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    self.last_error = f"twitter '{term}': {type(exc).__name__}: {exc}"[:200]
                     continue
         return mentions
 
