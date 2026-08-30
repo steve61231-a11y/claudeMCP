@@ -361,9 +361,30 @@ def build_issue_map(
     # about the wrong country and returns empty sections is worse than one that
     # says in ten seconds that it found nothing on topic: the first looks like
     # the subject has no story, the second tells you the search was wrong.
-    usable = (acquisition.get("relevance_filter") or {}).get("kept")
-    if usable is not None and usable < MIN_USABLE_DOCUMENTS:
-        report = acquisition["relevance_filter"]
+    # Stop before the digest only when there is genuinely nothing to read. Two
+    # cases, and they are not the same:
+    #
+    #   - the corpus is empty. Nothing to analyse, at any price.
+    #   - we collected plenty and the relevance filter rejected nearly all of
+    #     it. This is "senate × forestry": 370 documents, one on topic. Reading
+    #     them costs twenty minutes and produces empty sections.
+    #
+    # A small corpus is NOT one of them. Two genuinely on-topic articles are
+    # thin, not useless, and they cost seconds to read — refusing to analyse
+    # them would withhold the only answer available.
+    filtered = acquisition.get("relevance_filter") or {}
+    examined, kept = filtered.get("examined"), filtered.get("kept")
+    nothing_at_all = not mentions
+    filter_rejected_nearly_everything = (
+        examined is not None and examined >= REJECTION_SAMPLE_FLOOR
+        and kept is not None and kept < MIN_USABLE_DOCUMENTS
+    )
+    if nothing_at_all or filter_rejected_nearly_everything:
+        report = filtered or {
+            "examined": len(mentions), "kept": len(mentions), "dropped": 0,
+            "reasons": {}, "examples": {},
+            "market_anchored": relevance.needs_market_anchor(principal, issue),
+        }
         publish("stage", "Nothing on topic — stopping before analysis.")
         return _nothing_on_topic(principal, issue, ws, we, mentions, acquisition, report)
 
@@ -409,9 +430,14 @@ def build_issue_map(
     return payload
 
 
-#: Below this many on-topic documents there is nothing to analyse, and running
-#: the analysts anyway produces empty sections that read as an absent story.
+#: Below this many on-topic documents, a corpus that was heavily filtered has
+#: nothing left worth the digest.
 MIN_USABLE_DOCUMENTS = 3
+
+#: Only call it "nothing on topic" when enough was collected for the filter's
+#: verdict to mean something. Rejecting 2 of 2 says little; rejecting 369 of
+#: 370 says the search was wrong.
+REJECTION_SAMPLE_FLOOR = 20
 
 
 def _nothing_on_topic(principal: str, issue: str, ws, we, mentions: list[dict],

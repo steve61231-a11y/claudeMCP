@@ -296,3 +296,99 @@ def test_a_degraded_run_carries_its_warning_to_the_api(db_session, monkeypatch):
     response = _api_shape(_run(db_session, subject).payload, db_session, subject.id)
     assert response["runHealth"]["headline"], "the page must be told the run degraded"
     assert response["sectionStatus"]["failed_count"] > 0
+
+
+# --- the client deliverable -------------------------------------------------
+
+def _framework(payload):
+    return payload.get("sentiment_framework") or {}
+
+
+def test_the_framework_is_produced_on_a_healthy_run(db_session, scripted_model):
+    """The Sentiment Framework tab simply never appeared when build() raised,
+    which is indistinguishable from a subject it had nothing to say about."""
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    framework = _framework(payload)
+    assert framework, "the client deliverable did not appear at all"
+    for section in ("summary_of_subject", "sentiment_score", "overall_mentions",
+                    "sentiment", "current_issues", "emergent_issues",
+                    "strategic_implications"):
+        assert section in framework, f"framework section {section!r} is missing"
+
+
+def test_the_framework_reads_the_same_corpus_the_overview_does(db_session, scripted_model):
+    """"Mentions 661" beside "Total mentions 852" with no explanation. The two
+    numbers are differently scoped and both true; what is not acceptable is
+    the framework counting mentions the overview never saw."""
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    overview = (payload.get("volume_trends") or {}).get("total_mentions")
+    framework_total = _framework(payload).get("overall_mentions", {}).get("total")
+    assert framework_total is not None and overview is not None
+    assert framework_total >= overview, (
+        "the framework corpus includes documents as well as mentions, so it may be "
+        "larger — but never smaller than what the overview counted")
+
+
+def test_the_sentiment_score_explains_itself(db_session, scripted_model):
+    subject = _seed(db_session)
+    score = _framework(_run(db_session, subject).payload).get("sentiment_score") or {}
+    assert score.get("reading"), "a headline percentage with no reading is unusable"
+    assert len(score["reading"]) >= 3
+
+
+def test_sources_carry_their_own_evidence(db_session, scripted_model):
+    """"Sources covered (73)" was a headcount nobody could open."""
+    subject = _seed(db_session)
+    volume = _framework(_run(db_session, subject).payload).get("overall_mentions") or {}
+    detail = volume.get("sources_detail") or []
+    assert detail, "sources reached the page as a bare count"
+    assert any(source.get("top_mentions") for source in detail)
+
+
+def test_a_lean_is_never_asserted_on_too_little_scoring(db_session, scripted_model):
+    subject = _seed(db_session)
+    volume = _framework(_run(db_session, subject).payload).get("overall_mentions") or {}
+    for source in volume.get("sources_detail") or []:
+        if source["scored"] < 3:
+            assert source["lean"] is None, (
+                f"{source['source']} was called {source['lean']!r} off "
+                f"{source['scored']} scored item(s)")
+
+
+def test_key_people_are_not_broadcast_channels(db_session, scripted_model):
+    """"Key people" listed cpnnewz, plugtvkenya, simbatv_ke — YouTube channels."""
+    subject = _seed(db_session)
+    implications = _framework(_run(db_session, subject).payload).get(
+        "strategic_implications") or {}
+    handles = {a.get("handle") for a in implications.get("key_amplifiers") or []}
+    names = {p.get("name") for p in implications.get("key_people") or []}
+    assert not (handles & names), "an amplifier handle is being presented as a person"
+
+
+def test_percentages_are_absent_rather_than_zero_when_nothing_scored(db_session, monkeypatch):
+    """A ring reading 0.0% asserts the subject has no positive coverage. When
+    nothing was scored that is a failure wearing a finding's clothes."""
+    def no_scoring(prompt, max_tokens=None, model=None):
+        if '"scores"' in prompt.lower():
+            raise RuntimeError("HTTP 429 rate limit exceeded")
+        return _scripted(prompt, max_tokens, model)
+
+    monkeypatch.setattr(llm, "_call_json", no_scoring)
+    monkeypatch.setattr(llm, "provider", lambda: "openai_compatible")
+    monkeypatch.setattr(llm, "bulk_model", lambda: "test/bulk")
+    monkeypatch.setattr(llm, "strong_model", lambda: "test/strong")
+    monkeypatch.setattr(llm, "concurrency", lambda n: 1)
+    monkeypatch.setattr(llm, "max_output_tokens", lambda: 8000)
+    health.reset()
+    stages.reset()
+
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    breakdown = payload.get("sentiment_breakdown") or {}
+    if not breakdown.get("total_mentions_analyzed"):
+        assert breakdown.get("positive_pct") is None, "0.0% off nothing scored is a lie"
+        score = _framework(payload).get("sentiment_score") or {}
+        assert score.get("score") is None
+        assert score.get("scoring_gap"), "say that nothing was scored"

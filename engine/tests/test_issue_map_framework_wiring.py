@@ -40,9 +40,21 @@ def stub_analysis(monkeypatch):
     return analysis
 
 
+# A corpus, not an empty list. build_issue_map now stops before the digest when
+# there is nothing to analyse, which is correct production behaviour — these
+# tests exercise the wiring downstream of that, so they must supply material.
+_CORPUS = [
+    {"id": f"m{i}", "platform": "nation.africa", "source_type": "article",
+     "author_handle": "nation", "text": f"Treasury CS on the Digital Services Tax, item {i}.",
+     "posted_at": datetime.utcnow() - timedelta(days=i), "engagement": {},
+     "source_url": f"https://nation.africa/{i}"}
+    for i in range(6)
+]
+
+
 def _build(**kwargs):
     return issue_map.build_issue_map("Treasury CS", "Digital Services Tax",
-                                     mentions=[], **kwargs)
+                                     mentions=list(_CORPUS), **kwargs)
 
 
 def test_framework_is_attached_to_the_issue_map(stub_analysis):

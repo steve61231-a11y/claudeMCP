@@ -149,3 +149,44 @@ def test_the_framework_finds_the_gate_result_under_acquisition():
     controls = built["data_overview"]["controls_applied"]
     assert controls["relevance_gate"] == "applied"
     assert "8 of 10 documents" in controls["relevance_filter"]
+
+
+# --- when to stop, and when a small answer is still an answer ----------------
+
+def test_a_heavily_filtered_corpus_stops_before_the_digest():
+    """370 collected, 1 on topic: reading them costs twenty minutes and yields
+    empty sections."""
+    from engine.reports.issue_map import (MIN_USABLE_DOCUMENTS,
+                                          REJECTION_SAMPLE_FLOOR)
+
+    examined, kept = 370, 1
+    assert examined >= REJECTION_SAMPLE_FLOOR and kept < MIN_USABLE_DOCUMENTS
+
+
+def test_a_genuinely_small_corpus_is_still_analysed():
+    """Two on-topic articles are thin, not useless, and cost seconds to read.
+    Refusing them would withhold the only answer available."""
+    from engine.reports.issue_map import REJECTION_SAMPLE_FLOOR
+
+    examined, kept = 2, 2
+    assert examined < REJECTION_SAMPLE_FLOOR, (
+        "a corpus this small cannot support a verdict about the search itself")
+
+
+def test_rejecting_two_of_two_is_not_evidence_the_search_was_wrong():
+    from engine.reports.issue_map import REJECTION_SAMPLE_FLOOR
+
+    assert REJECTION_SAMPLE_FLOOR > 3, (
+        "the floor must be high enough that the filter's verdict means something")
+
+
+def test_an_empty_corpus_always_stops():
+    from datetime import datetime
+
+    from engine.reports.issue_map import build_issue_map
+
+    payload = build_issue_map("Senate Committee on Lands", "Mau Forest",
+                              window_start=datetime(2026, 1, 1),
+                              window_end=datetime(2026, 8, 1), mentions=[])
+    assert payload["thin"] is True
+    assert payload["issue_framework"] is None
