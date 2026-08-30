@@ -2,7 +2,7 @@ import json
 from collections import Counter
 from datetime import datetime
 
-from engine import llm
+from engine import llm, stages
 
 TOP_QUOTES = 8
 
@@ -208,5 +208,10 @@ def _executive_summary(
         )
         summary = result.get("summary") if isinstance(result, dict) else None
         return summary.strip() if summary else fallback
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # The executive brief is the first thing anyone reads. Falling back to
+        # the template sentence without a trace is why "In the period X, Y had
+        # N mentions… the leading narrative was 'narrative-3'" kept appearing
+        # as though it were the analysis.
+        stages.current().failed("executive_summary", exc)
         return fallback

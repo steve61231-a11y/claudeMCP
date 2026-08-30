@@ -24,7 +24,7 @@ observations carry ref ids validated the same way quotes are.
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from engine import llm
+from engine import llm, stages
 from engine.reports.analysts import GROUNDING_RULES, _render_mention
 
 CHUNK_CHARS = 16000          # per-chunk prompt budget for the map step
@@ -115,10 +115,16 @@ def _digest_chunk(name: str, chunk: list[dict], index: int) -> dict:
             model=llm.bulk_model(),
         )
         digest = result.get("digest", {})
-    except Exception:
+        failed = None
+    except Exception as exc:  # noqa: BLE001 — one dead chunk must not stop the map
         digest = {}
+        failed = f"{type(exc).__name__}: {exc}"[:200]
+        stages.current().failed(f"digest_chunk:{index}", exc)
     digest["_chunk"] = index
     digest["_mentions_in_chunk"] = len(chunk)
+    # Whether this chunk was actually READ. Without it the coverage record
+    # below counts a chunk that failed as one that was analysed.
+    digest["_failed"] = failed
     return digest
 
 
@@ -135,16 +141,28 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
     with ThreadPoolExecutor(max_workers=workers) as pool:
         digests = list(pool.map(lambda ic: _digest_chunk(name, ic[1], ic[0]), enumerate(chunks)))
 
-    analyzed = sum(d.get("_mentions_in_chunk", 0) for d in digests)
-    return {
-        "digests": digests,
-        "coverage": {
-            "mentions_total": len(mentions),
-            "mentions_analyzed": analyzed,
-            "chunks": len(chunks),
-            "complete": analyzed == len(mentions),
-        },
+    # Count only what was actually read. `_mentions_in_chunk` was set on every
+    # chunk including the failed ones, so a run where EVERY chunk 404'd still
+    # reported "mentions_analyzed: 188, complete: true". The report then told
+    # its reader the analyst had read every item while it had read none — the
+    # most damaging single lie this pipeline was capable of, because it is the
+    # number that makes the thin sections beneath it look like the truth.
+    read = [d for d in digests if not d.get("_failed")]
+    failed_chunks = [d for d in digests if d.get("_failed")]
+    analyzed = sum(d.get("_mentions_in_chunk", 0) for d in read)
+    coverage = {
+        "mentions_total": len(mentions),
+        "mentions_analyzed": analyzed,
+        "chunks": len(chunks),
+        "chunks_failed": len(failed_chunks),
+        "complete": analyzed == len(mentions) and not failed_chunks,
     }
+    if failed_chunks:
+        coverage["note"] = (
+            f"{len(failed_chunks)} of {len(chunks)} passes over the corpus failed, so "
+            f"{len(mentions) - analyzed} mentions were never read. Everything below rests "
+            "on the remainder.")
+    return {"digests": digests, "coverage": coverage}
 
 
 def digest_context(digest: dict, max_chars: int = 40000) -> str:

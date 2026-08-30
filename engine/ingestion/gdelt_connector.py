@@ -41,7 +41,8 @@ class GdeltConnector(IngestionConnector):
             response = http.get(GDELT_DOC_URL, params=params, timeout=30)
             response.raise_for_status()
             body = response.json()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return []
 
         mentions: list[IngestedMention] = []

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
+from engine import stages
 from engine.db.models import (
     Document,
     Entity,
@@ -275,7 +276,8 @@ def detect_all(db, politician) -> dict:
     for name, detector in detectors:
         try:
             signals.extend(detector(db, politician))
-        except Exception:  # noqa: BLE001 — never let one detector suppress the others
+        except Exception as exc:  # noqa: BLE001 — never let one detector suppress the others
+            stages.current().failed(f"anomaly_detector:{name}", exc)
             failed.append(name)
 
     order = {CRITICAL: 0, WARNING: 1, INFO: 2}

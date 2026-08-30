@@ -1,4 +1,4 @@
-from engine import llm
+from engine import llm, stages
 from engine.config import settings
 
 _local_pipeline = None
@@ -60,9 +60,15 @@ def llm_sentiment_and_context(text: str) -> dict:
     """LLM pass for context tagging, and for any mention the local model is unsure about."""
     try:
         result = llm.call_json_untrusted(CONTEXT_PROMPT, text, expected_keys={"sentiment", "intensity"}, max_tokens=200)
-    except ValueError:
-        result = {}
+    except Exception as exc:  # noqa: BLE001
+        # A failed call must not become a scored "neutral". Neutral is a
+        # reading; an unanswered request is not, and counting one as the other
+        # inflates the neutral share with data that was never produced. Only
+        # ValueError was caught here, so a provider RuntimeError escaped too.
+        stages.current().failed("llm_sentiment", exc)
+        return {"sentiment": None, "intensity": None, "context_tag": None, "scored": False}
     return {
+        "scored": True,
         "sentiment": result.get("sentiment", "neutral"),
         "intensity": int(result.get("intensity", 3)),
         "context_tag": result.get("context_tag"),

@@ -38,7 +38,8 @@ class GoogleNewsRssConnector(IngestionConnector):
             resp = http.get(url, timeout=25)
             resp.raise_for_status()
             root = ET.fromstring(resp.content)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return []
 
         mentions: list[IngestedMention] = []

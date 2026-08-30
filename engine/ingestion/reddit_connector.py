@@ -43,7 +43,8 @@ class RedditConnector(IngestionConnector):
                 resp = http.get(url, params=params, headers=HEADERS, timeout=25)
                 resp.raise_for_status()
                 children = resp.json().get("data", {}).get("children", [])
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = f"{type(exc).__name__}: {exc}"[:200]
                 continue
             for child in children:
                 mapped = self._map_post(child.get("data", {}), seen, window_start, window_end)

@@ -21,7 +21,9 @@ from engine.db.models import (
 )
 from engine.ingestion import orchestrator
 from engine.intelligence import graph, influence, narratives as narrative_module
-from engine.processing import cleaning, entities, sentiment
+# `sentiment` was imported here and never called — per-mention scoring lives in
+# engine.agents.score, which is batched. A dead import reads as a live stage.
+from engine.processing import cleaning, entities
 from engine.reports.generator import generate_report_payload
 from engine.reports.sections import enrich_report_payload
 
@@ -638,19 +640,31 @@ def _coverage_summary(stats: dict) -> dict:
     ok, degraded, down = [], [], []
     notes = []
     for source, h in sorted(health.items()):
-        if h.get("succeeded", 0) == h.get("attempted", 0) and h.get("attempted", 0) > 0:
-            ok.append(source)
+        failures = h.get("failures") or {}
+        # A source whose tasks all completed but which returned nothing AND
+        # recorded a reason has not delivered. "succeeded == attempted" was
+        # true for a connector the host refused, so a run where Reddit and X
+        # were blocked still printed "Every enabled source delivered".
+        silently_empty = bool(failures.get("silent_empty"))
+        delivered = h.get("results", 0) > 0
+        if silently_empty and not delivered:
+            down.append(source)
+        elif h.get("succeeded", 0) == h.get("attempted", 0) and h.get("attempted", 0) > 0:
+            (ok if delivered or not silently_empty else degraded).append(source)
         elif h.get("succeeded", 0) > 0:
             degraded.append(source)
         else:
             down.append(source)
-        failures = h.get("failures") or {}
         if failures.get("out_of_credits"):
             notes.append(f"{source}: data provider credits exhausted — top up to restore coverage")
         elif failures.get("endpoint_unavailable"):
             notes.append(f"{source}: provider endpoint unavailable this run")
         elif failures.get("upstream_error"):
             notes.append(f"{source}: partial — upstream errors during collection")
+        elif failures.get("silent_empty"):
+            raw = [e.replace("returned nothing: ", "") for e in (h.get("errors") or [])[:2]]
+            reason = "; ".join(raw) or "no reason recorded"
+            notes.append(f"{source}: returned nothing — {reason}")
     balance = stats.get("credit_balance_after")
     return {
         "sources_ok": ok,

@@ -318,6 +318,12 @@ def _source_health(db: Session, run: IngestionRun) -> dict:
         if task.status == "done":
             entry["succeeded"] += 1
             entry["results"] += task.result_count or 0
+            # Completed, but the connector told us why it came back empty.
+            if not (task.result_count or 0) and task.error:
+                entry["failures"]["silent_empty"] = entry["failures"].get("silent_empty", 0) + 1
+                entry.setdefault("errors", [])
+                if task.error not in entry["errors"]:
+                    entry["errors"].append(task.error[:200])
         elif task.status == "failed":
             err = task.error or ""
             if "402" in err:
@@ -567,6 +573,14 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         from engine.ingestion.article_text import enrich_with_article_text
 
         enrich_with_article_text(mentions)
+    # A connector that came back empty AND recorded a reason is not a source
+    # with nothing to say — it is a source that failed. Both produce
+    # result_count 0 and status "done", so without this the two are the same
+    # row in source health, and a subject with genuinely thin coverage cannot
+    # be told apart from a blocked host.
+    connector_error = getattr(connector, "last_error", None)
+    if not mentions and connector_error:
+        task.error = f"returned nothing: {connector_error}"[:2000]
     task.result_count += _store_mentions(session, run, task, politician, mentions)
 
 

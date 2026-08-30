@@ -19,7 +19,7 @@ distinguishes a fact from a rumour that got repeated.
 
 from concurrent.futures import ThreadPoolExecutor
 
-from engine import llm
+from engine import llm, stages
 from engine.agents import evidence as evidence_store
 from engine.db.models import Claim, ClaimEvidence
 
@@ -102,7 +102,8 @@ def extract_claims(passage: str, max_claims: int = _MAX_CLAIMS_PER_SECTION) -> l
             max_tokens=1500,
             model=llm.bulk_model(),
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("claim_extraction", exc)
         return []
     claims = [str(c).strip() for c in (result.get("claims") or []) if str(c).strip()]
     return claims[:max_claims]
@@ -157,7 +158,8 @@ def extract_claims_batch(passages: list[str]) -> dict[int, list[str]]:
             BATCH_EXTRACT_PROMPT.format(batch=batch),
             max_tokens=min(8000, 220 * len(passages) + 500),
         )
-    except Exception:  # noqa: BLE001 — an unextracted passage is simply unchecked
+    except Exception as exc:  # noqa: BLE001 — an unextracted passage is simply unchecked
+        stages.current().failed(f"claim_extraction[{len(passages)}]", exc)
         return {}
 
     out: dict[int, list[str]] = {}
@@ -199,7 +201,10 @@ def adjudicate_batch(items: list[tuple[str, list[dict]]]) -> dict[int, dict]:
             max_tokens=min(8000, 220 * len(items) + 400),
             max_untrusted_chars=len(batch) + 1000,
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # These claims stay UNVERIFIED, which is right — but a verification
+        # that never ran must not read as a report with nothing to check.
+        stages.current().failed(f"claim_adjudication[{len(items)}]", exc)
         return {}
 
     out: dict[int, dict] = {}
@@ -346,7 +351,17 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
                 claims.append((section, claim_text))
 
     if not claims:
-        return {"checked": 0, "verified": 0, "unverified": 0, "contradicted": 0, "claims": []}
+        # "0 checked" is ambiguous: a report with no factual assertions, or an
+        # extractor that died. Say which, so a verification section reading
+        # "nothing to check" cannot mean "the checker was down".
+        extraction_failed = any(r.name.startswith("claim_extraction")
+                                for r in stages.current().failures)
+        return {"checked": 0, "verified": 0, "unverified": 0, "contradicted": 0,
+                "claims": [],
+                "note": ("claim extraction failed, so nothing was checked — this is not a "
+                         "report without factual assertions"
+                         if extraction_failed else
+                         "no checkable factual assertions were found in the report prose")}
 
     # Retrieval is fast SQL on the caller's session (sessions are not
     # thread-safe); only the slow LLM adjudication is parallelised.

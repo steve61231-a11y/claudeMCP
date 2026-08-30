@@ -25,7 +25,7 @@ to the documents that produced it.
 from collections import defaultdict
 from datetime import datetime
 
-from engine import llm
+from engine import llm, stages
 from engine.config import settings
 from engine.db.models import Entity, EntityRelationship
 
@@ -118,7 +118,8 @@ def _type_pairs(subject: str, pairs: list[tuple[str, str, str]]) -> dict[int, di
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed(f"relation_typing[{len(pairs)}]", exc)
         return {}
 
     out: dict[int, dict] = {}

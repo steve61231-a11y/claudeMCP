@@ -1,6 +1,6 @@
 import re
 
-from engine import llm
+from engine import llm, stages
 from engine.config import settings
 
 _nlp = None
@@ -177,7 +177,10 @@ def _extract_people_batch(items: list[tuple[str, str]], politician_name: str) ->
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )
-    except Exception:  # noqa: BLE001 — retried on the next incremental run
+    except Exception as exc:  # noqa: BLE001 — retried on the next incremental run
+        # Every person named in this batch of mentions is lost. Silently, the
+        # people network and "key people" just come back smaller.
+        stages.current().failed(f"people_extraction[{len(items)}]", exc)
         return {}
 
     politician_lower = politician_name.lower()

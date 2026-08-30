@@ -25,7 +25,7 @@ excluded document can be found and explained rather than vanishing silently.
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-from engine import llm
+from engine import llm, stages
 from engine.config import settings
 from engine.db.models import Document, Politician
 
@@ -182,9 +182,12 @@ def _adjudicate_batch(profile: dict, items: list[tuple[int, str, str]]) -> dict[
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         # A failed adjudication must not delete evidence: leave the batch
-        # ambiguous so it is still analysed, just flagged.
+        # ambiguous so it is still analysed, just flagged. Recorded, because a
+        # gate that never ran and a gate that found nothing off-topic report
+        # the same "0 set aside".
+        stages.current().failed(f"relevance_adjudication[{len(items)}]", exc)
         return {}
 
     out: dict[int, dict] = {}

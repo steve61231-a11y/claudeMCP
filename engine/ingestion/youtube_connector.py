@@ -110,7 +110,8 @@ class YouTubeConnector(IngestionConnector):
             with ydl as y:
                 info = y.extract_info(f"ytsearch{_max_videos()}:{query} Kenya", download=False)
             return info.get("entries", []) if info else []
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return []
 
     def _comments(self, video_id: str) -> list[dict]:

@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from engine import llm
+from engine import llm, stages
 from engine.db.models import (
     AuthorProfile,
     Entity,
@@ -314,7 +314,10 @@ def _classify_pairs(subject: str, pair_list: list, person_mentions: dict) -> lis
                 max_tokens=2000,
                 max_untrusted_chars=25000,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # These pairs simply never appear in the network. An edge that was
+            # never classified looks exactly like an edge that does not exist.
+            stages.current().failed(f"people_pair_classification[{len(batch)}]", exc)
             continue
         corpus_norm = " ".join(" ".join(source_texts).split()).lower()
         for item in result.get("pairs") or []:

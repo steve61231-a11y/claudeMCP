@@ -25,7 +25,7 @@ run better informed.
 
 from datetime import datetime, timedelta
 
-from engine import llm
+from engine import llm, stages
 from engine.config import settings
 from engine.db.models import Claim, Entity, EntityRelationship, Event
 
@@ -207,7 +207,8 @@ def build_agenda(db, politician) -> dict:
                     "suggested_query": str(item.get("suggested_query") or "")[:200],
                 }
             )
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("investigator_agenda", exc)
         agenda = _fallback_agenda(db, politician)
 
     if not agenda:

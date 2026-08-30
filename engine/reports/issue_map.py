@@ -20,6 +20,7 @@ directly (used by tests and by callers that already hold an intersection corpus)
 import traceback
 from datetime import datetime, timedelta
 
+from engine import stages
 from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
@@ -46,7 +47,8 @@ def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) 
         resp = http.get(GDELT_DOC_URL, params=params, timeout=30)
         resp.raise_for_status()
         body = resp.json()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("issue_map:gdelt_intersection", exc)
         return []
 
     out: list[IngestedMention] = []
@@ -172,7 +174,8 @@ def acquire_intersection(
         for identity, term in _pairs(identities, issue_terms, PAIR_BUDGET[source]):
             try:
                 _add(fetch(identity, term, ws, we))
-            except Exception:  # noqa: BLE001 — one bad query must not end the sweep
+            except Exception as exc:  # noqa: BLE001 — one bad query must not end the sweep
+                stages.current().failed(f"issue_map:sweep:{source}", exc)
                 continue
 
     if settings.enable_gdelt:
@@ -207,7 +210,8 @@ def acquire_intersection_documents(discovery_queries: list[str]) -> list[dict]:
         return DiscoveryConnector().fetch_documents(
             discovery_queries[0], [], discovery_queries
         )
-    except Exception:  # noqa: BLE001 — discovery is additive, never required
+    except Exception as exc:  # noqa: BLE001 — discovery is additive, never required
+        stages.current().failed("issue_map:discovery", exc)
         return []
 
 
@@ -283,7 +287,8 @@ def _gate_documents(db, subject) -> dict:
         from engine.agents import disambiguate
 
         return disambiguate.gate_documents(db, subject)
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("issue_map:relevance_gate", exc)
         return {"error": "disambiguation gate failed; documents kept unfiltered"}
 
 
@@ -552,5 +557,9 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
             stakeholders=stakeholders, relationships=[], events=events,
             desired_outcome=desired_outcome,
         )
-    except Exception:  # the framework is a view; never let it take the map down
+    except Exception as exc:  # the framework is a view; never let it take the map down
+        # The Issue Framework tab simply never appears when this fails, which
+        # is indistinguishable from a subject the framework had nothing to say
+        # about.
+        stages.current().failed("issue_map:issue_framework", exc)
         return None

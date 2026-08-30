@@ -65,7 +65,10 @@ class WikipediaConnector(IngestionConnector):
             resp = http.get(WIKI_API, params=params, timeout=20)
             resp.raise_for_status()
             hits = resp.json().get("query", {}).get("search", [])
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # This is the FIRST thing the connector does, so a failure here
+            # bails the whole source before any other handler is reached.
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return None
         if hits:
             return hits[0].get("title")
@@ -87,7 +90,8 @@ class WikipediaConnector(IngestionConnector):
             resp = http.get(WIKI_API, params=params, timeout=25)
             resp.raise_for_status()
             pages = resp.json().get("query", {}).get("pages", {})
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return "", []
         for page in pages.values():
             extract = (page.get("extract") or "").strip()[:EXTRACT_MAX_CHARS]
