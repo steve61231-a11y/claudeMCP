@@ -177,9 +177,27 @@
   const fmt = n => (n==null?'—':Number(n).toLocaleString());
   const pct = n => (n==null?'—':Math.round(n)+'%');
 
+  /** localStorage that cannot take the page down with it. */
+  function store(key, value){
+    try{
+      if(value===undefined)return window.localStorage.getItem(key);
+      window.localStorage.setItem(key,value);
+      return value;
+    }catch(e){
+      // No persistence available. Settings won't survive a reload, which is a
+      // small loss; the page failing to load at all is not.
+      return null;
+    }
+  }
+
   const CFG = {
-    base: localStorage.getItem('zenith_base') || ((location.protocol.startsWith('http') && !/claude\.ai|claudeusercontent/.test(location.host)) ? location.origin : 'https://pulse-engine-efnd.onrender.com'),
-    key:  localStorage.getItem('zenith_key')  || ''
+    // Reading storage can THROW, not just return null: a sandboxed iframe,
+    // private browsing with site data blocked, or a corporate policy all raise
+    // SecurityError on access. Unguarded and at module top level, that killed
+    // the entire script before a single element was drawn — a blank page with
+    // nothing on it to explain itself.
+    base: store('zenith_base') || ((location.protocol.startsWith('http') && !/claude\.ai|claudeusercontent/.test(location.host)) ? location.origin : 'https://pulse-engine-efnd.onrender.com'),
+    key:  store('zenith_key')  || ''
   };
   let LIVE = false;
 
@@ -1232,7 +1250,11 @@
     // were scored". Name each for what it is.
     // "every item read" was printed on runs where every pass over the corpus
     // had failed, because failed chunks were counted as analysed.
-    g1.appendChild(kpiCard('Read by the analyst',fmt(cov.mentions_analyzed||s.totalAnalyzed),
+    // `||` here meant a digest that read ZERO fell through to the sentiment
+    // count: the card printed "74 · 5 of 5 passes failed", contradicting itself
+    // on one line. Zero is a reading, not a missing value.
+    const readByAnalyst = cov.mentions_analyzed!=null?cov.mentions_analyzed:s.totalAnalyzed;
+    g1.appendChild(kpiCard('Read by the analyst',fmt(readByAnalyst),
       cov.chunks_failed
         ? cov.chunks_failed+' of '+cov.chunks+' passes failed'
         : (cov.complete?'every item read':(cov.chunks?cov.chunks+' passes':'partial'))));
@@ -1983,7 +2005,8 @@
     kpis.appendChild(kpiCard('Mentions',fmt(v.total),(v.platforms||0)+' sources'));
     kpis.appendChild(kpiCard('Positive',pct(s.positive),'sky'));
     kpis.appendChild(kpiCard('Negative',pct(s.negative),'neg'));
-    kpis.appendChild(kpiCard('Read by the analyst',fmt(cov.mentions_analyzed||s.totalAnalyzed),
+    kpis.appendChild(kpiCard('Read by the analyst',
+      fmt(cov.mentions_analyzed!=null?cov.mentions_analyzed:s.totalAnalyzed),
       cov.chunks_failed?cov.chunks_failed+' of '+cov.chunks+' passes failed'
         :(cov.complete?'every item read':(cov.chunks?cov.chunks+' passes':''))));
     wrap.appendChild(kpis);
@@ -2452,7 +2475,7 @@
       <div class="muted" style="font-size:13px">Host this file free on <b>Cloudflare Pages</b>, <b>Netlify</b> or <b>GitHub Pages</b>. Then add that URL to your engine's <span class="chip">ALLOWED_ORIGINS</span> so the browser is allowed to call it.</div>`;
     w.appendChild(c);
     $('#ssave',c).onclick=()=>{CFG.base=$('#sbase',c).value.trim();CFG.key=$('#skey',c).value.trim();
-      localStorage.setItem('zenith_base',CFG.base);localStorage.setItem('zenith_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
+      store('zenith_base',CFG.base);store('zenith_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
     $('#stest',c).onclick=async()=>{const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';const b=$('#sbase',c).value.trim();
       try{const resp=await fetch(b.replace(/\/$/,'')+'/api/health');r.innerHTML=resp.ok?'<span style="color:var(--pos)">Reachable ✓</span>':'<span style="color:var(--neg)">HTTP '+resp.status+'</span>';}
       catch(e){r.innerHTML='<span style="color:var(--neg)">Unreachable (CORS or offline)</span>';}};
