@@ -184,6 +184,18 @@ class Settings(BaseSettings):
     # fingerprint via curl_cffi. Kenyan newsrooms behind Cloudflare answer 403
     # to `requests` on fingerprint alone, so without this their bodies are
     # simply absent from the corpus. Costs nothing and adds no browser.
+    # How long the analyst fan-out may take before unfinished sections are
+    # abandoned. Without a deadline a single hung call — a rate-limited free
+    # model, a provider that never answers — blocked the report forever, and
+    # the page sat on "Still building this report" indefinitely.
+    analyst_deadline_seconds: int = 900
+    # Characters of corpus a single analyst reads. Raised to 160k to fix
+    # sections answering from 1.4% of the corpus, which was real — but 160k is
+    # ~40k tokens, and a free-tier model with a small context window or a hard
+    # rate cap either refuses it or queues it until something upstream gives
+    # up. Tunable so a thin free model and a paid one with room can each be
+    # served without a code change.
+    analyst_corpus_chars: int = 100000
     enable_scrapling: bool = True
     scrapling_impersonate: str = "chrome"
     # Browser tier (camoufox/patchright) that can sit through a Cloudflare

@@ -41,7 +41,17 @@ ANALYST_MAX_TOKENS = 8000
 # which on short social items is half the payload, so the effective loss was
 # worse than the raw number suggests. Raised to ~40k tokens of input, which
 # every current model handles and which is still the cheap half of the bill.
-CORPUS_CHARS_PER_CALL = 160000
+def corpus_chars_per_call() -> int:
+    """How much corpus one analyst reads, from settings.
+
+    Was a constant, which meant tuning it for a thin free-tier model needed a
+    code change and a redeploy."""
+    from engine.config import settings
+
+    return max(20000, int(settings.analyst_corpus_chars or 100000))
+
+
+CORPUS_CHARS_PER_CALL = 160000  # legacy default; callers use the setting
 # Characters of whole-corpus digest a corpus-level analyst reads. The digest is
 # already a compression of everything collected; truncating it again is where
 # the second loss of detail happened.
@@ -89,13 +99,16 @@ def corpus_window_stats() -> dict:
     return dict(_last_blob_stats)
 
 
-def _corpus_blob(mentions: list[dict], budget_chars: int = CORPUS_CHARS_PER_CALL) -> str:
+def _corpus_blob(mentions: list[dict], budget_chars: int | None = None) -> str:
     """Renders mentions into the text block an analyst reads. Comments are
     promoted (grassroots voice), then everything else by engagement, until the
     character budget is spent."""
     def eng(m):
         e = m.get("engagement") or {}
         return sum(int(e.get(k) or 0) for k in ("views", "likes", "shares", "comments"))
+
+    if budget_chars is None:
+        budget_chars = corpus_chars_per_call()
 
     comments = sorted((m for m in mentions if m.get("source_type") == "comment"), key=eng, reverse=True)
     posts = sorted((m for m in mentions if m.get("source_type") != "comment"), key=eng, reverse=True)
@@ -223,7 +236,7 @@ def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
         _corpus_blob(mentions),
         expected_keys={"public_voice"},
         max_tokens=ANALYST_MAX_TOKENS,
-        max_untrusted_chars=CORPUS_CHARS_PER_CALL,
+        max_untrusted_chars=corpus_chars_per_call(),
     )
     voice = result["public_voice"]
     for stance in ("supportive", "critical", "neutral"):
@@ -272,7 +285,7 @@ def analyze_platform_pulse(name: str, mentions: list[dict]) -> list[dict]:
         _corpus_blob(sample),
         expected_keys={"platform_pulse"},
         max_tokens=ANALYST_MAX_TOKENS,
-        max_untrusted_chars=CORPUS_CHARS_PER_CALL,
+        max_untrusted_chars=corpus_chars_per_call(),
     )
     pulse = [p for p in result["platform_pulse"] if isinstance(p, dict)]
     for p in pulse:
@@ -305,7 +318,7 @@ def analyze_timeline(name: str, mentions: list[dict], by_day: dict[str, int]) ->
         _corpus_blob(sample),
         expected_keys={"timeline"},
         max_tokens=ANALYST_MAX_TOKENS,
-        max_untrusted_chars=CORPUS_CHARS_PER_CALL,
+        max_untrusted_chars=corpus_chars_per_call(),
     )
     timeline = [t for t in result["timeline"] if isinstance(t, dict)]
     for t in timeline:
@@ -337,7 +350,7 @@ def analyze_influencer_stances(name: str, mentions: list[dict], influence_summar
         _corpus_blob(sample),
         expected_keys={"influencer_stances"},
         max_tokens=ANALYST_MAX_TOKENS,
-        max_untrusted_chars=CORPUS_CHARS_PER_CALL,
+        max_untrusted_chars=corpus_chars_per_call(),
     )
     stances = [s for s in result["influencer_stances"] if isinstance(s, dict)]
     score_by_handle = {i["author_handle"]: round(i["score"], 1) for i in influence_summary}

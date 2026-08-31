@@ -346,7 +346,14 @@ def _extract_json(text: str):
 # costing us a chunk of the corpus.
 OPENAI_COMPATIBLE_MAX_TOKENS = 8000
 OPENAI_COMPATIBLE_RETRIES = 4
-OPENAI_COMPATIBLE_TIMEOUT = 180
+# Per-ATTEMPT timeout. At 180s and four attempts a single call could occupy
+# twelve minutes before failing, and an analyst fan-out of eight such calls
+# outlived any patience a reader has. A model that has not started answering in
+# 90 seconds is not about to.
+OPENAI_COMPATIBLE_TIMEOUT = 90
+#: Whole-call ceiling across all attempts, so retries cannot compound into a
+#: wait longer than the analyst deadline that contains them.
+OPENAI_COMPATIBLE_TOTAL_BUDGET = 240
 # 429s get their own, much longer budget: a rate limit is a minute-long window,
 # not a blip, so seconds of backoff spend every attempt inside the same blocked
 # window and the call fails having never really retried.
@@ -554,7 +561,15 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     last_error: Exception | None = None
     attempt = 0
     rate_limited = 0
+    started = time.monotonic()
     while attempt < OPENAI_COMPATIBLE_RETRIES:
+        if time.monotonic() - started > OPENAI_COMPATIBLE_TOTAL_BUDGET:
+            # Out of time rather than out of attempts. Spending the remaining
+            # retries would only make the caller wait longer for the same
+            # answer, and something upstream is waiting on this.
+            last_error = last_error or TimeoutError(
+                f"gave up after {OPENAI_COMPATIBLE_TOTAL_BUDGET}s across {attempt} attempt(s)")
+            break
         try:
             _throttle()
             response = requests.post(

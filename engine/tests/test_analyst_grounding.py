@@ -123,18 +123,49 @@ def _corpus(n, chars, source_type="article"):
             for i in range(n)]
 
 
-def test_enriched_articles_no_longer_crowd_the_window_down_to_nine():
+def test_enriched_articles_no_longer_crowd_the_window_down_to_nine(monkeypatch):
+    """Nine of 661 was the defect. The exact number depends on the configured
+    window, which is now tunable per deployment — what must hold is that a
+    full-article corpus is read in the hundreds, not single figures."""
+    from engine.config import settings
+
+    monkeypatch.setattr(settings, "analyst_corpus_chars", 100000, raising=False)
     an._corpus_blob(_corpus(661, 6000))
     read = an.corpus_window_stats()["read"]
-    assert read > 150, f"only {read} of 661 mentions reached the analyst"
+    assert read > 100, f"only {read} of 661 mentions reached the analyst"
 
 
-def test_short_social_items_are_read_almost_entirely():
+def test_a_wider_window_reads_more_of_the_corpus(monkeypatch):
+    """The setting has to actually do something."""
+    from engine.config import settings
+
+    monkeypatch.setattr(settings, "analyst_corpus_chars", 40000, raising=False)
+    an._corpus_blob(_corpus(661, 6000))
+    narrow = an.corpus_window_stats()["read"]
+    monkeypatch.setattr(settings, "analyst_corpus_chars", 160000, raising=False)
+    an._corpus_blob(_corpus(661, 6000))
+    wide = an.corpus_window_stats()["read"]
+    assert wide > narrow * 2
+
+
+def test_short_social_items_are_read_almost_entirely(monkeypatch):
+    from engine.config import settings
+
+    monkeypatch.setattr(settings, "analyst_corpus_chars", 100000, raising=False)
     an._corpus_blob(_corpus(661, 120, source_type="comment"))
     stats = an.corpus_window_stats()
-    assert stats["read"] > 600, (
+    assert stats["read"] > 500, (
         f"only {stats['read']} of 661 short posts reached the analyst — the "
         "per-line ref/platform/date header is half the payload on social items")
+
+
+def test_the_default_window_is_not_so_wide_a_small_model_chokes():
+    """160k characters is ~40k tokens. A free-tier model with a small context
+    or a hard rate cap either refuses that or queues it until something
+    upstream gives up waiting — which is how a report hung forever."""
+    from engine.config import Settings
+
+    assert 40000 <= Settings().analyst_corpus_chars <= 120000
 
 
 def test_a_long_article_is_truncated_but_a_short_post_is_not():

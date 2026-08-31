@@ -7,6 +7,7 @@ rule-based payload from `generate_report_payload`).
 
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
@@ -241,16 +242,39 @@ def enrich_report_payload(
         publish("coverage", payload["coverage"])
 
     _cap = 3 if settings.low_memory else 8
-    with ThreadPoolExecutor(max_workers=min(_cap, len(jobs))) as pool:
+    # A DEADLINE, because without one the report never finishes. as_completed()
+    # had no timeout, so a single analyst that hung — a free-tier model being
+    # rate-limited, a provider not answering — blocked the loop forever. Every
+    # later stage waited behind it, the page sat on "Still building this
+    # report", and no amount of waiting helped because nothing was going to
+    # arrive. A section that cannot be produced inside the budget is a failed
+    # section, and a report with a failed section beats a report that never
+    # comes.
+    deadline = max(60, settings.analyst_deadline_seconds)
+    pool = ThreadPoolExecutor(max_workers=min(_cap, len(jobs)))
+    futures = {pool.submit(run, key): key for key in jobs}
+    try:
         # as_completed, not pool.map: map yields in submission order, so a
         # section that finished in 5 seconds waits behind one that takes four
         # minutes. Nothing downstream depends on the order, and a reader
         # watching the report build does.
-        futures = [pool.submit(run, key) for key in jobs]
-        for future in as_completed(futures):
+        for future in as_completed(futures, timeout=deadline):
             key, value = future.result()
             payload[key] = value
             publish(key, value)
+    except FuturesTimeout:
+        unfinished = [key for future, key in futures.items() if not future.done()]
+        for key in unfinished:
+            stages.current().failed(
+                key, f"did not finish within {deadline}s and was abandoned so the "
+                     "report could be delivered")
+            payload.setdefault(key, jobs[key][1])
+            publish(key, payload[key])
+    finally:
+        # Do not wait on the stragglers: the whole point is that they are the
+        # reason nothing was arriving. Their threads are daemonic and will die
+        # with the worker.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     if mentions:
         # Synthesizer reads every analyst's output ("the major AI that
