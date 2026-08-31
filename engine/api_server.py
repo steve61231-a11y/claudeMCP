@@ -1673,6 +1673,50 @@ def admin_timeseries(metric: str = "mentions", days: int = 30, x_api_key: str | 
         db.close()
 
 
+@app.post("/api/admin/purge")
+def admin_purge(
+    confirm: str = "",
+    subject: str | None = None,
+    dry_run: bool = False,
+    x_api_key: str | None = Header(default=None),
+):
+    """Delete accumulated run data. IRREVERSIBLE.
+
+    The corpus compounds by design, which is right in production and wrong
+    while the pipeline is being rebuilt underneath it: every run then shows
+    material collected by a version of the system that no longer exists, and
+    the page renders the last stored payload for a subject before the new run
+    has produced anything — so old output appears instantly and reads as new.
+
+    Requires the API key AND the confirmation phrase. `dry_run=true` reports
+    what is there and deletes nothing.
+    """
+    _require_api_key(x_api_key)
+    from engine.admin import purge as purge_mod
+    from engine.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        if dry_run:
+            present = {t: n for t, n in purge_mod.counts(db).items() if n}
+            return {"ok": True, "dry_run": True, "rows": present,
+                    "total_rows": sum(present.values()),
+                    "preserved": purge_mod.PRESERVED_BY_DEFAULT,
+                    "hint": f"repeat with confirm={purge_mod.CONFIRMATION} to delete"}
+        try:
+            result = (purge_mod.purge_subject(db, subject, confirm) if subject
+                      else purge_mod.purge_all(db, confirm))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # In-process job results outlive the database rows they came from, so
+        # a purge that left them would serve the deleted report from memory on
+        # the very next request.
+        _jobs.clear()
+        return {"ok": True, **result}
+    finally:
+        db.close()
+
+
 @app.get("/api/admin/model-check")
 def model_check(x_api_key: str | None = Header(default=None)):
     """Is the analysis model answering RIGHT NOW? One cheap call, ten seconds.
