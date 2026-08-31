@@ -2,7 +2,11 @@ import copy
 import hashlib
 import json
 import os
+import random
 import threading
+import time
+
+import requests
 
 from anthropic import Anthropic
 
@@ -126,6 +130,23 @@ def concurrency(default: int) -> int:
 ANTHROPIC_MAX_OUTPUT_TOKENS = 16000
 
 
+#: Smallest completion budget worth sending to a model that thinks before it
+#: answers. Reasoning is charged against the SAME budget as the answer, so a
+#: limit sized for the JSON alone is spent before a single answer token is
+#: emitted. Every failure in the live run hit its budget exactly — 1480, 3400,
+#: 640, 880, 1000 — because the budgets were computed as output-only.
+REASONING_FLOOR = 4000
+
+
+def budget_for(expected_output_tokens: int) -> int:
+    """A completion budget with room to think.
+
+    Callers know how much ANSWER they expect; none of them can know how much
+    the model will spend reasoning first. This adds that headroom in one place
+    rather than leaving every stage to guess, and keeps the provider ceiling."""
+    return min(max_output_tokens(), max(int(expected_output_tokens), REASONING_FLOOR))
+
+
 def max_output_tokens() -> int:
     """The largest single response this backend will be asked for."""
     override = settings.llm_max_output_tokens or 0
@@ -180,7 +201,13 @@ def _call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) ->
             # Same ladder the Anthropic path below has always had.
             ceiling = max_output_tokens()
             if max_tokens < ceiling:
-                return _call_json(prompt, max_tokens=min(ceiling, max_tokens * 2), model=model)
+                # A reply that produced NOTHING was not nearly big enough: the
+                # model thought until the budget ran out. Doubling from 640
+                # takes five round trips to reach a workable size, each one
+                # paid for and each one failing. Jump.
+                grown = max_tokens * (8 if getattr(cut, "produced_nothing", False) else 2)
+                return _call_json(prompt, max_tokens=min(ceiling, max(grown, REASONING_FLOOR)),
+                                  model=model)
             # Nowhere left to climb. An analyst asked for 15-40 actors and the
             # reply was cut mid-element; failing here discards every complete
             # one to avoid keeping a broken one, and the section renders empty.
@@ -191,6 +218,17 @@ def _call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) ->
                 # Deliberately NOT cached: it is a partial answer, and a later
                 # run with a bigger budget should get the whole thing.
                 return salvaged
+            if getattr(cut, "produced_nothing", False):
+                # At the ceiling and STILL nothing but thinking. Doubling again
+                # cannot help, and "reply cut off" does not tell an operator
+                # what to change.
+                raise TruncatedReply(
+                    f"model {resolved_model!r} produced no answer at the maximum budget "
+                    f"({ceiling} tokens) — it spent the whole allowance reasoning "
+                    f"({getattr(cut, 'diagnostic', 'finish_reason=length')}). "
+                    "Raise LLM_MAX_OUTPUT_TOKENS, or turn thinking off for this model "
+                    "via LLM_EXTRA_BODY, or use a model that does not mandate reasoning."
+                ) from cut
             raise
         _cache_write(key, parsed)
         return parsed
@@ -478,10 +516,6 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     code path, because they all implement the same wire format. Uses `requests`,
     already a dependency — no new package, and nothing to install on Render.
     """
-    import random
-    import time
-
-    import requests
 
     base = (settings.llm_base_url or "").rstrip("/")
     if not base:
@@ -569,16 +603,36 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 )
             response.raise_for_status()
             payload = response.json()
-            text = _reply_text(payload)
-            if (payload.get("choices") or [{}])[0].get("finish_reason") == "length":
-                # Carry the text out so the caller can salvage it if there is
-                # nowhere left to grow the budget.
+            finish = (payload.get("choices") or [{}])[0].get("finish_reason")
+            if finish == "length":
+                # Check the finish reason BEFORE extracting the text. When a
+                # reasoning model spends its whole budget thinking, `content`
+                # and `reasoning_content` are both empty and _reply_text raises
+                # ValueError — which the retry loop below caught and retried
+                # FOUR TIMES AT THE IDENTICAL BUDGET, deterministically failing
+                # each time, while this branch (which grows the budget, and is
+                # the entire fix for this failure) was never reached.
+                try:
+                    text = _reply_text(payload)
+                except ValueError:
+                    text = ""
                 cut = TruncatedReply(
                     f"reply cut off at max_tokens={body['max_tokens']} "
                     f"(model={model!r}); retrying with a larger budget"
                 )
                 cut.partial_text = text
+                # Nothing came back at all: the budget was consumed by thinking
+                # before a single answer token. Doubling crawls up from far
+                # below what this model needs, so say so and let the caller
+                # jump instead.
+                cut.produced_nothing = not text.strip()
+                # Keep the raw provider diagnostic: the plain-English remedy is
+                # what an operator acts on, but finish_reason and usage are what
+                # let anyone verify the diagnosis.
+                cut.diagnostic = (f"finish_reason={finish}, "
+                                  f"usage={payload.get('usage') or {}}")
                 raise cut
+            text = _reply_text(payload)
             return _extract_json(text)
         except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
             last_error = exc

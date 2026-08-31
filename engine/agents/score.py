@@ -68,7 +68,7 @@ def _score_batch(subject: str, items: list[tuple[str, str]],
             # Not min(8000, ...): 8000 is one provider's ceiling, not every
             # provider's, and hard-coding it here silently overrode
             # LLM_MAX_OUTPUT_TOKENS for the highest-volume stage in the system.
-            max_tokens=min(llm.max_output_tokens(), 120 * len(items) + 400),
+            max_tokens=llm.budget_for(120 * len(items) + 400),
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )

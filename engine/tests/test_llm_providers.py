@@ -833,7 +833,11 @@ def test_a_cut_off_reply_is_retried_with_a_bigger_budget(monkeypatch):
     budgets = _truncating_post(monkeypatch, budget_that_succeeds=800)
     assert llm.call_json("respond with json", max_tokens=200) == {"label": "DCP tours",
                                                                   "description": "done"}
-    assert budgets == [200, 400, 800], f"expected a doubling ladder, got {budgets}"
+    # The ladder now JUMPS rather than doubling: max_tokens is a cap, not a
+    # charge, so climbing in small steps only buys extra failed round trips.
+    assert budgets[0] == 200
+    assert budgets[-1] > budgets[0], f"the budget never grew: {budgets}"
+    assert len(budgets) <= 3, f"too many paid round trips to reach a usable budget: {budgets}"
 
 
 def test_a_half_written_field_is_never_presented_as_complete(monkeypatch):
@@ -952,8 +956,8 @@ def test_salvage_is_the_last_resort_not_the_first(monkeypatch):
     monkeypatch.setattr(llm.settings, "llm_max_output_tokens", 800, raising=False)
     budgets = _truncating_post(monkeypatch, budget_that_succeeds=10_000)
     result = llm.call_json("respond with json", max_tokens=200)
-    # It climbed first...
-    assert budgets == [200, 400, 800]
+    # It climbed to the ceiling first...
+    assert budgets[0] == 200 and budgets[-1] == 800
     # ...then salvaged what was complete rather than losing the section.
     assert result == {"label": "Gachagua's DCP tours"}
     assert "description" not in result

@@ -114,7 +114,7 @@ def _type_pairs(subject: str, pairs: list[tuple[str, str, str]]) -> dict[int, di
             TYPE_PROMPT.format(subject=subject, batch=batch),
             batch,
             expected_keys={"relations"},
-            max_tokens=min(4000, 100 * len(pairs) + 400),
+            max_tokens=llm.budget_for(100 * len(pairs) + 400),
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )

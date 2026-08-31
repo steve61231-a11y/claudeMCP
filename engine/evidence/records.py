@@ -146,7 +146,7 @@ def extract_batch(subject: str, mentions: list[dict]) -> list[EvidenceRecord]:
     try:
         reply = llm.call_json(
             prompt,
-            max_tokens=min(llm.max_output_tokens(), 700 * len(mentions) + 800),
+            max_tokens=llm.budget_for(700 * len(mentions) + 800),
             model=llm.bulk_model(),
         )
         entries = reply.get("records") if isinstance(reply, dict) else None

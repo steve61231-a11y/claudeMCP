@@ -156,7 +156,7 @@ def extract_claims_batch(passages: list[str]) -> dict[int, list[str]]:
     try:
         result = llm.call_json(
             BATCH_EXTRACT_PROMPT.format(batch=batch),
-            max_tokens=min(8000, 220 * len(passages) + 500),
+            max_tokens=llm.budget_for(220 * len(passages) + 500),
         )
     except Exception as exc:  # noqa: BLE001 — an unextracted passage is simply unchecked
         stages.current().failed(f"claim_extraction[{len(passages)}]", exc)
@@ -198,7 +198,7 @@ def adjudicate_batch(items: list[tuple[str, list[dict]]]) -> dict[int, dict]:
             BATCH_ADJUDICATE_PROMPT.format(batch=batch),
             batch,
             expected_keys={"verdicts"},
-            max_tokens=min(8000, 220 * len(items) + 400),
+            max_tokens=llm.budget_for(220 * len(items) + 400),
             max_untrusted_chars=len(batch) + 1000,
         )
     except Exception as exc:  # noqa: BLE001

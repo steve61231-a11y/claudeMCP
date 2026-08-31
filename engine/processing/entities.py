@@ -173,7 +173,7 @@ def _extract_people_batch(items: list[tuple[str, str]], politician_name: str) ->
             PEOPLE_BATCH_PROMPT.format(name=politician_name, batch=batch),
             batch,
             expected_keys={"people"},
-            max_tokens=min(8000, 160 * len(items) + 400),
+            max_tokens=llm.budget_for(160 * len(items) + 400),
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )

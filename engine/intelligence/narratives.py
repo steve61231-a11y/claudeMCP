@@ -170,7 +170,7 @@ def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0) -> di
     try:
         reply = llm.call_json_untrusted(
             LABEL_PROMPT, user, expected_keys={"clusters"},
-            max_tokens=min(llm.max_output_tokens(), 400 * len(clusters) + 600),
+            max_tokens=llm.budget_for(400 * len(clusters) + 600),
         )
         entries = reply.get("clusters") or []
         if not isinstance(entries, list):

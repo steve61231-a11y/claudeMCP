@@ -79,7 +79,7 @@ def _extract_batch(subject: str, items: list[dict]) -> dict[int, dict]:
             EXTRACT_PROMPT.format(subject=subject, batch=batch),
             batch,
             expected_keys={"results"},
-            max_tokens=min(8000, 400 * len(items) + 600),
+            max_tokens=llm.budget_for(400 * len(items) + 600),
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )

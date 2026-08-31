@@ -122,4 +122,10 @@ def test_the_batch_budget_respects_the_configured_ceiling(monkeypatch):
 
     monkeypatch.setattr(score_agent.llm, "call_json_untrusted", capture)
     score_agent.score_items("X", _items(25), report={})
-    assert seen["max_tokens"] == 120 * 25 + 400
+    # Not the hard-coded 8000, and not the bare output estimate either: the
+    # budget now carries reasoning headroom, because a model that thinks first
+    # is charged for that thinking against the same allowance. Every scoring
+    # failure in the live run hit its output-only budget exactly.
+    assert seen["max_tokens"] >= 120 * 25 + 400
+    assert seen["max_tokens"] >= score_agent.llm.REASONING_FLOOR
+    assert seen["max_tokens"] <= 32000, "the configured ceiling must still bind"
