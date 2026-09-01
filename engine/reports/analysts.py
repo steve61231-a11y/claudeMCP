@@ -13,6 +13,7 @@ Grounding contract shared by every analyst:
   in every prompt and re-checked by `verify_grounding`).
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from engine import llm, stages
@@ -217,47 +218,77 @@ def _refs(mentions: list[dict]) -> dict[str, dict]:
     return {str(m.get("id", ""))[:8]: m for m in mentions}
 
 
+# One stance per call.
+#
+# Asking for three stances x 4-8 themes x 150 words x 6 quotes in a single
+# reply is 3,000-5,000 words of JSON. On a model that reasons first — thinking
+# charged against the same budget as the answer — that reply is cut off, the
+# budget ladder climbs, it is cut off again, and the section takes minutes or
+# never lands at all. It was the one analyst reading the WHOLE corpus and
+# asking for the most output, and it was the one that hung.
+#
+# Split, it is three smaller requests that run in parallel and each fit
+# comfortably. The analysis asked for is identical; only the packaging changed.
 PUBLIC_VOICE_PROMPT = """You are a political intelligence analyst. Your job: report WHAT PEOPLE ARE ACTUALLY SAYING about {name}, in their own words, from the scraped posts and comments below.
 
 {grounding}
 
-Group what you find into three stances: supportive, critical, and neutral/questioning. For each stance identify EVERY distinct thing people are saying (themes) — typically 4-8 per stance where the corpus supports it, not two — and back EVERY theme with 3-6 verbatim quotes (exact text from a source item, with its ref id). Each theme's `summary` is 80-150 words: what the theme actually is, who holds it, how strongly, and how it is expressed. Prefer comments over posts where available — comments are ordinary citizens' voices. Note the language/tone (English/Swahili/Sheng, mockery, praise, anger) where visible.
+Report ONLY the {stance} voices this time — {stance_hint}. Ignore every other stance; another pass covers those.
+
+Identify EVERY distinct thing these people are saying (themes) — typically 4-8 where the corpus supports it, not two — and back EVERY theme with 3-6 verbatim quotes (exact text from a source item, with its ref id). Each theme's `summary` is 80-150 words: what the theme actually is, who holds it, how strongly, and how it is expressed. Prefer comments over posts where available — comments are ordinary citizens' voices. Note the language/tone (English, Swahili, Sheng, mockery, praise, anger) where visible.
 
 Completeness matters as much as accuracy: a theme present in the corpus and missing from your output is a failure.
 
-Required JSON shape — the example shows the FORM, not the QUANTITY. Return as many elements as the sources support, never as few as the example happens to show:
-{{"public_voice": {{"supportive": [{{"theme": "...", "summary": "80-150 words...", "quotes": [{{"ref": "abcd1234", "text": "verbatim quote"}}, {{"ref": "efgh5678", "text": "another verbatim quote"}}, {{"ref": "ijkl9012", "text": "..."}}]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}], "critical": [ ...same shape, 4-8 themes... ], "neutral": [ ...same shape... ]}}}}"""
+Required JSON shape — the example shows the FORM, not the QUANTITY:
+{{"themes": [{{"theme": "...", "summary": "80-150 words...", "quotes": [{{"ref": "abcd1234", "text": "verbatim quote"}}, {{"ref": "efgh5678", "text": "..."}}, {{"ref": "ijkl9012", "text": "..."}}]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}, {{"theme": "...", "summary": "...", "quotes": [...]}}]}}"""
+
+_STANCE_HINTS = {
+    "supportive": "people defending, praising or backing the subject",
+    "critical": "people attacking, blaming or opposing the subject",
+    "neutral": "people reporting, asking questions or expressing mixed views",
+}
 
 
-def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
-    refs = _refs(mentions)
-    result = llm.call_json_untrusted(
-        PUBLIC_VOICE_PROMPT.format(name=name, grounding=GROUNDING_RULES),
-        _corpus_blob(mentions),
-        expected_keys={"public_voice"},
-        max_tokens=ANALYST_MAX_TOKENS,
-        max_untrusted_chars=corpus_chars_per_call(),
-    )
-    voice = result["public_voice"]
-    for stance in ("supportive", "critical", "neutral"):
-        themes = voice.get(stance) or []
-        for theme in themes:
-            if isinstance(theme, dict):
-                theme["quotes"] = _validate_quotes(theme.get("quotes"), refs)
+def _public_voice_stance(name: str, stance: str, blob: str, refs: dict) -> list[dict]:
+    """One stance. Returns [] rather than raising, so a failed stance costs a
+    third of the section instead of all of it."""
+    try:
+        result = llm.call_json_untrusted(
+            PUBLIC_VOICE_PROMPT.format(name=name, grounding=GROUNDING_RULES,
+                                       stance=stance, stance_hint=_STANCE_HINTS[stance]),
+            blob,
+            expected_keys={"themes"},
+            max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
+            max_untrusted_chars=corpus_chars_per_call(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed(f"public_voice:{stance}", exc)
+        return []
+
+    kept = []
+    for theme in result.get("themes") or []:
+        if not isinstance(theme, dict) or not (theme.get("summary") or theme.get("theme")):
+            continue
+        theme["quotes"] = _validate_quotes(theme.get("quotes"), refs)
         # A theme is NOT deleted for failing quote validation. The theme is the
         # analysis — 80-150 words on what people are saying and how strongly —
         # and the quotes are its illustration. Dropping the whole finding
         # because one quote had a curly apostrophe was silently emptying entire
         # sections on runs where the model had worked perfectly well.
-        kept = []
-        for theme in themes:
-            if not isinstance(theme, dict) or not (theme.get("summary") or theme.get("theme")):
-                continue
-            if not theme.get("quotes"):
-                theme["quotes_unverified"] = True
-            kept.append(theme)
-        voice[stance] = kept
-    return voice
+        if not theme["quotes"]:
+            theme["quotes_unverified"] = True
+        kept.append(theme)
+    return kept
+
+
+def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
+    refs = _refs(mentions)
+    blob = _corpus_blob(mentions)
+    stances = ("supportive", "critical", "neutral")
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(
+            lambda stance: _public_voice_stance(name, stance, blob, refs), stances))
+    return dict(zip(stances, results))
 
 
 PLATFORM_PULSE_PROMPT = """You are a political intelligence analyst describing what the conversation about {name} SOUNDS LIKE on each social platform, based on the scraped items below.
@@ -284,7 +315,7 @@ def analyze_platform_pulse(name: str, mentions: list[dict]) -> list[dict]:
         PLATFORM_PULSE_PROMPT.format(name=name, grounding=GROUNDING_RULES),
         _corpus_blob(sample),
         expected_keys={"platform_pulse"},
-        max_tokens=ANALYST_MAX_TOKENS,
+        max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
         max_untrusted_chars=corpus_chars_per_call(),
     )
     pulse = [p for p in result["platform_pulse"] if isinstance(p, dict)]
@@ -306,6 +337,24 @@ Required JSON shape — the example shows the FORM, not the QUANTITY. Return as 
 {{"timeline": [{{"date": "YYYY-MM-DD", "event": "80-200 word mini-briefing...", "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}]}}"""
 
 
+def _timeline_slice(name: str, sample: list[dict], refs: dict) -> list[dict]:
+    """One half of the window. A failed half costs half the timeline."""
+    if not sample:
+        return []
+    try:
+        result = llm.call_json_untrusted(
+            TIMELINE_PROMPT.format(name=name, grounding=GROUNDING_RULES),
+            _corpus_blob(sample),
+            expected_keys={"timeline"},
+            max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
+            max_untrusted_chars=corpus_chars_per_call(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("timeline:slice", exc)
+        return []
+    return [t for t in (result.get("timeline") or []) if isinstance(t, dict)]
+
+
 def analyze_timeline(name: str, mentions: list[dict], by_day: dict[str, int]) -> list[dict]:
     spike_days = {d for d, _ in sorted(by_day.items(), key=lambda kv: kv[1], reverse=True)[:10]}
     sample = [
@@ -313,13 +362,33 @@ def analyze_timeline(name: str, mentions: list[dict], by_day: dict[str, int]) ->
         if isinstance(m.get("posted_at"), datetime) and m["posted_at"].date().isoformat() in spike_days
     ] or mentions
     refs = _refs(sample)
-    result = llm.call_json_untrusted(
-        TIMELINE_PROMPT.format(name=name, grounding=GROUNDING_RULES),
-        _corpus_blob(sample),
-        expected_keys={"timeline"},
-        max_tokens=ANALYST_MAX_TOKENS,
-        max_untrusted_chars=corpus_chars_per_call(),
-    )
+
+    # Split the window in half and reconstruct each separately. Eight dated
+    # entries at 80-200 words each, with quotes, is a long reply — the second
+    # biggest in the system after public voice, and the other section that hung.
+    # Two halves each produce a shorter one, they run at the same time, and a
+    # failure costs half a timeline rather than all of it.
+    dated = sorted((m for m in sample if isinstance(m.get("posted_at"), datetime)),
+                   key=lambda m: m["posted_at"])
+    undated = [m for m in sample if not isinstance(m.get("posted_at"), datetime)]
+    if len(dated) >= 8:
+        middle = len(dated) // 2
+        halves = [dated[:middle] + undated, dated[middle:]]
+    else:
+        halves = [sample]
+
+    with ThreadPoolExecutor(max_workers=len(halves)) as pool:
+        produced = list(pool.map(lambda half: _timeline_slice(name, half, refs), halves))
+
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for entry in [item for part in produced for item in part]:
+        key = f"{entry.get('date')}|{str(entry.get('event'))[:60]}"
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(entry)
+    result = {"timeline": merged}
     timeline = [t for t in result["timeline"] if isinstance(t, dict)]
     for t in timeline:
         t["quotes"] = _validate_quotes(t.get("quotes"), refs)
@@ -349,7 +418,7 @@ def analyze_influencer_stances(name: str, mentions: list[dict], influence_summar
         INFLUENCER_STANCES_PROMPT.format(name=name, grounding=GROUNDING_RULES, handles=", ".join(top_handles)),
         _corpus_blob(sample),
         expected_keys={"influencer_stances"},
-        max_tokens=ANALYST_MAX_TOKENS,
+        max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
         max_untrusted_chars=corpus_chars_per_call(),
     )
     stances = [s for s in result["influencer_stances"] if isinstance(s, dict)]
@@ -464,7 +533,7 @@ def synthesize_executive_brief(name: str, analyst_outputs: dict) -> str:
     findings = _json.dumps(analyst_outputs, default=str)[:90000]
     result = llm.call_json(
         EXECUTIVE_BRIEF_PROMPT.format(name=name, grounding=GROUNDING_RULES, findings=findings),
-        max_tokens=ANALYST_MAX_TOKENS,
+        max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
     )
     return result.get("executive_brief", "")
 
@@ -499,7 +568,7 @@ def analyze_deep_insights(name: str, corpus_digest: dict) -> dict:
             INSIGHT_PROMPT.format(
                 name=name, grounding=GROUNDING_RULES, digest=digest_context(corpus_digest, max_chars=DIGEST_CONTEXT_CHARS)
             ),
-            max_tokens=ANALYST_MAX_TOKENS,
+            max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
         )
         insights = [i for i in (result.get("insights") or []) if isinstance(i, dict)]
         return {"insights": insights, "the_one_thing": result.get("the_one_thing", "")}

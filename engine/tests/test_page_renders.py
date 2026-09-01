@@ -92,10 +92,23 @@ def rendered():
             page.wait_for_timeout(5000)
             text = page.evaluate("() => document.body.innerText")
             cards = page.evaluate("() => document.querySelectorAll('.card').length")
+            # Leave the tab and come back. `go()` used to do v.innerHTML='' on
+            # every switch, which destroyed the view a run was still writing
+            # into — the run continued, its output went nowhere, and returning
+            # showed a blank form as though it had stopped.
+            page.click("button:has-text('Issue Map')")
+            page.wait_for_timeout(500)
+            issue_tab = page.evaluate("() => document.body.innerText")
+            page.click("button:has-text('Search')")
+            page.wait_for_timeout(500)
+            after_return = page.evaluate("() => document.body.innerText")
+            lookback = page.evaluate("() => !!document.querySelector('#qd')")
             browser.close()
     finally:
         server.shutdown()
-    return {"errors": errors, "text": text, "cards": cards}
+    return {"errors": errors, "text": text, "cards": cards,
+            "issue_tab": issue_tab, "after_return": after_return,
+            "lookback": lookback}
 
 
 # --- the page must run at all ------------------------------------------------
@@ -146,3 +159,29 @@ def test_narratives_render_with_a_real_label_and_a_way_in(rendered):
 
 def test_source_failures_reach_the_page(rendered):
     assert "Some sources did not deliver" in rendered["text"]
+
+
+# --- a run must survive the reader looking at something else ----------------
+
+def test_the_report_is_still_there_after_visiting_another_tab(rendered):
+    """Switching tabs destroyed the view a run was writing into. The run kept
+    going; its output had nowhere to land, and coming back showed an empty
+    form as though it had stopped."""
+    assert "Kitale mega rally" in rendered["after_return"], (
+        "the report was destroyed by a tab switch")
+
+
+def test_the_other_tab_still_renders_its_own_content(rendered):
+    assert "Map a principal" in rendered["issue_tab"], "the issue map tab did not draw"
+
+
+def test_switching_tabs_raises_no_errors(rendered):
+    assert rendered["errors"] == []
+
+
+# --- the look-back is on the form -------------------------------------------
+
+def test_the_search_form_offers_a_look_back(rendered):
+    """The window was hard-coded to 210 days, so every report was dominated by
+    material half a year old."""
+    assert rendered["lookback"], "no look-back selector on the search form"

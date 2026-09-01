@@ -173,6 +173,10 @@ class ReportRequest(BaseModel):
     # Multi-domain: person | politician | organization | ministry | business |
     # individual. Defaults to politician for backward compatibility.
     type: str = "politician"
+    #: How many days back to analyse. None uses REPORT_WINDOW_DAYS (30), which
+    #: keeps a report about what is happening now rather than about the last
+    #: seven months averaged together.
+    days: int | None = None
 
 
 class IssueMapRequest(BaseModel):
@@ -708,7 +712,8 @@ def _set_stage(job_id: str, subject_key: str, kind: str, text: str) -> None:
     _save_progress(subject_key, kind, job_id=job_id, status="running", stage=text)
 
 
-def _run_report_job(job_id: str, name: str, subject_type: str = "politician") -> None:
+def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
+                    window_days: int | None = None) -> None:
     # Claim the subject's progress row BEFORE any work starts, clearing whatever
     # the last run left there.
     #
@@ -718,6 +723,11 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
     # its old stack trace, from a build that is no longer deployed. A fixed bug
     # then looks unfixed, and the fix gets debugged instead of the run.
     subject_key = _subject_key(name)
+    # Clamp: the default is a month of recent coverage, and a caller may widen
+    # it, but not without limit — reading years of corpus is how a run stops
+    # being a monitoring product.
+    window_days = max(1, min(int(window_days or settings.report_window_days),
+                             settings.report_window_max_days))
     _save_progress(subject_key, "report", job_id=job_id,
                    status="running", stage="Starting…", error=None)
     # Demo / degraded-infra mode: serve the full pre-generated report instantly
@@ -774,7 +784,7 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician") ->
         try:
             politician = _ensure_politician(db, name, subject_type)
             window_end = datetime.utcnow()
-            window_start = window_end - timedelta(days=210)
+            window_start = window_end - timedelta(days=window_days)
             _set_stage(job_id, subject_key, "report",
                        f"Scanning social platforms and news for “{name}”…")
             from engine.pipeline import run_analysis, run_ingestion
@@ -855,7 +865,8 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
     # (see _run_report_job) — never as a substitute for a fresh run.
     _jobs[job_id] = {"status": "running", "created_at": time.time(),
                      "subject": (name.lower(), req.type)}
-    thread = threading.Thread(target=_run_report_job, args=(job_id, name, req.type), daemon=True)
+    thread = threading.Thread(target=_run_report_job,
+                              args=(job_id, name, req.type, req.days), daemon=True)
     thread.start()
     return {"ok": True, "job_id": job_id}
 

@@ -470,15 +470,15 @@ def run_analysis(
 
     corpus = stored_mentions + _document_corpus(db, politician, window_start, window_end)
 
-    payload = enrich_report_payload(
-        politician.name,
-        window_start,
-        window_end,
-        payload,
-        mentions=corpus,
-        narratives=built_narratives,
-        on_section=publish,
-    )
+    # Everything that needs NO model call is published BEFORE the analyst
+    # fan-out, not after it.
+    #
+    # These four sections are arithmetic over the ingestion stats and two
+    # database queries. They sat below enrich_report_payload, so they waited on
+    # the slowest LLM stage in the system — and when an analyst was slow or
+    # hung, "Since your last report", "Sentiment over time" and "Where this
+    # data came from" never arrived at all, despite costing nothing and
+    # depending on nothing the analysts produce.
     if ingestion_run is not None:
         payload["data_provenance"] = {
             "ingestion_run_id": ingestion_run.id,
@@ -494,6 +494,27 @@ def run_analysis(
     # indistinguishable from data loss, so the counts travel with the report.
     payload["evidence_gate"] = gate_stats
     publish("evidence_gate", gate_stats)
+
+    # Report-over-report change tracking (computed before this report is
+    # stored, so "previous" is genuinely the prior report).
+    from engine.reports.deltas import compute_deltas, sentiment_history
+
+    deltas = compute_deltas(db, politician, payload)
+    if deltas:
+        payload["since_last_report"] = deltas
+    payload["sentiment_history"] = sentiment_history(db, politician)
+    publish("since_last_report", payload.get("since_last_report"))
+    publish("sentiment_history", payload["sentiment_history"])
+
+    payload = enrich_report_payload(
+        politician.name,
+        window_start,
+        window_end,
+        payload,
+        mentions=corpus,
+        narratives=built_narratives,
+        on_section=publish,
+    )
 
     # Resolve the corpus into entities and events: many reports of one happening
     # become ONE event carrying its evidence, so repetition stops masquerading
@@ -536,16 +557,6 @@ def run_analysis(
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}
 
-    # Report-over-report change tracking (computed before this report is
-    # stored, so "previous" is genuinely the prior report).
-    from engine.reports.deltas import compute_deltas, sentiment_history
-
-    deltas = compute_deltas(db, politician, payload)
-    if deltas:
-        payload["since_last_report"] = deltas
-    payload["sentiment_history"] = sentiment_history(db, politician)
-    publish("since_last_report", payload.get("since_last_report"))
-    publish("sentiment_history", payload["sentiment_history"])
 
     # Client-facing deliverable, shaped to the Sentiment Analysis Framework
     # V1.0 exactly — same parameter numbering, ordering and terminology, so an

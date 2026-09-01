@@ -308,7 +308,23 @@
     const t=$('#tabs'); t.innerHTML='';
     TABS.forEach(([id,label])=>{const b=el('button','tab'+(id===active?' on':''),esc(label));b.onclick=()=>go(id);t.appendChild(b);});
   }
-  function go(id){active=id;renderTabs();const v=$('#view');v.innerHTML='';v.appendChild(VIEWS[id]());v.firstChild&&v.firstChild.classList.add('fade');}
+  // Views are built ONCE and then shown or hidden. `v.innerHTML=''` destroyed
+  // the previous view on every tab switch, so a report still being polled kept
+  // writing into a node that was no longer in the document — and returning to
+  // the tab built a fresh, empty one. The run had not stopped; its output had
+  // nowhere to go. Keeping the element alive lets a run continue while the
+  // reader looks at something else, and be there when they come back.
+  const VIEW_CACHE = {};
+  function go(id){
+    active=id; renderTabs();
+    const v=$('#view');
+    if(!VIEW_CACHE[id]){
+      VIEW_CACHE[id]=VIEWS[id]();
+      VIEW_CACHE[id].classList.add('fade');
+      v.appendChild(VIEW_CACHE[id]);
+    }
+    Object.keys(VIEW_CACHE).forEach(key=>{ VIEW_CACHE[key].hidden = (key!==id); });
+  }
 
   function setStatus(state,txt){
     const s=$('#status');s.className='status '+state;$('#statusTxt').textContent=txt;
@@ -1438,12 +1454,21 @@
       <h1>Read anyone's public signal.</h1>
       <div class="sub">A person, politician, organization, ministry or business. Zenith pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
     const form=el('div','card glow');
-    form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 190px;gap:12px">
+    form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 170px 160px;gap:12px">
       <div><label class="fl">Subject</label><input id="q" placeholder="e.g. William Ruto" autocomplete="off"></div>
       <div><label class="fl">Type</label><select id="qt">
         <option value="politician">Politician</option><option value="person">Individual</option>
         <option value="organization">Organization</option><option value="ministry">Ministry</option>
-        <option value="business">Business</option></select></div></div>
+        <option value="business">Business</option></select></div>
+      <div><label class="fl">Look-back</label><select id="qd">
+        <option value="14">Last 2 weeks</option>
+        <option value="30" selected>Last month</option>
+        <option value="90">Last 3 months</option>
+        <option value="210">Last 7 months</option>
+        <option value="365">Last year</option></select></div></div>
+      <div class="muted" style="font-size:12.5px;margin-top:8px">The report analyses this
+      period. Anything already collected outside it stays in the store as background —
+      a shorter window means a sharper read of what is happening now.</div>
       <div class="row" style="margin-top:14px"><button class="btn" id="grun">Generate report</button>
       <span class="muted" id="gmsg" style="font-size:14px"></span></div>`;
     w.appendChild(form);
@@ -1466,7 +1491,8 @@
       try{
         if(!LIVE) throw new Error('demo');
         tick('Planning ingestion…');
-        const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type})});
+        const days=parseInt(($('#qd',form)||{}).value||'30',10)||30;
+        const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type,days})});
         jobId=j.job_id;
         // A second Generate re-attaches to the run already in flight rather
         // than starting a rival one over the same rate-limited API. Say so:
@@ -1885,14 +1911,31 @@
     ['data_coverage','Where this data came from'],
   ];
 
+  // When a section last landed. "Loading" and "hung" look identical without
+  // it — the reader has no way to tell a slow analyst from a dead one, and
+  // waits indefinitely on something that will never arrive.
+  let _lastSectionAt=Date.now(), _lastReadyCount=-1;
   function progressCard(ready,stage){
     const have=new Set(ready||[]);
+    if(have.size!==_lastReadyCount){_lastReadyCount=have.size;_lastSectionAt=Date.now();}
+    const idleSec=Math.round((Date.now()-_lastSectionAt)/1000);
+    const budget=(window.__ZENITH_DEADLINE__||600);
+    const stalling=idleSec>90;
     const c=el('div','card');
-    c.style.borderColor='var(--sky2)';
+    c.style.borderColor=stalling?'var(--amber)':'var(--sky2)';
+    const waiting=SECTION_ORDER.filter(([k])=>!have.has(k)).map(([,l])=>l);
     c.innerHTML=`<div class="row" style="gap:10px;align-items:center">
-      <span class="spinner"></span><b>Still building this report.</b></div>
+      <span class="spinner"></span><b>Still building this report.</b>
+      <span class="chip" style="margin-left:auto">${have.size}/${SECTION_ORDER.length} sections</span></div>
       <div class="muted" style="font-size:13.5px;margin-top:6px">${esc(stage||'Working…')}</div>
-      <div class="muted" style="font-size:12.5px;margin-top:8px">Everything below is finished and safe to read. The rest is being written now.</div>`;
+      <div class="muted" style="font-size:12.5px;margin-top:8px">
+        ${idleSec<10?'A section just landed.':`Nothing new for ${idleSec}s.`}
+        ${stalling
+          ? `The remaining section${waiting.length===1?'':'s'} are the slowest in the run. They are
+             abandoned automatically after about ${Math.round(budget/60)} minutes and the report is
+             delivered without them — so this will end, whatever happens.`
+          : 'Everything below is finished and safe to read. The rest is being written now.'}
+      </div>`;
     const list=el('div','row');list.style.cssText='margin-top:12px;flex-wrap:wrap;gap:6px';
     let seenPending=false;
     SECTION_ORDER.forEach(([key,label])=>{

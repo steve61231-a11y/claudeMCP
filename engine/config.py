@@ -188,7 +188,16 @@ class Settings(BaseSettings):
     # abandoned. Without a deadline a single hung call — a rate-limited free
     # model, a provider that never answers — blocked the report forever, and
     # the page sat on "Still building this report" indefinitely.
-    analyst_deadline_seconds: int = 900
+    # How far back a report looks, in days. Was hard-coded to 210 — seven
+    # months — so every report was dominated by material half a year old and
+    # "what is happening now" was diluted by everything that ever happened.
+    # A month is the useful default for a monitoring product; the collector
+    # still reaches further back, so the corpus keeps its history.
+    report_window_days: int = 30
+    # The widest look-back a caller may request, so a stray query cannot ask
+    # the pipeline to read five years of corpus.
+    report_window_max_days: int = 730
+    analyst_deadline_seconds: int = 600
     # Characters of corpus a single analyst reads. Raised to 160k to fix
     # sections answering from 1.4% of the corpus, which was real — but 160k is
     # ~40k tokens, and a free-tier model with a small context window or a hard

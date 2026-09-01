@@ -74,11 +74,12 @@ def test_validation_rejects_a_real_quote_attributed_to_the_wrong_mention():
 # --- the theme must survive its quotes ---------------------------------------
 
 def _voice_result(quotes):
-    return {"public_voice": {
-        "supportive": [{"theme": "Defends the coalition",
+    """Public voice now runs ONE CALL PER STANCE — three smaller replies instead
+    of one that asked for 3,000+ words and was cut off. Each returns {"themes":
+    [...]} for the stance it was asked about."""
+    return {"themes": [{"theme": "Defends the coalition",
                         "summary": "A long analytical summary of what supporters say.",
-                        "quotes": quotes}],
-        "critical": [], "neutral": []}}
+                        "quotes": list(quotes)}]}
 
 
 def test_a_theme_is_kept_when_its_quotes_cannot_be_verified(monkeypatch):
@@ -96,8 +97,8 @@ def test_a_theme_is_kept_when_its_quotes_cannot_be_verified(monkeypatch):
 
 
 def test_a_theme_with_no_analysis_at_all_is_still_dropped(monkeypatch):
-    monkeypatch.setattr(an.llm, "call_json_untrusted", lambda *a, **k: {
-        "public_voice": {"supportive": [{"quotes": []}], "critical": [], "neutral": []}})
+    monkeypatch.setattr(an.llm, "call_json_untrusted",
+                        lambda *a, **k: {"themes": [{"quotes": []}]})
     voice = an.analyze_public_voice("Sifuna", [])
     assert voice["supportive"] == []
 
