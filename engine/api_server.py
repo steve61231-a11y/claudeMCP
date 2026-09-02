@@ -21,7 +21,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from engine import llm as _llm
-from engine import health, stages
+from engine import health as health_mod
+from engine import stages as stages_mod
 from engine.config import settings
 from engine.db.models import MentionSentiment, Politician, RawMention
 from engine.db.session import SessionLocal
@@ -703,7 +704,7 @@ def _publish_partial(job_id: str, politician, payload: dict,
         # could advance its stage text for an hour while not one section ever
         # reached the page: every publish raised, every raise was discarded,
         # and nothing anywhere said so.
-        stages.current().failed("publish_partial", exc)
+        stages_mod.current().failed("publish_partial", exc)
         return
     ready = sorted(k for k, v in payload.items() if v not in (None, [], {}, ""))
     job["partial"] = shaped
@@ -769,7 +770,7 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
         # A dead model is an operator instruction, not a stack trace. Preflight
         # already turned the provider's error into the specific thing to change,
         # so say that instead of a file and line number nobody can act on.
-        if isinstance(exc, health.PreflightFailed):
+        if isinstance(exc, health_mod.PreflightFailed):
             diag = f"{exc} — {exc.remedy} (provider said: {exc.error})"[:800]
             _save_progress(_subject_key(name), "report", job_id=job_id,
                            status="failed", error=diag)
@@ -1703,6 +1704,68 @@ def admin_timeseries(metric: str = "mentions", days: int = 30, x_api_key: str | 
         db.close()
 
 
+@app.get("/api/admin/run-state")
+def run_state(name: str, kind: str = "report",
+              x_api_key: str | None = Header(default=None)):
+    """What a run is doing RIGHT NOW, without going through the report shaper.
+
+    Everything a reader can see about a live run — sections, warnings, the
+    stage ledger — reaches the page inside a SHAPED report payload. So when
+    shaping is what fails, the failure cannot be reported: the diagnosis needs
+    the very thing that is broken. A run stuck for sixteen minutes had no way
+    to say why, and neither did I.
+
+    This reads the raw job and progress row and reports them flat. It cannot be
+    defeated by the bug it exists to diagnose.
+    """
+    _require_api_key(x_api_key)
+    subject_key = _subject_key(name)
+    row = _read_progress(subject_key, kind) or {}
+
+    live = None
+    for job_id, job in list(_jobs.items()):
+        subject = job.get("subject") or ()
+        if subject and subject[0] == name.strip().lower():
+            live = {
+                "job_id": job_id,
+                "status": job.get("status"),
+                "stage": job.get("stage"),
+                "age_seconds": round(time.time() - job.get("created_at", time.time())),
+                # The two fields the page needs to draw anything. If `partial`
+                # is null while a run is running, sections are being produced
+                # and NOT reaching the browser — which is the difference
+                # between a slow run and a broken one.
+                "has_partial": bool(job.get("partial")),
+                "sections_ready": job.get("sections_ready") or [],
+                "error": job.get("error"),
+            }
+            break
+
+    return {
+        "ok": True,
+        "subject": subject_key,
+        "live_job": live,
+        "stored_progress": {
+            "status": row.get("status"),
+            "stage": row.get("stage"),
+            "sections_ready": row.get("sections_ready") or [],
+            "has_payload": bool(row.get("payload")),
+            "started_at": row.get("started_at"),
+            "updated_at": row.get("updated_at"),
+            "error": row.get("error"),
+        },
+        # The ledger and health of whatever run this process last executed.
+        "stages": stages_mod.current().summary(),
+        "model_health": health_mod.current().summary(),
+        "reading": (
+            "sections_ready empty while status is running means the pipeline has "
+            "not published anything yet — look at `stages.failed` and `model_health`. "
+            "sections_ready non-empty but has_partial false means sections ARE being "
+            "produced and are failing to reach the browser."
+        ),
+    }
+
+
 @app.post("/api/admin/purge")
 def admin_purge(
     confirm: str = "",
@@ -1758,8 +1821,8 @@ def model_check(x_api_key: str | None = Header(default=None)):
     from engine import llm
 
     try:
-        result = health.preflight()
-    except health.PreflightFailed as failed:
+        result = health_mod.preflight()
+    except health_mod.PreflightFailed as failed:
         return {"ok": False, "answering": False, **failed.to_dict(),
                 "configured_model": llm.strong_model(),
                 "configured_bulk_model": llm.bulk_model(),
