@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from engine import llm as _llm
-from engine import health
+from engine import health, stages
 from engine.config import settings
 from engine.db.models import MentionSentiment, Politician, RawMention
 from engine.db.session import SessionLocal
@@ -262,9 +262,18 @@ def _freshness(politician_id: str) -> dict:
 
 
 def _build_frontend_payload(politician: Politician, report) -> dict:
-    payload = report.payload
-    sentiment = payload["sentiment_breakdown"]
-    volume = payload["volume_trends"]
+    """Shape a payload for the page — including a HALF-BUILT one.
+
+    This is called on every section a run publishes, so it is handed the
+    payload as it grows. Bracket access on keys that have not arrived yet
+    raised KeyError, `_publish_partial` swallowed it and returned, and NOTHING
+    was saved — so a reader watching a live run saw the stage text advance
+    while no section ever appeared. Every read here is defensive for that
+    reason: a missing key means "not yet", never an error.
+    """
+    payload = report.payload or {}
+    sentiment = payload.get("sentiment_breakdown") or {}
+    volume = payload.get("volume_trends") or {}
 
     db = SessionLocal()
     try:
@@ -341,8 +350,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         if (m.text or "").strip()
     ]
 
-    by_platform = sorted(volume["by_platform"].items(), key=lambda kv: kv[1], reverse=True)
-    total_volume = volume["total_mentions"] or 1
+    by_platform = sorted((volume.get("by_platform") or {}).items(), key=lambda kv: kv[1], reverse=True)
+    total_volume = volume.get("total_mentions") or 1
     by_platform_named = [
         {"platform": p, "count": c, "share": round(100 * c / total_volume, 1)} for p, c in by_platform
     ]
@@ -356,7 +365,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
             "note": f"{item['volume']} mention(s)",
             "sentiment": round(item["sentiment_contribution"], 1),
         }
-        for i, item in enumerate(payload["influence_summary"][:10])
+        for i, item in enumerate((payload.get("influence_summary") or [])[:10])
     ]
 
     network_nodes = [{"id": "subject", "label": politician.name, "group": "core", "value": 30}]
@@ -400,7 +409,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
             {"group": "influencer", "label": "Influencer (1k+ followers)", "color": "#86efac"},
         ]
     else:
-        for item in payload["influence_summary"][:8]:
+        for item in (payload.get("influence_summary") or [])[:8]:
             node_id = item["author_handle"].replace(" ", "_")
             group = "rival" if item["sentiment_contribution"] < 0 else "ally"
             network_nodes.append(
@@ -425,18 +434,18 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # thing. See engine/llm.py::is_test_grade.
         "grade": _llm.report_grade(),
         "freshness": _freshness(politician.id),
-        "summary": payload["executive_summary"],
+        "summary": payload.get("executive_summary") or "",
         "sentiment": {
-            "negative": sentiment["negative_pct"],
-            "neutral": sentiment["neutral_pct"],
-            "positive": sentiment["positive_pct"],
-            "totalAnalyzed": sentiment["total_mentions_analyzed"],
+            "negative": sentiment.get("negative_pct"),
+            "neutral": sentiment.get("neutral_pct"),
+            "positive": sentiment.get("positive_pct"),
+            "totalAnalyzed": sentiment.get("total_mentions_analyzed"),
         },
         "volume": {
-            "total": volume["total_mentions"],
-            "platforms": len(volume["by_platform"]),
+            "total": volume.get("total_mentions"),
+            "platforms": len(volume.get("by_platform") or {}),
             "last72h": sum(
-                c for d, c in volume["by_day"].items()
+                c for d, c in (volume.get("by_day") or {}).items()
                 if datetime.fromisoformat(d).date() >= (report.window_end.date() - timedelta(days=3))
             ),
             "byPlatform": by_platform_named,
@@ -459,7 +468,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
                 "evidence": n.get("evidence", []),
                 "labelled_by": n.get("labelled_by"),
             }
-            for n in payload["narrative_breakdown"]
+            for n in (payload.get("narrative_breakdown") or [])
         ],
         "risks": payload.get("risks", []),
         "opportunities": payload.get("opportunities", []),
@@ -667,14 +676,19 @@ def _publish_partial(job_id: str, politician, payload: dict,
     payload and hang it on the job, so a reader can start on section one while
     section eight is still being written.
 
-    Best-effort by design: a partial payload that cannot yet be shaped (the
-    base statistics have not landed) simply isn't published, and a failure here
-    must never touch the run itself.
+    Best-effort by design: a failure here must never touch the run itself. It
+    is, however, RECORDED — this returning silently is why a run could advance
+    its stage text for an hour while not one section reached the page.
+
+    It no longer waits for `sentiment_breakdown` and `volume_trends` before
+    publishing anything. That gate existed because the shaper could not survive
+    a half-built payload; now that it can, holding every section hostage to two
+    particular keys only delays the first thing a reader sees.
     """
     job = _jobs.get(job_id)
     if job is None or job.get("status") != "running":
         return
-    if "sentiment_breakdown" not in payload or "volume_trends" not in payload:
+    if not payload:
         return
     now = time.time()
     if now - job.get("partial_at", 0.0) < _PARTIAL_MIN_INTERVAL_SECONDS:
@@ -684,7 +698,12 @@ def _publish_partial(job_id: str, politician, payload: dict,
         shaped = _build_frontend_payload(
             politician, _PartialReport(dict(payload), window_start, window_end)
         )
-    except Exception:  # noqa: BLE001 — a half-built payload is expected to fail sometimes
+    except Exception as exc:  # noqa: BLE001 — must never cost the run
+        # Recorded, NOT swallowed. This returning silently is why a live run
+        # could advance its stage text for an hour while not one section ever
+        # reached the page: every publish raised, every raise was discarded,
+        # and nothing anywhere said so.
+        stages.current().failed("publish_partial", exc)
         return
     ready = sorted(k for k, v in payload.items() if v not in (None, [], {}, ""))
     job["partial"] = shaped

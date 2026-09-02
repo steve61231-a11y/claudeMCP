@@ -86,8 +86,20 @@ def test_partial_report_appears_on_the_job_while_it_runs(monkeypatch):
                         lambda pol, rep: {"name": pol.name, "keys": sorted(rep.payload)})
     ws, we = datetime(2026, 1, 1), datetime(2026, 2, 1)
     try:
-        # Nothing to shape yet — the base statistics haven't landed.
-        api_server._publish_partial(job_id, _Politician(), {"risks": []}, ws, we)
+        # A section publishes as soon as it lands. This used to be withheld
+        # until sentiment_breakdown AND volume_trends both existed — a gate that
+        # only made sense while the shaper could not survive a half-built
+        # payload. It could not, it raised KeyError, _publish_partial swallowed
+        # that and returned, and a live run showed nothing for its whole
+        # duration. The shaper now tolerates partials, so the gate is gone.
+        api_server._publish_partial(job_id, _Politician(), {"risks": ["a risk"]}, ws, we)
+        assert api_server._jobs[job_id]["sections_ready"] == ["risks"]
+
+        # An empty payload still publishes nothing: there is genuinely nothing
+        # to show, which is different from having something and withholding it.
+        api_server._jobs.pop(job_id)
+        api_server._jobs[job_id] = {"status": "running", "created_at": time.time()}
+        api_server._publish_partial(job_id, _Politician(), {}, ws, we)
         assert "partial" not in api_server._jobs[job_id]
 
         payload = _base_payload()
