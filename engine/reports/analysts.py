@@ -281,10 +281,77 @@ def _public_voice_stance(name: str, stance: str, blob: str, refs: dict) -> list[
     return kept
 
 
+#: Above this many mentions, asking one call for all three stances produces a
+#: reply long enough to be truncated on a thinking model, so the work is split.
+#: BELOW it, one call is comfortably enough — and splitting costs two extra
+#: requests, which on a rate-limited key is two more chances to be refused.
+SPLIT_PUBLIC_VOICE_ABOVE = 200
+
+
+ALL_STANCES_PROMPT = """You are a political intelligence analyst. Your job: report WHAT PEOPLE ARE ACTUALLY SAYING about {name}, in their own words, from the scraped posts and comments below.
+
+{grounding}
+
+Group what you find into three stances: supportive (defending or praising), critical (attacking or opposing), and neutral (reporting, asking, or mixed). For each stance identify the distinct things people are saying — 3-6 themes per stance where the corpus supports it — and back EVERY theme with 2-4 verbatim quotes (exact text from a source item, with its ref id). Each theme's `summary` is 60-120 words: what the theme is, who holds it, how strongly, and how it is expressed. Prefer comments over posts — those are ordinary citizens' voices. Note the language and tone (English, Swahili, Sheng, mockery, praise, anger) where visible.
+
+Required JSON shape:
+{{"supportive": [{{"theme": "...", "summary": "...", "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}]}}], "critical": [ ...same shape... ], "neutral": [ ...same shape... ]}}"""
+
+
+def _clean_themes(raw, refs) -> list[dict]:
+    kept = []
+    for theme in raw or []:
+        if not isinstance(theme, dict) or not (theme.get("summary") or theme.get("theme")):
+            continue
+        theme["quotes"] = _validate_quotes(theme.get("quotes"), refs)
+        if not theme["quotes"]:
+            theme["quotes_unverified"] = True
+        kept.append(theme)
+    return kept
+
+
+def _public_voice_all_stances(name: str, blob: str, refs: dict) -> dict | None:
+    """All three stances in ONE request. Returns None if it could not be done,
+    so the caller can fall back to splitting rather than lose the section."""
+    try:
+        result = llm.call_json_untrusted(
+            ALL_STANCES_PROMPT.format(name=name, grounding=GROUNDING_RULES),
+            blob,
+            expected_keys={"supportive"},
+            max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
+            max_untrusted_chars=corpus_chars_per_call(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        stages.current().record(
+            "public_voice", stages.STATUS_OK,
+            detail=f"single-call public voice failed, splitting by stance: {exc}"[:200])
+        return None
+    voice = {stance: _clean_themes(result.get(stance), refs)
+             for stance in ("supportive", "critical", "neutral")}
+    return voice if any(voice.values()) else None
+
+
 def analyze_public_voice(name: str, mentions: list[dict]) -> dict:
+    """What people are saying, in one call or three.
+
+    Splitting by stance was added because a single call asking for 3,000-5,000
+    words of JSON got cut off on a reasoning model. That is real — on a big
+    corpus. On a small one it is three requests where one would do, and on a
+    free tier that is refusing after six requests, every avoidable call is a
+    section lost. Pay the extra calls only when the corpus is big enough to
+    need them.
+    """
     refs = _refs(mentions)
     blob = _corpus_blob(mentions)
     stances = ("supportive", "critical", "neutral")
+
+    if len(mentions) <= SPLIT_PUBLIC_VOICE_ABOVE:
+        combined = _public_voice_all_stances(name, blob, refs)
+        if combined is not None:
+            return combined
+        # One call was tried and did not work; fall through and split rather
+        # than lose the section.
+
     with ThreadPoolExecutor(max_workers=3) as pool:
         results = list(pool.map(
             lambda stance: _public_voice_stance(name, stance, blob, refs), stances))
@@ -337,6 +404,11 @@ Required JSON shape — the example shows the FORM, not the QUANTITY. Return as 
 {{"timeline": [{{"date": "YYYY-MM-DD", "event": "80-200 word mini-briefing...", "quotes": [{{"ref": "abcd1234", "text": "..."}}, {{"ref": "efgh5678", "text": "..."}}]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}, {{"date": "YYYY-MM-DD", "event": "...", "quotes": [...]}}]}}"""
 
 
+#: Dated items above which the timeline is reconstructed in two passes. Eight
+#: was too eager: it split a perfectly ordinary corpus into two requests.
+SPLIT_TIMELINE_ABOVE = 60
+
+
 def _timeline_slice(name: str, sample: list[dict], refs: dict) -> list[dict]:
     """One half of the window. A failed half costs half the timeline."""
     if not sample:
@@ -371,7 +443,10 @@ def analyze_timeline(name: str, mentions: list[dict], by_day: dict[str, int]) ->
     dated = sorted((m for m in sample if isinstance(m.get("posted_at"), datetime)),
                    key=lambda m: m["posted_at"])
     undated = [m for m in sample if not isinstance(m.get("posted_at"), datetime)]
-    if len(dated) >= 8:
+    # Split only when there is enough material that one reply would be cut off.
+    # Below that it is a second request for no benefit, and on a throttled key
+    # every avoidable request is a section at risk.
+    if len(dated) >= SPLIT_TIMELINE_ABOVE:
         middle = len(dated) // 2
         halves = [dated[:middle] + undated, dated[middle:]]
     else:

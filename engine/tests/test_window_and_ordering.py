@@ -113,7 +113,10 @@ def test_a_failed_stance_costs_a_third_not_the_section(monkeypatch):
 
     monkeypatch.setattr(analysts.llm, "call_json_untrusted", flaky)
     voice = analysts.analyze_public_voice("X", [])
-    assert calls["n"] == 3, "one call per stance"
+    # A small corpus tries ONE combined call first — three requests is waste on
+    # a throttled key — and splits only when that does not work. So: the
+    # combined attempt, then one call per stance.
+    assert calls["n"] == 4, "combined attempt, then one call per stance"
     assert voice["supportive"] and voice["neutral"]
     assert voice["critical"] == [], "the failed stance is empty, the others survive"
 

@@ -194,6 +194,37 @@ def _is_fatal(error: str) -> bool:
     return not any(marker in lowered for marker in _TRANSIENT_MARKERS)
 
 
+#: A successful probe is good for this long. The backend does not become
+#: misconfigured between two runs a minute apart, and spending a request per
+#: run to re-confirm that is a request not spent on the report — which matters
+#: precisely when requests are scarce.
+PROBE_CACHE_SECONDS = 600
+_last_good_probe: tuple[float, dict] | None = None
+
+
+def _cached_probe(backend: str, model: str) -> dict | None:
+    """A recent success for THIS backend and model.
+
+    Keyed on the configuration, not just time: a probe that passed against the
+    old model says nothing about the new one, and serving that answer would
+    hide exactly the misconfiguration this check exists to catch."""
+    import time
+
+    if _last_good_probe is None:
+        return None
+    when, result = _last_good_probe
+    if time.monotonic() - when > PROBE_CACHE_SECONDS:
+        return None
+    if result.get("backend") != backend or result.get("model") != model:
+        return None
+    return {**result, "cached": True}
+
+
+def reset_probe_cache() -> None:
+    global _last_good_probe
+    _last_good_probe = None
+
+
 def preflight() -> dict:
     """One cheap real call before an expensive run.
 
@@ -212,6 +243,9 @@ def preflight() -> dict:
         return {"ok": True, "backend": backend, "model": None, "note": "stub backend; no call made"}
 
     model = llm.bulk_model()
+    cached = _cached_probe(backend, model)
+    if cached is not None:
+        return cached
     try:
         # A liveness probe on a tight leash. The full budget is 240s of
         # retrying, and spending that here to learn the provider is busy costs
@@ -249,4 +283,9 @@ def preflight() -> dict:
                     "LLM_MODEL / LLM_BULK_MODEL."),
             error=f"got {type(reply).__name__}",
         )
-    return {"ok": True, "backend": backend, "model": model}
+    import time as _time
+
+    global _last_good_probe
+    result = {"ok": True, "backend": backend, "model": model}
+    _last_good_probe = (_time.monotonic(), result)
+    return result
