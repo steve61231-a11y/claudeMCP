@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from engine import health, stages
+from engine import health, llm, stages
 from engine.config import settings
 from engine.db.models import (
     Entity,
@@ -170,7 +170,16 @@ def run_analysis(
     # unnoticed while every stage silently degraded around it.
     health.reset()
     stages.reset()
-    health.preflight()
+    # Spacing learned from a previous run's throttling does not carry into this
+    # one: the limit may have reset, and starting every run at 12 seconds a
+    # request because an earlier one was refused would be its own slow failure.
+    llm.reset_adaptive_gap()
+    preflight = health.preflight()
+    if preflight.get("degraded"):
+        stages.current().record(
+            "model_preflight", stages.STATUS_OK,
+            detail=("the model did not answer the pre-run check but the run continued: "
+                    f"{preflight.get('error', 'no detail')}"))
 
     politician_entity = _upsert_entity(db, "politician", politician.name)
 

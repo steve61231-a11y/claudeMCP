@@ -593,10 +593,32 @@ def test_spacing_is_off_by_default(monkeypatch):
     slept: list[float] = []
     monkeypatch.setattr(_time, "sleep", slept.append)
     monkeypatch.setattr(llm.settings, "llm_min_request_interval_ms", 0)
+    # Spacing also grows on its own when the provider throttles us, and that
+    # learned value is process-wide and deliberately does not decay. This test
+    # is about the CONFIGURED default, so start from none learned.
+    llm.reset_adaptive_gap()
 
     llm._throttle()
 
     assert slept == []
+
+
+def test_spacing_learned_from_throttling_applies_even_when_none_is_configured(monkeypatch):
+    """Being refused is evidence about the limit. Ignoring it because nobody
+    set LLM_MIN_REQUEST_INTERVAL_MS walks straight back into the limit."""
+    import time as _time
+
+    slept: list[float] = []
+    monkeypatch.setattr(_time, "sleep", slept.append)
+    monkeypatch.setattr(llm.settings, "llm_min_request_interval_ms", 0)
+    llm.reset_adaptive_gap()
+    llm._widen_spacing()
+    try:
+        llm._throttle()
+        llm._throttle()
+        assert any(gap > 0 for gap in slept), "a throttled key was hit at full speed again"
+    finally:
+        llm.reset_adaptive_gap()
 
 
 # --- a rejected request must say WHY ----------------------------------------

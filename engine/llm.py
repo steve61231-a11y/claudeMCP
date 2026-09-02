@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import hashlib
 import json
@@ -136,6 +137,29 @@ ANTHROPIC_MAX_OUTPUT_TOKENS = 16000
 #: emitted. Every failure in the live run hit its budget exactly — 1480, 3400,
 #: 640, 880, 1000 — because the budgets were computed as output-only.
 REASONING_FLOOR = 4000
+
+
+#: When set, overrides OPENAI_COMPATIBLE_TOTAL_BUDGET for calls made inside a
+#: `short_budget()` block. A liveness probe must not spend five minutes finding
+#: out that the provider is busy — that is five minutes of a run's life spent
+#: learning something the run could have discovered while working.
+_BUDGET_OVERRIDE: float | None = None
+
+
+@contextlib.contextmanager
+def short_budget(seconds: float):
+    """Run calls in this block against a tighter whole-call budget."""
+    global _BUDGET_OVERRIDE
+    previous = _BUDGET_OVERRIDE
+    _BUDGET_OVERRIDE = seconds
+    try:
+        yield
+    finally:
+        _BUDGET_OVERRIDE = previous
+
+
+def _total_budget() -> float:
+    return _BUDGET_OVERRIDE if _BUDGET_OVERRIDE is not None else OPENAI_COMPATIBLE_TOTAL_BUDGET
 
 
 def budget_for(expected_output_tokens: int) -> int:
@@ -364,6 +388,28 @@ _THROTTLE_LOCK = threading.Lock()
 _LAST_REQUEST_AT = 0.0
 
 
+#: Spacing learned from being throttled, in seconds. Grows when the provider
+#: says no and never shrinks within a run: a free tier's limit does not widen
+#: because we would like it to.
+_ADAPTIVE_GAP = 0.0
+_ADAPTIVE_CEILING = 12.0
+
+
+def _widen_spacing() -> None:
+    global _ADAPTIVE_GAP
+    with _THROTTLE_LOCK:
+        _ADAPTIVE_GAP = min(_ADAPTIVE_CEILING, (_ADAPTIVE_GAP or 0.75) * 2)
+
+
+def adaptive_gap() -> float:
+    return _ADAPTIVE_GAP
+
+
+def reset_adaptive_gap() -> None:
+    global _ADAPTIVE_GAP
+    _ADAPTIVE_GAP = 0.0
+
+
 def _throttle() -> None:
     """Hold a minimum gap between outbound requests, process-wide.
 
@@ -375,7 +421,7 @@ def _throttle() -> None:
     """
     import time as _time
 
-    gap = (settings.llm_min_request_interval_ms or 0) / 1000.0
+    gap = max((settings.llm_min_request_interval_ms or 0) / 1000.0, _ADAPTIVE_GAP)
     if gap <= 0:
         return
     global _LAST_REQUEST_AT
@@ -565,7 +611,7 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     started = time.monotonic()
     while attempt < OPENAI_COMPATIBLE_RETRIES:
         waited = time.monotonic() - started
-        if waited > OPENAI_COMPATIBLE_TOTAL_BUDGET:
+        if waited > _total_budget():
             # Out of time rather than out of attempts. Spending the remaining
             # retries would only make the caller wait longer for the same
             # answer, and something upstream is waiting on this.
@@ -606,6 +652,13 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 if rate_limited > OPENAI_COMPATIBLE_RATE_LIMIT_RETRIES:
                     raise requests.HTTPError(
                         f"rate limited {rate_limited} times: {response.text[:200]}")
+                # Space every SUBSEQUENT request too, not just this one. Being
+                # throttled means we are asking faster than the key allows;
+                # sleeping once and then resuming the old pace walks straight
+                # back into the limit. Telling an operator to lower
+                # LLM_CONCURRENCY by hand is asking them to do arithmetic the
+                # process can do from evidence it already has.
+                _widen_spacing()
                 time.sleep(_retry_after(response) or
                            min(15 * rate_limited, OPENAI_COMPATIBLE_MAX_BACKOFF))
                 continue

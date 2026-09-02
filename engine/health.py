@@ -39,6 +39,9 @@ from dataclasses import dataclass, field
 # transient 429) while a majority means the backend is gone.
 FAILURE_THRESHOLD = 0.5
 
+#: How long the pre-run liveness probe may spend before giving its verdict.
+PROBE_BUDGET_SECONDS = 45
+
 VERDICT_OK = "ok"
 VERDICT_DEGRADED = "degraded"
 VERDICT_BROKEN = "broken"
@@ -159,11 +162,49 @@ def _remedy_for(error: str, model: str, backend: str) -> str:
             "LLM_BASE_URL and LLM_API_KEY in the Render dashboard.")
 
 
-def preflight() -> dict:
-    """One cheap real call. Raises PreflightFailed if the model will not answer.
+#: Failures that mean the backend is MISCONFIGURED. There is no point
+#: collecting for an hour against a model that does not exist or a key that is
+#: refused: every stage will fail identically, and the operator has to change a
+#: setting before anything can work.
+_FATAL_MARKERS = (
+    "404", "not found", "thank you for participating",   # retired / wrong model
+    "401", "unauthor", "invalid api key", "forbidden",   # bad key
+    "402", "insufficient", "credit", "quota exceeded",   # no balance
+    "model_not_found", "does not exist",
+)
 
-    Deliberately trivial — a two-key JSON object — so it costs almost nothing
-    and fails only when the backend genuinely cannot serve a request."""
+#: Failures that mean the backend is BUSY. A rate limit is not misconfiguration
+#: — the same key that is throttled this second commonly serves the next call,
+#: and a run that degrades visibly is worth far more than no run at all.
+_TRANSIENT_MARKERS = ("429", "rate limit", "rate-limited", "too many requests",
+                      "timeout", "timed out", "connection", "temporarily")
+
+
+def _is_fatal(error: str) -> bool:
+    """Misconfiguration, or just a busy provider?
+
+    Blocking a whole run on a rate limit was too strict: it turned a report
+    that would have come back thin into no report at all, and the operator
+    could do nothing about it but wait. Only stop for the failures a setting
+    can fix.
+    """
+    lowered = error.lower()
+    if any(marker in lowered for marker in _FATAL_MARKERS):
+        return True
+    return not any(marker in lowered for marker in _TRANSIENT_MARKERS)
+
+
+def preflight() -> dict:
+    """One cheap real call before an expensive run.
+
+    Raises PreflightFailed only when the backend is MISCONFIGURED — a retired
+    model, a refused key, an exhausted balance — because every stage will then
+    fail identically and only a settings change can help.
+
+    A provider that is merely BUSY does not stop the run. The same key that is
+    throttled now commonly serves the next call, the stage ledger already
+    reports what failed, and a thin report beats no report.
+    """
     from engine import llm
 
     backend = llm.provider()
@@ -172,13 +213,28 @@ def preflight() -> dict:
 
     model = llm.bulk_model()
     try:
-        reply = llm.call_json(
-            'Reply with ONLY this JSON and nothing else: {"ok": true, "n": 2}',
-            max_tokens=200,
-            model=model,
-        )
-    except Exception as exc:  # noqa: BLE001 — turned into an instruction below
+        # A liveness probe on a tight leash. The full budget is 240s of
+        # retrying, and spending that here to learn the provider is busy costs
+        # a run four minutes before it has collected a single mention — while
+        # the run itself could have been discovering the same thing usefully.
+        with llm.short_budget(PROBE_BUDGET_SECONDS):
+            reply = llm.call_json(
+                'Reply with ONLY this JSON and nothing else: {"ok": true, "n": 2}',
+                max_tokens=200,
+                model=model,
+            )
+    except Exception as exc:  # noqa: BLE001 — classified below
         error = f"{type(exc).__name__}: {exc}"[:500]
+        if not _is_fatal(error):
+            # Busy, not broken. Proceed, and say so loudly enough that a thin
+            # report is not mistaken for a quiet subject.
+            current().record_failure(exc)
+            return {"ok": True, "backend": backend, "model": model,
+                    "degraded": True,
+                    "note": ("the model did not answer the preflight call but the run "
+                             "continued — sections that cannot be produced will be "
+                             "named individually"),
+                    "error": error}
         raise PreflightFailed(
             f"The analysis model is not answering, so this run was stopped before it "
             f"collected anything. Nothing was generated because nothing could be.",
