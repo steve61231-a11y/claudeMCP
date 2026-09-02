@@ -864,8 +864,19 @@ def _fetch_transcripts_for_top_videos(
         return sum(int(e.get(k, 0) or 0) for k in ("likes", "shares", "comments", "views"))
 
     fetched = 0
+    consecutive_failures = 0
     for video in sorted(videos, key=engagement_score, reverse=True):
         if fetched >= settings.transcripts_per_run:
+            break
+        # Stop asking after three refusals in a row. A wrong parameter name or
+        # an exhausted plan fails identically for every video, and paying the
+        # latency of that discovery once per video — on a premium endpoint —
+        # buys nothing.
+        if consecutive_failures >= 3:
+            stages.current().failed(
+                "transcripts",
+                f"stopped after {consecutive_failures} consecutive failures: "
+                f"{getattr(connector, 'last_error', 'no reason recorded')}")
             break
         payload = video.raw_payload or {}
         post_id = payload.get("id") or payload.get("video_id") or payload.get("post_id")
@@ -878,7 +889,12 @@ def _fetch_transcripts_for_top_videos(
             # broadcast enter the corpus at all. Losing them all silently reads
             # as coverage that happened to be text-only.
             stages.current().failed(f"transcript:{video.platform}", exc)
+            consecutive_failures += 1
             continue
+        if transcript is None:
+            consecutive_failures += 1
+            continue
+        consecutive_failures = 0
         if ingestion_run is not None:
             ingestion_run.credits_spent += credit_cost(
                 TRANSCRIPT_ENDPOINTS[video.platform]

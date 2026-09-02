@@ -507,6 +507,39 @@ def _evidence_for(label: str | None, payload: dict) -> dict:
     return evidence
 
 
+def _as_text_list(value) -> list[str]:
+    """Whatever the model returned, as a list of strings.
+
+    `risks` and `opportunities` are documented as lists of strings, and a model
+    that answers with an object instead made `value[:3]` raise "unhashable
+    type: slice" — which took the entire Sentiment Framework, the client
+    deliverable, off the page. A section is worth having in a shape we did not
+    ask for; it is not worth losing the whole tab over."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        # {"risks": [...]} nested one level deeper than the contract, or an
+        # object keyed by theme — take the values either way.
+        items: list = []
+        for nested in value.values():
+            items.extend(nested if isinstance(nested, list) else [nested])
+        value = items
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+        elif isinstance(item, dict):
+            text = item.get("text") or item.get("risk") or item.get("opportunity") \
+                or item.get("issue") or item.get("description")
+            if isinstance(text, str) and text.strip():
+                out.append(text.strip())
+    return out
+
+
 def build_current_issues(payload: dict) -> dict:
     """4.0 — potential levers (positive) and potential barriers (negative).
 
@@ -540,12 +573,12 @@ def build_current_issues(payload: dict) -> dict:
     if not positives:
         positives = [
             {"issue": text[:120], "description": text, "type": "lever"}
-            for text in (payload.get("opportunities") or [])[:MAX_CURRENT_ISSUES]
+            for text in _as_text_list(payload.get("opportunities"))[:MAX_CURRENT_ISSUES]
         ]
     if not negatives:
         negatives = [
             {"issue": text[:120], "description": text, "type": "barrier"}
-            for text in (payload.get("risks") or [])[:MAX_CURRENT_ISSUES]
+            for text in _as_text_list(payload.get("risks"))[:MAX_CURRENT_ISSUES]
         ]
 
     return {

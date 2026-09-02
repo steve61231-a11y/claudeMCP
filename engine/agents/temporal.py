@@ -76,7 +76,9 @@ def take_snapshot(db, politician, run_id: str | None = None) -> Snapshot:
         metric = (
             db.query(NarrativeMetric)
             .filter_by(narrative_id=narrative.id)
-            .order_by(NarrativeMetric.computed_at.desc().nullslast())
+            # `computed_at` has never existed on this table. The most recent
+            # metric is the one whose window ends latest.
+            .order_by(NarrativeMetric.window_end.desc().nullslast())
             .first()
         )
         narrative_state[narrative.label] = float(getattr(metric, "strength_score", 0) or 0)

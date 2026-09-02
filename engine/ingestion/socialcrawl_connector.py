@@ -216,13 +216,26 @@ class SocialCrawlConnector(IngestionConnector):
         endpoint = TRANSCRIPT_ENDPOINTS.get(platform)
         if not endpoint:
             return None
+        # One id, named for the endpoint. Sending id + video_id + post_id at
+        # once was a guess at the API's parameter name, and the API answered
+        # 400 to every transcript request — a paid endpoint returning nothing
+        # for the whole run, on every video.
+        param = "video_id" if platform == "youtube" else "post_id"
         response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{endpoint}",
-            params={"id": post_id, "video_id": post_id, "post_id": post_id},
+            params={param: post_id},
             headers={"x-api-key": self.api_key},
             timeout=60,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # Transcripts are optional enrichment. A rejected one costs this
+            # video's spoken words; it must not raise into the run, and the
+            # reason has to be recorded or a systematically broken parameter
+            # looks like videos that simply have no transcript.
+            self.last_error = (f"transcript {platform}/{post_id}: HTTP "
+                               f"{response.status_code} {response.text[:120]}")[:200]
+            self._transcript_failures = getattr(self, "_transcript_failures", 0) + 1
+            return None
         body = response.json()
         if not body.get("success", True):
             return None

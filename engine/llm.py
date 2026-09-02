@@ -561,17 +561,31 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     last_error: Exception | None = None
     attempt = 0
     rate_limited = 0
+    requests_made = 0
     started = time.monotonic()
     while attempt < OPENAI_COMPATIBLE_RETRIES:
-        if time.monotonic() - started > OPENAI_COMPATIBLE_TOTAL_BUDGET:
+        waited = time.monotonic() - started
+        if waited > OPENAI_COMPATIBLE_TOTAL_BUDGET:
             # Out of time rather than out of attempts. Spending the remaining
             # retries would only make the caller wait longer for the same
             # answer, and something upstream is waiting on this.
+            #
+            # `attempt` deliberately does NOT count rate-limit retries — a 429
+            # is not the prompt's fault — so reporting it here produced "gave
+            # up after 0 attempts", which reads as a bug in the caller rather
+            # than as what it is: a provider that would not serve us. Say what
+            # actually happened.
             last_error = last_error or TimeoutError(
-                f"gave up after {OPENAI_COMPATIBLE_TOTAL_BUDGET}s across {attempt} attempt(s)")
+                f"gave up after {int(waited)}s: {requests_made} request(s) sent, "
+                + (f"rate-limited {rate_limited} time(s)" if rate_limited
+                   else f"{attempt} failed attempt(s)")
+                + ". The provider would not serve this call inside the budget — a free "
+                  "tier being throttled is the usual cause."
+            )
             break
         try:
             _throttle()
+            requests_made += 1
             response = requests.post(
                 f"{base}/chat/completions",
                 headers={
@@ -656,8 +670,14 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 break
             time.sleep(min(2 ** attempt, 8) + random.random())
 
-    raise RuntimeError(f"{settings.llm_provider} call failed after "
-                       f"{attempt} attempts: {last_error}") from last_error
+    # `attempt` counts prompt-level failures only; rate-limit retries and
+    # adaptive field drops deliberately do not increment it. Reporting it as
+    # "failed after 0 attempts" therefore described a call that had in fact
+    # been sent many times and throttled every time.
+    raise RuntimeError(
+        f"{settings.llm_provider} call failed after {requests_made} request(s)"
+        + (f", {attempt} of them counted as attempts" if attempt else "")
+        + f": {last_error}") from last_error
 
 
 # Canned replies for the stub backend, keyed by a phrase unique to each prompt.

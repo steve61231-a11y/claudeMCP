@@ -504,7 +504,16 @@ def analyze_narrative_deep_dives(
             # the corpus never had.
             stages.current().failed(f"narrative_deep_dive:{n.get('label', '?')}", exc)
             continue
-        dive = result["deep_dive"]
+        dive = result.get("deep_dive")
+        if not isinstance(dive, dict):
+            # The model answered with a string (or a list) where the contract
+            # says object. Assigning into it raises, and the exception was
+            # taking the whole storyline with it — a section lost to a reply
+            # that was merely the wrong shape.
+            stages.current().failed(
+                f"narrative_deep_dive:{n.get('label', '?')}",
+                f"deep_dive came back as {type(dive).__name__}, not an object")
+            continue
         dive["label"] = n["label"]
         dive["mention_count"] = len(n.get("mention_ids", []))
         dive["quotes"] = _validate_quotes(dive.get("quotes"), refs)
