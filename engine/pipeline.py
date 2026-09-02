@@ -201,6 +201,13 @@ def run_analysis(
             )
             for _key, _value in preview.items():
                 publish(_key, _value)
+            # Publish the ledger straight after the preview. It was only
+            # stamped on at the very END of a run, so a failure in the first
+            # seconds — preflight, the preview itself, a publish that could not
+            # be shaped — was invisible for the entire run. The reader saw a
+            # spinner and no explanation, which is the state that makes a
+            # working run and a dead one look identical.
+            publish("section_status", stages.current().summary())
         except Exception as exc:  # noqa: BLE001 — a preview must never risk the report
             stages.current().failed("corpus_preview", exc)
             traceback.print_exc()
@@ -505,6 +512,11 @@ def run_analysis(
     payload["sentiment_history"] = sentiment_history(db, politician)
     publish("since_last_report", payload.get("since_last_report"))
     publish("sentiment_history", payload["sentiment_history"])
+
+    # And again before the long stretch, so anything that failed during
+    # scoring, linking or narratives is on the page while the analysts run.
+    publish("section_status", stages.current().summary())
+    publish("run_health", health.current().summary())
 
     payload = enrich_report_payload(
         politician.name,

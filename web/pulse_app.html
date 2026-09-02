@@ -290,14 +290,27 @@
   function workingNote(prog, what){
     const stage=prog&&prog.stage;
     const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
+    // The first sections cost nothing and arrive in seconds. Minutes of an
+    // empty list is a broken run, not a slow one, and saying so is the
+    // difference between waiting usefully and waiting for nothing.
+    const startedAt=prog&&prog.started_at?Date.parse(prog.started_at+(/[Zz]|[+-]\d\d:?\d\d$/.test(prog.started_at)?'':'Z')):null;
+    const staleMin=startedAt?Math.floor((Date.now()-startedAt)/60000):0;
+    const stale=staleMin>=2;
     const c=el('div','card');
     c.innerHTML=`<div class="row" style="gap:10px;align-items:center">
         <span class="spinner"></span><b>Still working on ${esc(what)}.</b></div>
       ${stage?`<div style="font-size:14px;margin-top:8px">${esc(stage)}</div>`:''}
       <div class="muted" style="font-size:13px;margin-top:8px">
-        No section is finished yet. The scrape, entity linking and whole-corpus sentiment all
-        run before the first one lands, and that is the longest part of a run. You can close
-        this page — searching the same subject later picks it up where it is.
+        ${stale
+          ? `<b style="color:var(--amber)">Nothing has arrived for ${staleMin} minutes, and that is
+             not normal.</b> Volume and mention counts are arithmetic over rows already stored and
+             land within seconds of a run starting, so an empty list this long means the run is not
+             reaching this page rather than that it is thinking. Check
+             <b>/api/admin/model-check</b>, and check the build in the status bar is the one you
+             deployed.`
+          : `Nothing is finished yet. Volume and mention counts land within seconds; the written
+             sections take longer. You can close this page — searching the same subject later picks
+             it up where it is.`}
         ${when?'Last update '+esc(when)+' UTC.':''}</div>`;
     return c;
   }

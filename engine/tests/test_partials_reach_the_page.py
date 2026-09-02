@@ -127,3 +127,38 @@ def test_publishing_no_longer_waits_for_two_particular_keys(monkeypatch, subject
                                 datetime.utcnow() - timedelta(days=30), datetime.utcnow())
     assert job.get("sections_ready") == ["executive_summary"], (
         "a section that has landed must reach the page immediately")
+
+
+# --- a failure in the first seconds must be visible in the first seconds ----
+
+def test_the_ledger_is_published_early_not_only_at_the_end():
+    """section_status was stamped on only at the END of a run, so a failure in
+    the opening seconds — preflight, the preview, a publish that could not be
+    shaped — stayed invisible for the whole run. The reader saw a spinner and
+    no explanation, which is the state where a working run and a dead one look
+    the same."""
+    import inspect
+
+    from engine import pipeline
+
+    source = inspect.getsource(pipeline.run_analysis)
+    publishes = [i for i, line in enumerate(source.splitlines())
+                 if 'publish("section_status"' in line]
+    assert len(publishes) >= 2, "the ledger is only published once, at the end"
+
+    fanout = next(i for i, line in enumerate(source.splitlines())
+                  if "payload = enrich_report_payload(" in line)
+    assert publishes[0] < fanout, (
+        "the first ledger publish is after the analysts, so anything that failed "
+        "before them is invisible while the reader waits")
+
+
+def test_run_health_is_published_before_the_long_stretch():
+    import inspect
+
+    from engine import pipeline
+
+    source = inspect.getsource(pipeline.run_analysis)
+    health_at = source.index('publish("run_health"')
+    fanout_at = source.index("payload = enrich_report_payload(")
+    assert health_at < fanout_at
