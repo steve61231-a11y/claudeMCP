@@ -140,6 +140,78 @@ def score_document(document: dict, identities, issue_terms,
     return True, "on topic"
 
 
+#: Which pool a document landed in, and what an analyst may do with it.
+POOL_CORE = "core"                # mentions both halves — the intersection itself
+POOL_PRINCIPAL = "principal_side"  # the principal, on other things
+POOL_ISSUE = "issue_side"          # the issue, without them in it
+POOL_OFF = "off_topic"
+
+POOL_MEANING = {
+    POOL_CORE: "mentions both the principal and the issue",
+    POOL_PRINCIPAL: "about the principal — their record, allies and other fights",
+    POOL_ISSUE: "about the issue — its history and the other people in it",
+}
+
+
+def partition_corpus(corpus: list[dict], identities, issue_terms,
+                     require_market: bool) -> tuple[dict, dict]:
+    """Sort a corpus into what each half of the question can be answered from.
+
+    The old gate was a hard AND: a document had to name the principal AND the
+    issue or it was thrown away. On a real question that is nearly everything.
+    "Odious debt case by Okiya Omtatah" × "International Monetary Fund" kept
+    TWO documents out of hundreds, and five analysts then spent ten minutes
+    reading two articles.
+
+    An investigator does not work that way. They read what exists on the
+    person, what exists on the issue, and the places the two touch — and the
+    third is only findable because they read the first two. The AND is right
+    for the intersection itself and wrong for everything around it, so it is
+    now a sort rather than a gate: three pools, each labelled with what it can
+    honestly support, and nothing silently discarded.
+    """
+    pools = {POOL_CORE: [], POOL_PRINCIPAL: [], POOL_ISSUE: []}
+    reasons: dict[str, int] = {}
+    examples: dict[str, str] = {}
+
+    for document in corpus:
+        text = " ".join(str(document.get(k) or "") for k in ("text", "title", "body"))
+        text += " " + str(document.get("source_url") or "")
+        if not text.strip():
+            reasons["empty document"] = reasons.get("empty document", 0) + 1
+            continue
+
+        has_principal = mentions_any(text, identities)
+        has_issue = mentions_any(text, issue_terms)
+        if not has_principal and not has_issue:
+            reason = "mentions neither the principal nor the issue"
+        elif require_market and not mentions_any(text, MARKET_TERMS):
+            foreign = [m for m in FOREIGN_MARKERS if _norm(m) in _norm(text)]
+            reason = (f"not about this market ({foreign[0]})" if foreign
+                      else "not about this market")
+        else:
+            pool = (POOL_CORE if has_principal and has_issue
+                    else POOL_PRINCIPAL if has_principal else POOL_ISSUE)
+            document["evidence_pool"] = pool
+            pools[pool].append(document)
+            continue
+
+        reasons[reason] = reasons.get(reason, 0) + 1
+        if reason not in examples:
+            examples[reason] = (str(document.get("text") or document.get("title") or ""))[:120]
+
+    kept = sum(len(v) for v in pools.values())
+    return pools, {
+        "examined": len(corpus),
+        "kept": kept,
+        "dropped": len(corpus) - kept,
+        "pools": {name: len(items) for name, items in pools.items()},
+        "reasons": reasons,
+        "examples": examples,
+        "market_anchored": require_market,
+    }
+
+
 def filter_corpus(corpus: list[dict], identities, issue_terms,
                   require_market: bool) -> tuple[list[dict], dict]:
     """Split a corpus into what an analyst can actually use, and why the rest

@@ -388,7 +388,18 @@ def build_issue_map(
         publish("stage", "Nothing on topic — stopping before analysis.")
         return _nothing_on_topic(principal, issue, ws, we, mentions, acquisition, report)
 
-    publish("stage", f"Reading {len(mentions)} intersection sources…")
+    # How many of these actually name both halves. A map built entirely from
+    # background is a real result — "the public record does not connect these
+    # two" — but it must not be presented as if it were the same as a map built
+    # from documents that do.
+    pool_counts = (filtered.get("pools") or {})
+    core_count = pool_counts.get(relevance.POOL_CORE)
+    if core_count is not None:
+        publish("stage",
+                f"Reading {len(mentions)} sources — {core_count} name both, "
+                f"{len(mentions) - core_count} give the background around them…")
+    else:
+        publish("stage", f"Reading {len(mentions)} intersection sources…")
     digest = build_corpus_digest(label, mentions)
     publish("coverage", digest["coverage"])
     # Four analysts run at once; each publishes the map as it stands the moment
@@ -420,6 +431,16 @@ def build_issue_map(
         "evidence_sample": sample,
         "thin": digest["coverage"]["mentions_total"] == 0,
     }
+    if core_count == 0 and mentions:
+        # Said once, plainly, rather than left for the reader to infer from
+        # sections that quietly have nothing in them.
+        payload["intersection_gap"] = {
+            "read": len(mentions),
+            "note": (f"No document in this window names both “{principal}” and "
+                     f"“{issue}”. Everything below is each side's own record and "
+                     f"the actors around it — treat any connection between them "
+                     f"as unestablished until a source says otherwise."),
+        }
     if acquisition:
         # How the corpus was assembled travels with the map. A thin result has
         # to be distinguishable from a collection failure.
@@ -443,6 +464,29 @@ def build_issue_map(
     _publish_graph(principal, issue, analysis, payload["issue_framework"],
                    mentions, payload, publish)
     return payload
+
+
+#: How much of each pool an analyst reads. The intersection is the answer, so
+#: it is never crowded out; the two background pools exist to give the analyst
+#: enough of the world for the intersection to mean something, and to be the
+#: place buried older context is found.
+POOL_BUDGET = {
+    "core": 400,
+    "principal_side": 220,
+    "issue_side": 180,
+}
+
+
+def _blend_pools(pools: dict) -> list[dict]:
+    """One corpus, intersection first, each item still carrying which pool it
+    came from so the analyst is never guessing what a document is evidence of."""
+    def newest(items):
+        return sorted(items, key=lambda d: str(d.get("posted_at") or ""), reverse=True)
+
+    blended: list[dict] = []
+    for name, budget in POOL_BUDGET.items():
+        blended.extend(newest(pools.get(name) or [])[:budget])
+    return blended
 
 
 def _publish_graph(principal, issue, analysis, framework, mentions, payload, publish):
@@ -593,12 +637,23 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         issue_parts = decompose.decompose(issue)
         match_identities = relevance.merge_terms(identities, principal_parts["identities"])
         match_issue_terms = relevance.merge_terms(issue_terms, issue_parts["identities"])
-        corpus, relevance_report = relevance.filter_corpus(
+        # Sort into pools rather than gating on a hard AND. Demanding both
+        # halves in every document kept TWO articles out of hundreds for
+        # "Odious debt case by Okiya Omtatah" × "IMF", and five analysts then
+        # spent ten minutes reading two articles. The intersection still needs
+        # both; the background around it does not, and without that background
+        # there is nothing to find the intersection IN.
+        pools, relevance_report = relevance.partition_corpus(
             corpus, match_identities, match_issue_terms, require_market)
         relevance_report["matched_on"] = {
             "principal": match_identities[:6], "issue": match_issue_terms[:6]}
-        publish("stage", f"Kept {relevance_report['kept']} of "
-                         f"{relevance_report['examined']} documents that mention both terms…")
+        corpus = _blend_pools(pools)
+        counts = relevance_report["pools"]
+        publish("stage",
+                f"{counts[relevance.POOL_CORE]} documents on the intersection, "
+                f"{counts[relevance.POOL_PRINCIPAL]} on {principal_parts['names'][0] if principal_parts['names'] else 'the principal'}, "
+                f"{counts[relevance.POOL_ISSUE]} on the issue — "
+                f"{relevance_report['dropped']} set aside…")
 
         resolution = _resolve_intersection(db, subject, corpus)
         return corpus, {

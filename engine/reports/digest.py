@@ -57,8 +57,17 @@ def _chunk_mentions(mentions: list[dict], budget: int | None = None) -> list[lis
         e = m.get("engagement") or {}
         return sum(int(e.get(k) or 0) for k in ("views", "likes", "shares", "comments"))
 
-    comments = sorted((m for m in mentions if m.get("source_type") == "comment"), key=eng, reverse=True)
-    others = sorted((m for m in mentions if m.get("source_type") != "comment"), key=eng, reverse=True)
+    # Documents that name both halves of the question go first. Ordering by
+    # engagement alone buried the handful of items that actually establish the
+    # connection under a hundred background articles, in a later chunk that a
+    # failed call could take out entirely.
+    _POOL_RANK = {"core": 0, "principal_side": 1, "issue_side": 2}
+
+    def rank(m):
+        return (_POOL_RANK.get(m.get("evidence_pool"), 1), -eng(m))
+
+    comments = sorted((m for m in mentions if m.get("source_type") == "comment"), key=rank)
+    others = sorted((m for m in mentions if m.get("source_type") != "comment"), key=rank)
     ordered: list[dict] = []
     ci, pi = 0, 0
     while ci < len(comments) or pi < len(others):

@@ -87,7 +87,13 @@ def _render_mention(m: dict) -> str:
     budget = _mention_budget(m.get("source_type"))
     if len(text) > budget:
         text = text[:budget].rsplit(" ", 1)[0] + " …"
-    return f"[ref={ref} | {m.get('platform')} {m.get('source_type')} | @{m.get('author_handle')} | {date_s} | engagement={eng_score}] {text}"
+    # Which pool this document came from, when it was sorted into one. An
+    # analyst that cannot tell "both of them are in this article" from "this is
+    # only about him" will write a connection that nobody reported.
+    pool = m.get("evidence_pool")
+    pool_s = f" | evidence={pool}" if pool else ""
+    return (f"[ref={ref} | {m.get('platform')} {m.get('source_type')} | "
+            f"@{m.get('author_handle')} | {date_s} | engagement={eng_score}{pool_s}] {text}")
 
 
 # How much of the corpus the last analyst window actually held. A section built
@@ -680,6 +686,14 @@ ISSUE_PREAMBLE = """You are an intelligence analyst mapping the relationship bet
 {grounding}
 
 COMPLETENESS IS ALSO A DUTY. Leaving out something the digest DOES support is as much a failure as inventing something it doesn't. Work through the digest systematically and account for everything in it. Do not summarise; map.
+
+HOW THE DIGEST IS ASSEMBLED. Items are tagged with the pool they came from, and the tag says what the item can support:
+
+- `evidence=core` — the item names BOTH {principal} and {issue}. Only these can establish that the two are directly connected.
+- `evidence=principal_side` — about {principal} without {issue} in it. Their record, allies, methods and other fights. Use it for who they are and how they operate, NOT as proof of a link to {issue}.
+- `evidence=issue_side` — about {issue} without {principal} in it. Its history, its institutions, the other people in it. Use it for context and for the other actors, NOT as proof {principal} was involved.
+
+Never combine a principal_side item and an issue_side item into a claim that the two are connected. If the connection is real, a core item says so; if no core item says so, the honest finding is that the record does not connect them, and you should say that plainly rather than construct it.
 
 This is read by someone who will act on it. Write at the length the evidence justifies — a three-word entry is useless to them."""
 

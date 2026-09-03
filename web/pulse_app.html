@@ -168,7 +168,7 @@
 
 <div id="zenith">
   <nav class="nav"><div class="wrap">
-    <div class="brand"><svg class="mark" viewBox="0 0 100 62" width="26" height="17" fill="none" stroke="currentColor" stroke-width="4.2" stroke-linejoin="miter" aria-hidden="true"><path d="M4 60 L34 6 L64 60"/><path d="M17 60 L41 17 L64 60" opacity=".8"/><path d="M36 60 L58 22 L80 60" opacity=".65"/><path d="M52 60 L70 12 L96 60" opacity=".8"/></svg>Zenith<span class="tagline">powered by Zenith Intelligence</span></div>
+    <div class="brand"><svg class="mark" viewBox="0 0 100 62" width="26" height="17" fill="none" stroke="currentColor" stroke-width="4.2" stroke-linejoin="miter" aria-hidden="true"><path d="M4 60 L34 6 L64 60"/><path d="M17 60 L41 17 L64 60" opacity=".8"/><path d="M36 60 L58 22 L80 60" opacity=".65"/><path d="M52 60 L70 12 L96 60" opacity=".8"/></svg>Zenith<span class="tagline">Mũũgĩ</span></div>
     <div class="tabs" id="tabs"></div>
     <div class="status" id="status"><span class="sd"></span><span id="statusTxt">connecting…</span></div>
   </div></nav>
@@ -2461,6 +2461,14 @@
          <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:5px">${
            (d.queries||[]).slice(0,4).map(q=>'<span class="chip" style="font-size:11px">'+esc(q)+'</span>').join('')}</div>`)));
       host.appendChild(rp);
+    }
+    if(m.intersection_gap){
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+      c.innerHTML=`<div class="lbl" style="color:var(--amber)">The record does not connect these two</div>
+        <div style="font-size:14px;margin-top:8px">${esc(m.intersection_gap.note)}</div>
+        <div class="muted" style="font-size:12.5px;margin-top:6px">${fmt(m.intersection_gap.read)} documents read.</div>`;
+      host.appendChild(c);
     }
     if(it.verdict)host.appendChild(el('div','card glow',
       `<div class="lbl">Verdict</div><p style="margin:10px 0 0;font-size:15.5px">${esc(it.verdict)}</p>`));
