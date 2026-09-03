@@ -51,6 +51,12 @@
     backdrop-filter:blur(8px)}
   #zenith .card.glow{border-color:var(--line);box-shadow:0 0 0 1px rgba(56,189,248,.05),0 18px 50px -30px var(--glow)}
   #zenith .grid{display:grid;gap:14px}
+  /* A view is hidden by the `hidden` property when another tab is showing.
+     `[hidden]` only sets display:none at browser-default specificity, so any
+     rule that sets display — .grid does — wins, and BOTH views render, stacked
+     on one page. Views are kept alive so a run continues while the reader is
+     elsewhere; keeping them alive must not mean showing them all at once. */
+  #zenith [hidden]{display:none !important}
   #zenith .muted{color:var(--mut)}
   #zenith .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   #zenith label.fl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin:0 0 7px}
@@ -2203,9 +2209,15 @@
           const pm=job.partial_issue_map;
           if(!pm||!pm.intersection)return;
           // Four analysts land separately; re-render each time another section
-          // of the map arrives, not just on the first one.
+          // of the map arrives, not just on the first one. The research plan
+          // and the graph arrive on their own — they are not keys of the
+          // intersection, so watching the intersection alone left the plan
+          // invisible until the run finished.
           const filled=Object.keys(pm.intersection)
-            .filter(k=>{const v=pm.intersection[k];return v&&v.length;}).sort().join(',');
+            .filter(k=>{const v=pm.intersection[k];return v&&v.length;}).sort().join(',')
+            +'|'+((pm.research_plan||[]).length)
+            +'|'+(((pm.issue_graph||{}).stats||{}).edges||0)
+            +'|'+(pm.issue_framework?'fw':'');
           if(filled===lastFilled)return;
           lastFilled=filled;
           const y=window.scrollY;
@@ -2248,52 +2260,339 @@
       names and influence scores, and buries the reasoning in a hover tooltip
       truncated to 160 characters. That was fine when `relation` was two words.
       Now that it is a paragraph, the analysis has to have somewhere to live. */
+  /* ============================================================
+     ISSUE GRAPH — interactive, and wired to the same objects the
+     sections are rendered from.
+
+     Selecting a node filters the timeline, the actors and the evidence to
+     the items that node is actually connected to. A graph that looks good
+     and answers nothing is decoration; this one is a query interface over
+     the investigation.
+     ============================================================ */
+  const GRAPH_SELECTION = {node:null, listeners:[]};
+  function onGraphSelect(fn){ GRAPH_SELECTION.listeners.push(fn); }
+  function selectGraphNode(id){
+    GRAPH_SELECTION.node = (GRAPH_SELECTION.node===id) ? null : id;
+    GRAPH_SELECTION.listeners.forEach(fn=>{try{fn(GRAPH_SELECTION.node);}catch(e){}});
+  }
+
+  /* The map is re-rendered every time another analyst lands, so listeners
+     registered by the previous render are bound to DOM that is already gone.
+     Left to accumulate they fire against detached nodes and the selection
+     stops matching what is on the screen. Each render starts clean. */
+  function resetGraphSelection(){ GRAPH_SELECTION.node=null; GRAPH_SELECTION.listeners=[]; }
+
+  /** Labels of the nodes of one type that the selected node is actually
+      joined to, by the graph's own edges. Every section filters through this,
+      so the graph and the sections below it cannot disagree about what is
+      related to what — which is the whole difference between a map and a
+      picture of a map. Returns null when nothing is selected. */
+  function connectedLabels(graph,sel,type){
+    if(!sel)return null;
+    const g=graph||{};
+    const linked=new Set();
+    (g.edges||[]).forEach(e=>{ if(e.source===sel)linked.add(e.target);
+                               if(e.target===sel)linked.add(e.source); });
+    return new Set((g.nodes||[]).filter(n=>n.type===type&&linked.has(n.id))
+      .map(n=>String(n.label||'').toLowerCase()));
+  }
+  function selectedLabel(graph,sel){
+    const n=((graph||{}).nodes||[]).find(x=>x.id===sel);
+    return n?n.label:'';
+  }
+
+  function issueGraphCard(g){
+    resetGraphSelection();
+    if(!g||!(g.nodes||[]).length)return null;
+    const card=el('div','card');
+    const stats=g.stats||{};
+    card.appendChild(el('div','',`<div class="lbl">The map</div>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">
+        ${fmt(stats.nodes)} things found, ${fmt(stats.edges)} connections between them${
+          stats.isolated?` · ${fmt(stats.isolated)} not yet connected to anything`:''}.
+        Click a node to filter everything below to it. Scroll to zoom, drag to pan.</div>`));
+
+    // Type filters. An investigation with sixty sources and four people is
+    // unreadable until you can turn the sources off.
+    const active=new Set((g.legend||[]).map(l=>l.type));
+    const filters=el('div','row');filters.style.cssText='margin-top:10px;flex-wrap:wrap;gap:6px';
+    (g.legend||[]).forEach(l=>{
+      const b=el('button','chip');b.type='button';
+      b.style.cssText='cursor:pointer;border-color:'+l.color;
+      b.innerHTML=`<span style="color:${l.color}">●</span> ${esc(l.type.replace(/_/g,' '))} ${l.count}`;
+      b.onclick=()=>{ active.has(l.type)?active.delete(l.type):active.add(l.type);
+                      b.style.opacity=active.has(l.type)?'1':'.35'; draw(); };
+      filters.appendChild(b);
+    });
+    card.appendChild(filters);
+
+    const W=860,H=460;
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    svg.setAttribute('style','width:100%;height:460px;margin-top:12px;cursor:grab;'
+      +'background:rgba(255,255,255,.02);border-radius:12px');
+    card.appendChild(svg);
+    const detail=el('div','');card.appendChild(detail);
+
+    // Deterministic layout: the principal and the issue anchored, everything
+    // else on rings by type. Repeatable, so the same investigation always
+    // draws the same way and a reader can build a mental picture of it.
+    const view={x:0,y:0,k:1};
+    const pos={};
+    function layout(nodes){
+      const rings={principal:[],issue:[],person:[],organization:[],event:[],
+                   narrative:[],sub_issue:[],source:[]};
+      nodes.forEach(n=>(rings[n.type]||rings.source).push(n));
+      const place=(list,cx,cy,r)=>list.forEach((n,i)=>{
+        const a=(i/Math.max(1,list.length))*Math.PI*2 - Math.PI/2;
+        pos[n.id]={x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r};
+      });
+      (rings.principal||[]).forEach(n=>pos[n.id]={x:W*0.30,y:H/2});
+      (rings.issue||[]).forEach(n=>pos[n.id]={x:W*0.70,y:H/2});
+      place(rings.person,W*0.30,H/2,150);
+      place(rings.organization,W*0.70,H/2,150);
+      place(rings.narrative,W/2,H*0.22,120);
+      place(rings.event,W/2,H*0.80,150);
+      place(rings.sub_issue,W*0.70,H/2,90);
+      place(rings.source,W/2,H/2,215);
+    }
+
+    function neighbours(id){
+      const set=new Set([id]);
+      (g.edges||[]).forEach(e=>{ if(e.source===id)set.add(e.target);
+                                 if(e.target===id)set.add(e.source); });
+      return set;
+    }
+
+    function draw(){
+      const nodes=(g.nodes||[]).filter(n=>active.has(n.type));
+      const ids=new Set(nodes.map(n=>n.id));
+      const edges=(g.edges||[]).filter(e=>ids.has(e.source)&&ids.has(e.target));
+      layout(nodes);
+      const sel=GRAPH_SELECTION.node;
+      const near=sel?neighbours(sel):null;
+      const t=`translate(${view.x},${view.y}) scale(${view.k})`;
+      const parts=[`<g transform="${t}">`];
+      edges.forEach(e=>{
+        const a=pos[e.source],b=pos[e.target];if(!a||!b)return;
+        const lit=!sel||(near.has(e.source)&&near.has(e.target));
+        const dash=e.confidence==='inferred'?'stroke-dasharray="5 4"':'';
+        parts.push(`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" ${dash}
+          stroke="${lit?'rgba(148,163,184,.75)':'rgba(148,163,184,.12)'}"
+          stroke-width="${Math.min(4,1+(e.weight||1)*0.5)}"><title>${esc(e.relation)} · ${esc(e.confidence)}</title></line>`);
+      });
+      nodes.forEach(n=>{
+        const p=pos[n.id];if(!p)return;
+        const lit=!sel||near.has(n.id);
+        const r=n.type==='principal'||n.type==='issue'?15:Math.min(13,7+(n.weight||1));
+        parts.push(`<g class="gnode" data-id="${n.id}" style="cursor:pointer;opacity:${lit?1:.2}">
+          <circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${n.color}"
+            stroke="${sel===n.id?'#fff':'rgba(0,0,0,.35)'}" stroke-width="${sel===n.id?3:1.5}"/>
+          <text x="${p.x}" y="${p.y-r-6}" text-anchor="middle" font-size="11"
+            fill="rgba(226,232,240,.92)">${esc(String(n.label).slice(0,26))}</text>
+          <title>${esc(n.type)}: ${esc(n.label)}</title></g>`);
+      });
+      parts.push('</g>');
+      svg.innerHTML=parts.join('');
+      svg.querySelectorAll('.gnode').forEach(el2=>{
+        el2.addEventListener('click',ev=>{ev.stopPropagation();selectGraphNode(el2.dataset.id);});
+      });
+    }
+
+    // Zoom, pan, and clicking empty space to clear the selection.
+    svg.addEventListener('wheel',e=>{e.preventDefault();
+      view.k=Math.max(0.4,Math.min(3,view.k*(e.deltaY<0?1.12:0.89)));draw();},{passive:false});
+    let dragging=null;
+    svg.addEventListener('mousedown',e=>{dragging={x:e.clientX-view.x,y:e.clientY-view.y};svg.style.cursor='grabbing';});
+    window.addEventListener('mouseup',()=>{dragging=null;svg.style.cursor='grab';});
+    svg.addEventListener('mousemove',e=>{if(!dragging)return;
+      view.x=e.clientX-dragging.x;view.y=e.clientY-dragging.y;draw();});
+    svg.addEventListener('click',()=>{ if(GRAPH_SELECTION.node) selectGraphNode(GRAPH_SELECTION.node); });
+
+    // Selecting a node shows what it is, what it connects to, and its evidence.
+    onGraphSelect(id=>{
+      draw();
+      detail.innerHTML='';
+      if(!id)return;
+      const node=(g.nodes||[]).find(n=>n.id===id);if(!node)return;
+      const links=(g.edges||[]).filter(e=>e.source===id||e.target===id);
+      const box=el('div','mentr');box.style.marginTop='12px';
+      box.innerHTML=`<div class="row" style="justify-content:space-between">
+          <b style="font-size:15px;color:${node.color}">${esc(node.label)}</b>
+          <span class="chip">${esc(node.type.replace(/_/g,' '))}</span></div>
+        ${node.detail?`<div style="font-size:13.5px;margin-top:6px;white-space:pre-wrap">${esc(node.detail)}</div>`:''}
+        <div class="lbl" style="margin-top:10px">Connected to (${links.length})</div>
+        ${links.slice(0,10).map(e=>{
+          const other=(g.nodes||[]).find(n=>n.id===(e.source===id?e.target:e.source));
+          return `<div class="muted" style="font-size:12.5px;margin-top:3px">
+            ${esc(e.relation)} → <b>${esc(other?other.label:'?')}</b>
+            <span class="chip" style="margin-left:6px">${esc(e.confidence)}</span></div>`;
+        }).join('')}`;
+      const rows=(node.evidence||[]).concat(
+        ...links.map(e=>e.evidence||[])).filter(r=>r&&(r.text||r.url)).slice(0,8);
+      if(rows.length){
+        box.appendChild(el('div','lbl','Evidence'));
+        rows.forEach(r=>box.appendChild(el('div','',
+          `<div class="qt">${esc(r.text||'')}${r.url?`<span class="qt-ref"><a class="src-link"
+            href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">source ↗</a></span>`:''}</div>`)));
+      }
+      detail.appendChild(box);
+    });
+
+    draw();
+    return card;
+  }
+
   function intersectionDetail(host,m){
     const it=m.intersection||{};
+    // The graph goes first: it is the map of everything found, and every
+    // section below it is one slice of the same data.
+    const graphCard=issueGraphCard(m.issue_graph);
+    if(graphCard)host.appendChild(graphCard);
+    if(m.research_plan&&m.research_plan.length){
+      const rp=el('div','card');
+      rp.innerHTML=`<div class="lbl">How this was researched</div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px">The question was broken into
+        ${m.research_plan.length} dimensions and searched separately — one query for the pair as
+        asked finds only what is already famous.</div>`;
+      m.research_plan.forEach(d=>rp.appendChild(el('div','mentr',
+        `<b style="font-size:13.5px">${esc(String(d.dimension).replace(/_/g,' '))}</b>
+         <div class="muted" style="font-size:12.5px;margin-top:3px">${esc(d.why||'')}</div>
+         <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:5px">${
+           (d.queries||[]).slice(0,4).map(q=>'<span class="chip" style="font-size:11px">'+esc(q)+'</span>').join('')}</div>`)));
+      host.appendChild(rp);
+    }
     if(it.verdict)host.appendChild(el('div','card glow',
       `<div class="lbl">Verdict</div><p style="margin:10px 0 0;font-size:15.5px">${esc(it.verdict)}</p>`));
     if(it.involvement)host.appendChild(el('div','card',
       `<div class="lbl">Involvement</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${esc(it.involvement)}</p>`));
 
+    // What the issue breaks into. An investigation that cannot name the
+    // separate fights inside one headline is a map of one thing.
+    const subs=(it.sub_issues||[]).filter(x=>x&&x.sub_issue);
+    if(subs.length){
+      const c=el('div','card');const shead=el('div','');const sbody=el('div','');
+      c.appendChild(shead);c.appendChild(sbody);
+      const paintSubs=sel=>{
+        const keep=connectedLabels(m.issue_graph,sel,'sub_issue');
+        let shown=subs,note=subs.length+(subs.length===1?' sub-issue':' sub-issues')
+          +' inside this one';
+        if(keep&&keep.size){
+          shown=subs.filter(x=>keep.has(String(x.sub_issue).toLowerCase()));
+          note=shown.length+' of '+subs.length+' — connected to “'+selectedLabel(m.issue_graph,sel)+'”';
+        }else if(keep){
+          note='no sub-issue is connected to “'+selectedLabel(m.issue_graph,sel)+'” · showing all';
+        }
+        shead.innerHTML=`<div class="lbl">Sub-issues</div><div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
+        sbody.innerHTML='';
+        (shown.length?shown:subs).forEach(x=>sbody.appendChild(el('div','mentr',
+          `<div class="row" style="justify-content:space-between;align-items:flex-start">
+             <b style="font-size:15px">${esc(x.sub_issue)}</b>
+             ${x.root?'<span class="pill amber">root</span>':''}</div>
+           ${x.question?`<div class="muted" style="font-size:13px;margin-top:4px">What is contested: ${esc(x.question)}</div>`:''}
+           ${(x.actors||[]).length?`<div class="row" style="margin-top:6px;flex-wrap:wrap;gap:5px">${
+             x.actors.map(a=>'<span class="chip">'+esc(a)+'</span>').join('')}</div>`:''}
+           ${x.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${esc(x.detail)}</div>`:''}`)));
+      };
+      paintSubs(null);onGraphSelect(paintSubs);
+      host.appendChild(c);
+    }
+
     const narr=(it.linking_narratives||[]).filter(n=>n&&n.narrative);
     if(narr.length){
-      const c=el('div','card');
-      c.innerHTML=`<div class="lbl">Linking narratives</div><div class="muted" style="font-size:13px;margin-top:4px">${narr.length} storylines connect them</div>`;
-      narr.forEach(n=>c.appendChild(el('div','mentr',
-        `<b style="font-size:15px">${esc(n.narrative)}</b>
-         <div class="muted" style="font-size:13px;margin-top:4px">${esc(n.framing||'')}${n.pushed_by?' · <span style="color:var(--sky2)">pushed by '+esc(n.pushed_by)+'</span>':''}</div>
-         ${n.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${esc(n.detail)}</div>`:''}`)));
+      const c=el('div','card');const nhead=el('div','');const nbody=el('div','');
+      c.appendChild(nhead);c.appendChild(nbody);
+      const paintNarr=sel=>{
+        const keep=connectedLabels(m.issue_graph,sel,'narrative');
+        let shown=narr,note=narr.length+(narr.length===1?' storyline connects them':' storylines connect them');
+        if(keep&&keep.size){
+          shown=narr.filter(n=>keep.has(String(n.narrative).toLowerCase()));
+          note=shown.length+' of '+narr.length+' — carried by “'+selectedLabel(m.issue_graph,sel)+'”';
+        }else if(keep){
+          note='no storyline is connected to “'+selectedLabel(m.issue_graph,sel)+'” · showing all';
+        }
+        nhead.innerHTML=`<div class="lbl">Linking narratives</div><div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
+        nbody.innerHTML='';
+        (shown.length?shown:narr).forEach(n=>nbody.appendChild(el('div','mentr',
+          `<b style="font-size:15px">${esc(n.narrative)}</b>
+           <div class="muted" style="font-size:13px;margin-top:4px">${esc(n.framing||'')}${n.pushed_by?' · <span style="color:var(--sky2)">pushed by '+esc(n.pushed_by)+'</span>':''}</div>
+           ${n.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${esc(n.detail)}</div>`:''}`)));
+      };
+      paintNarr(null);onGraphSelect(paintNarr);
       host.appendChild(c);
     }
 
     const actors=(it.key_actors||[]).filter(a=>a&&a.name)
       .slice().sort((a,b)=>(b.influence||0)-(a.influence||0));
     if(actors.length){
-      const c=el('div','card');
-      c.innerHTML=`<div class="lbl">Key actors</div><div class="muted" style="font-size:13px;margin-top:4px">${actors.length} people and organisations at this intersection</div>`;
-      actors.forEach(a=>{
-        const pos=String(a.position||'neutral').toLowerCase();
-        const tone=pos==='for'?'pos':pos==='against'?'neg':'sky';
-        c.appendChild(el('div','mentr',
-          `<div class="row" style="justify-content:space-between;align-items:flex-start">
-             <div><b style="font-size:15px">${esc(a.name)}</b>
-               ${a.entity_type?`<span class="chip" style="margin-left:8px">${esc(a.entity_type)}</span>`:''}</div>
-             <div class="row" style="gap:6px"><span class="pill ${tone}">${esc(pos)}</span>
-               ${a.influence!=null?`<span class="chip">influence ${esc(a.influence)}</span>`:''}</div></div>
-           ${a.relation?`<div style="font-size:14px;margin-top:8px">${esc(a.relation)}</div>`:''}`));
-      });
+      const c=el('div','card');const ahead=el('div','');const abody=el('div','');
+      c.appendChild(ahead);c.appendChild(abody);
+      const paintActors=sel=>{
+        const people=connectedLabels(m.issue_graph,sel,'person');
+        const orgs=connectedLabels(m.issue_graph,sel,'organization');
+        const keep=sel?new Set([...(people||[]),...(orgs||[])]):null;
+        let shown=actors,note=actors.length+' people and organisations at this intersection';
+        if(keep&&keep.size){
+          shown=actors.filter(a=>keep.has(String(a.name).toLowerCase()));
+          note=shown.length+' of '+actors.length+' — connected to “'+selectedLabel(m.issue_graph,sel)+'”';
+        }else if(keep){
+          note='no actor is connected to “'+selectedLabel(m.issue_graph,sel)+'” · showing all';
+        }
+        ahead.innerHTML=`<div class="lbl">Key actors</div><div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
+        abody.innerHTML='';
+        (shown.length?shown:actors).forEach(a=>{
+          const pos=String(a.position||'neutral').toLowerCase();
+          const tone=pos==='for'?'pos':pos==='against'?'neg':'sky';
+          abody.appendChild(el('div','mentr',
+            `<div class="row" style="justify-content:space-between;align-items:flex-start">
+               <div><b style="font-size:15px">${esc(a.name)}</b>
+                 ${a.entity_type?`<span class="chip" style="margin-left:8px">${esc(a.entity_type)}</span>`:''}</div>
+               <div class="row" style="gap:6px"><span class="pill ${tone}">${esc(pos)}</span>
+                 ${a.influence!=null?`<span class="chip">influence ${esc(a.influence)}</span>`:''}</div></div>
+             ${a.relation?`<div style="font-size:14px;margin-top:8px">${esc(a.relation)}</div>`:''}`));
+        });
+      };
+      paintActors(null);onGraphSelect(paintActors);
       host.appendChild(c);
     }
 
     const tl=(it.timeline||[]).filter(t=>t&&(t.event||t.when||t.date));
     if(tl.length){
       const c=el('div','card');
-      c.innerHTML=`<div class="lbl">Timeline</div><div class="muted" style="font-size:13px;margin-top:4px">${tl.length} moments, oldest first</div>`;
-      tl.forEach(t=>c.appendChild(el('div','mentr',
-        `<div class="row" style="gap:10px;align-items:center">
-           <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
-           ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
-         <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`)));
+      const head=el('div','');c.appendChild(head);
+      const body=el('div','');c.appendChild(body);
+      // Selecting a node in the graph filters this to the moments that node is
+      // connected to. That connection is the graph's own edges, so the two
+      // views can never disagree about what is related to what.
+      const paint=(sel)=>{
+        let shown=tl, note='oldest first';
+        if(sel){
+          const g=m.issue_graph||{};
+          const node=(g.nodes||[]).find(n=>n.id===sel);
+          const linked=new Set();
+          (g.edges||[]).forEach(e=>{ if(e.source===sel)linked.add(e.target);
+                                     if(e.target===sel)linked.add(e.source); });
+          const eventLabels=new Set((g.nodes||[])
+            .filter(n=>n.type==='event'&&linked.has(n.id))
+            .map(n=>String(n.label).toLowerCase()));
+          if(eventLabels.size){
+            shown=tl.filter(t=>[...eventLabels].some(l=>String(t.event||'').toLowerCase().startsWith(l.slice(0,40))));
+            note=`${shown.length} of ${tl.length} — connected to “${node?node.label:''}”`;
+          } else {
+            note=`no moments connected to “${node?node.label:''}” · showing all`;
+          }
+        }
+        head.innerHTML=`<div class="lbl">Timeline</div>
+          <div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
+        body.innerHTML='';
+        (shown.length?shown:tl).forEach(t=>body.appendChild(el('div','mentr',
+          `<div class="row" style="gap:10px;align-items:center">
+             <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
+             ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
+           <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`)));
+      };
+      paint(null);
+      onGraphSelect(paint);
       host.appendChild(c);
     }
 
@@ -2302,12 +2601,26 @@
 
     const ev=(m.evidence_sample||[]).filter(e=>e&&e.text);
     if(ev.length){
-      const c=el('div','card');c.innerHTML='<div class="lbl">Evidence sample</div>';
-      ev.forEach(e=>c.appendChild(el('div','mentr',
-        `<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(e.platform||'')}</span>
-           <span class="muted">${esc(String(e.posted_at||'').slice(0,10))}</span></div>
-         <div style="font-size:14px;margin-top:6px">${esc(e.text)}</div>
-         ${e.url?`<div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(e.url)}</div>`:''}`)));
+      const c=el('div','card');const ehead=el('div','');const ebody=el('div','');
+      c.appendChild(ehead);c.appendChild(ebody);
+      // Source nodes are labelled by outlet, so selecting one answers
+      // "what did this outlet actually carry" from the same edges.
+      const paintEv=sel=>{
+        const keep=connectedLabels(m.issue_graph,sel,'source');
+        let shown=ev,note=ev.length+(ev.length===1?' document':' documents');
+        if(keep&&keep.size){
+          shown=ev.filter(e=>keep.has(String(e.platform||'').toLowerCase()));
+          note=shown.length+' of '+ev.length+' — carried where “'+selectedLabel(m.issue_graph,sel)+'” appears';
+        }
+        ehead.innerHTML=`<div class="lbl">Evidence sample</div><div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
+        ebody.innerHTML='';
+        (shown.length?shown:ev).forEach(e=>ebody.appendChild(el('div','mentr',
+          `<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(e.platform||'')}</span>
+             <span class="muted">${esc(String(e.posted_at||'').slice(0,10))}</span></div>
+           <div style="font-size:14px;margin-top:6px">${esc(e.text)}</div>
+           ${e.url?`<div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all"><a class="src-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.url)}</a></div>`:''}`)));
+      };
+      paintEv(null);onGraphSelect(paintEv);
       host.appendChild(c);
     }
   }

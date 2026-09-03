@@ -92,6 +92,22 @@ def anchor_query(query: str, market: str = "Kenya") -> str:
     return f'{query} {market}'
 
 
+def merge_terms(*groups) -> list[str]:
+    """Every distinct term from several sources, longest first.
+
+    Longest first matters: a document mentioning "Okiya Omtatah" should match
+    on the full name before the filter falls back to a looser fragment."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for group in groups:
+        for term in group or []:
+            key = str(term).strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                out.append(str(term).strip())
+    return sorted(out, key=len, reverse=True)
+
+
 def mentions_any(text: str, terms) -> bool:
     haystack = _norm(text)
     return any(_norm(t) and _norm(t) in haystack for t in terms)

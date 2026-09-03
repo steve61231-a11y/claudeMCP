@@ -81,11 +81,12 @@ def test_issue_map_prompt_asks_for_every_actor():
     assert "80-200 words" in analysts.ISSUE_TIMELINE_PROMPT
 
 
-def test_the_issue_map_is_four_analysts_not_one_call():
+def test_the_issue_map_is_one_analyst_per_section_not_one_call():
     """15-40 actors at 40-120 words each plus 10-30 timeline entries at 80-200
     words each does not fit in one response on any backend, so a single call
     silently rations. Each section gets its own full budget instead."""
-    assert set(analysts.ISSUE_SECTIONS) == {"position", "actors", "timeline", "narratives"}
+    assert set(analysts.ISSUE_SECTIONS) == {"position", "actors", "timeline",
+                                            "narratives", "sub_issues"}
     covered = {key for _, keys in analysts.ISSUE_SECTIONS.values() for key in keys}
     assert covered == set(analysts._ISSUE_EMPTY)
 
@@ -101,6 +102,8 @@ def test_a_failed_section_costs_only_that_section(monkeypatch):
             return {"timeline": [{"when": "2026", "date": None, "event": "something happened"}]}
         if "STORYLINE" in prompt:
             return {"linking_narratives": [{"narrative": "n", "framing": "f", "pushed_by": "p"}]}
+        if "SUB-ISSUES" in prompt:
+            return {"sub_issues": [{"sub_issue": "s", "question": "q", "root": True}]}
         return {"involvement": "i", "tension_or_risk": "t", "verdict": "v"}
 
     monkeypatch.setattr(analysts.llm, "call_json", flaky)
@@ -111,7 +114,8 @@ def test_a_failed_section_costs_only_that_section(monkeypatch):
     assert out["verdict"] == "v"            # the ones that didn't
     assert len(out["timeline"]) == 1
     assert len(out["linking_narratives"]) == 1
-    assert calls["n"] == 4
+    assert len(out["sub_issues"]) == 1
+    assert calls["n"] == 5
 
 
 def test_map_step_forbids_omission():

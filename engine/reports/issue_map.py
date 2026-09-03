@@ -25,7 +25,7 @@ from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
 from engine.ingestion.gdelt_connector import GdeltConnector
-from engine.reports import relevance
+from engine.reports import decompose, issue_graph, relevance
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -424,10 +424,36 @@ def build_issue_map(
         # How the corpus was assembled travels with the map. A thin result has
         # to be distinguishable from a collection failure.
         payload["acquisition"] = acquisition
+
+    # Draw the graph as soon as the intersection lands, before the framework —
+    # which is the slowest call in the run. It costs nothing but local work, and
+    # it means the reader gets the map minutes earlier instead of watching a
+    # stage line. It is rebuilt below once the framework's contours exist.
+    _publish_graph(principal, issue, analysis, None, mentions, payload, publish)
+
     payload["issue_framework"] = _issue_framework(principal, issue, payload, analysis,
                                                   desired_outcome=desired_outcome)
     publish("issue_framework", payload["issue_framework"])
+
+    # One graph over everything the investigation found, built from the SAME
+    # objects the sections are rendered from — so selecting a node can filter
+    # the timeline, the actors and the evidence to the same underlying items.
+    # A separate, prettier graph derived from nothing is the disconnected
+    # spiderweb this is explicitly not.
+    _publish_graph(principal, issue, analysis, payload["issue_framework"],
+                   mentions, payload, publish)
     return payload
+
+
+def _publish_graph(principal, issue, analysis, framework, mentions, payload, publish):
+    """Build the graph and hand it to the reader. Never at the cost of the map:
+    a view that fails is a missing view, not a failed investigation."""
+    try:
+        payload["issue_graph"] = issue_graph.build(
+            principal, issue, analysis, framework, mentions)
+        publish("issue_graph", payload["issue_graph"])
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("issue_graph", exc)
 
 
 #: Below this many on-topic documents, a corpus that was heavily filtered has
@@ -518,6 +544,23 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         if relevance.needs_market_anchor(principal, issue):
             discovery = [relevance.anchor_query(q) for q in discovery]
             publish("stage", "Generic terms — anchoring every query to Kenya…")
+
+        # An issue map is not one search. "Okiya Omtatah × IMF" is a question
+        # about a person, an institution, a legal case, a history and a set of
+        # opponents, and asking a search engine the whole sentence finds none
+        # of it. Add a query per research dimension: background on each half,
+        # the conflict, the institutions with formal power, and older material
+        # that a recency-ranked search buries.
+        dimensions = decompose.research_dimensions(principal, issue)
+        dimension_queries = [q for d in dimensions for q in d["queries"]]
+        if relevance.needs_market_anchor(principal, issue):
+            dimension_queries = [relevance.anchor_query(q) for q in dimension_queries]
+        discovery = relevance.merge_terms(discovery, dimension_queries)
+        publish("stage", f"{len(dimensions)} research dimensions, "
+                         f"{len(discovery)} queries — searching current and historical…")
+        publish("research_plan", [
+            {"dimension": d["dimension"], "why": d["why"], "queries": d["queries"]}
+            for d in dimensions])
         publish("stage", f"Searching {len(identities)} name variants × "
                          f"{len(issue_terms)} issue terms across every source…")
         fresh = acquire_intersection(principal, issue, ws, we,
@@ -541,8 +584,19 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # a run was ever checked — which is how 370 documents of American local
         # news reached the analysts for a Kenyan "senate × forestry" mapping.
         require_market = relevance.needs_market_anchor(principal, issue)
+        # Match on the NAMES inside the boxes, not the boxes as typed. A
+        # principal of "Odious debt case by Okiya Omtatah" is a claim with a
+        # person inside it; demanding the whole phrase discarded an interview
+        # headlined "Okiya Omtatah: The Truth Behind Kenya's Debt and the IMF
+        # Fall-out" for not mentioning the principal.
+        principal_parts = decompose.decompose(principal)
+        issue_parts = decompose.decompose(issue)
+        match_identities = relevance.merge_terms(identities, principal_parts["identities"])
+        match_issue_terms = relevance.merge_terms(issue_terms, issue_parts["identities"])
         corpus, relevance_report = relevance.filter_corpus(
-            corpus, identities, issue_terms, require_market)
+            corpus, match_identities, match_issue_terms, require_market)
+        relevance_report["matched_on"] = {
+            "principal": match_identities[:6], "issue": match_issue_terms[:6]}
         publish("stage", f"Kept {relevance_report['kept']} of "
                          f"{relevance_report['examined']} documents that mention both terms…")
 

@@ -759,16 +759,35 @@ Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY:
  {{"narrative":"...","framing":"...","pushed_by":"...","detail":"..."}}]}}"""
 
 
+ISSUE_SUB_ISSUES_PROMPT = ISSUE_PREAMBLE + """
+
+Your section: the SUB-ISSUES the issue actually breaks into — typically **4-10**. An issue at this scale is never one argument; it is a bundle of separate fights that happen to share a name.
+
+A sub-issue is a distinct contested question, not a topic label. "Debt transparency" is a topic; "whether the loan agreements can be withheld from Parliament" is a sub-issue — someone is on each side of it.
+
+For each: the sub-issue, a `question` stating what is actually contested, `root` set to true if the other sub-issues follow from it, `actors` naming who is on it, and `detail` of **80-200 words** on how it shows up in the sources.""" + ISSUE_DIGEST_TAIL + """
+Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY:
+{{"sub_issues":[
+ {{"sub_issue":"...","question":"...","root":false,"actors":["..."],"detail":"80-200 words..."}},
+ {{"sub_issue":"...","question":"...","root":true,"actors":["..."],"detail":"..."}},
+ {{"sub_issue":"...","question":"...","root":false,"actors":["..."],"detail":"..."}},
+ {{"sub_issue":"...","question":"...","root":false,"actors":["..."],"detail":"..."}}]}}"""
+
+
 ISSUE_SECTIONS = {
     "position": (ISSUE_POSITION_PROMPT, ("involvement", "tension_or_risk", "verdict")),
     "actors": (ISSUE_ACTORS_PROMPT, ("key_actors",)),
     "timeline": (ISSUE_TIMELINE_PROMPT, ("timeline",)),
     "narratives": (ISSUE_NARRATIVES_PROMPT, ("linking_narratives",)),
+    # An issue map that cannot say what the issue breaks into is a map of one
+    # thing. This runs in the same parallel pool as the other four, so it costs
+    # a call, not wall time.
+    "sub_issues": (ISSUE_SUB_ISSUES_PROMPT, ("sub_issues",)),
 }
 
 _ISSUE_EMPTY = {
     "involvement": "", "linking_narratives": [], "key_actors": [],
-    "timeline": [], "tension_or_risk": "", "verdict": "",
+    "timeline": [], "tension_or_risk": "", "verdict": "", "sub_issues": [],
 }
 
 
@@ -810,7 +829,7 @@ def analyze_issue_intersection(
         for future in as_completed(futures):
             name, values = future.result()
             for key, value in values.items():
-                if key in ("key_actors", "timeline", "linking_narratives"):
+                if key in ("key_actors", "timeline", "linking_narratives", "sub_issues"):
                     result[key] = [v for v in (value or []) if isinstance(v, dict)]
                 else:
                     result[key] = value or ""
