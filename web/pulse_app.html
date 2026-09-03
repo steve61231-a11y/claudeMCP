@@ -2310,16 +2310,35 @@
     return n?n.label:'';
   }
 
+  //: Below this, a graph is decoration. Four dots and two lines tell a reader
+  //: nothing the actor list did not already say, and drawing it anyway is how
+  //: a thin result comes to look like an analytical one.
+  const GRAPH_MIN_NODES=6, GRAPH_MIN_EDGES=5;
+
   function issueGraphCard(g){
     resetGraphSelection();
     if(!g||!(g.nodes||[]).length)return null;
+    const st=g.stats||{};
+    if((st.nodes||0)<GRAPH_MIN_NODES||(st.edges||0)<GRAPH_MIN_EDGES){
+      return el('div','card',`<div class="lbl">The map</div>
+        <div class="muted" style="font-size:13px;margin-top:4px">Too little connected
+        material to draw a map worth reading — ${fmt(st.nodes||0)}
+        ${(st.nodes||0)===1?'thing':'things'} and ${fmt(st.edges||0)}
+        ${(st.edges||0)===1?'connection':'connections'}. The sections above are the whole of what
+        was found; a diagram of them would add a picture, not a finding.</div>`);
+    }
     const card=el('div','card');
     const stats=g.stats||{};
     card.appendChild(el('div','',`<div class="lbl">The map</div>
       <div class="muted" style="font-size:12.5px;margin-top:4px">
         ${fmt(stats.nodes)} things found, ${fmt(stats.edges)} connections between them${
           stats.isolated?` · ${fmt(stats.isolated)} not yet connected to anything`:''}.
-        Click a node to filter everything below to it. Scroll to zoom, drag to pan.</div>`));
+        Click a node to filter everything below to it. Scroll to zoom, drag to pan.</div>
+      <div class="muted" style="font-size:12px;margin-top:6px">
+        <b style="color:var(--ink)">Solid line</b> — a source says these two are connected.
+        <b style="color:var(--ink);margin-left:8px">Dotted line</b> — they co-occur in the
+        record but nothing states the link. Hover any line for the relationship and its
+        evidence.</div>`));
 
     // Type filters. An investigation with sixty sources and four people is
     // unreadable until you can turn the sources off.
@@ -2454,10 +2473,12 @@
 
   function intersectionDetail(host,m){
     const it=m.intersection||{};
-    // The graph goes first: it is the map of everything found, and every
-    // section below it is one slice of the same data.
+    // The graph is a NAVIGATION AID over the findings, not the findings. Put
+    // first, it was the first thing on the page — circles and dotted lines
+    // where the answer should be. It is built here (so its listeners are
+    // registered before the sections that follow subscribe to them) and
+    // appended at the bottom, under everything it filters.
     const graphCard=issueGraphCard(m.issue_graph);
-    if(graphCard)host.appendChild(graphCard);
     if(m.research_plan&&m.research_plan.length){
       const rp=el('div','card');
       rp.innerHTML=`<div class="lbl">How this was researched</div>
@@ -2489,6 +2510,24 @@
         `<div class="lbl">Discovery sweep</div>
          <div class="muted" style="font-size:13px;margin-top:4px">${fmt(disc.queries)} queries returned
          ${fmt(disc.documents)} full-text documents.</div>`));
+    }
+    // Sections the model never wrote. Counting is not analysis and the reader
+    // has to be told which is which — an unmarked derived section is a lie
+    // about how much work was done.
+    const dv=(it.derived_sections||[]);
+    if(dv.length){
+      const label={key_actors:'Key actors',timeline:'Timeline',
+                   linking_narratives:'Linking narratives'};
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+      c.innerHTML=`<div class="lbl" style="color:var(--amber)">Counted, not read</div>
+        <div style="font-size:14px;margin-top:8px">The analyst did not return
+        ${dv.map(k=>esc(label[k]||k)).join(', ')}. What you see there was extracted from the
+        documents by counting names, dates and recurring terms — no model read it.</div>
+        <div class="muted" style="font-size:12.5px;margin-top:6px">Stances, roles and
+        storylines in those sections are <b>not established</b>. Everything still links to
+        the document it came from.</div>`;
+      host.appendChild(c);
     }
     if(m.intersection_gap){
       const c=el('div','card');
@@ -2634,6 +2673,8 @@
 
     if(it.tension_or_risk)host.appendChild(el('div','card',
       `<div class="lbl" style="color:var(--amber)">Tension / risk</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${esc(it.tension_or_risk)}</p>`));
+
+    if(graphCard)host.appendChild(graphCard);
 
     const ev=(m.evidence_sample||[]).filter(e=>e&&e.text);
     if(ev.length){

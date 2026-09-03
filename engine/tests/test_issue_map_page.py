@@ -134,29 +134,29 @@ def mapped():
             page.fill("#is", "International Monetary Fund (IMF)")
             page.click("#mrun")
             page.wait_for_selector(".gnode", timeout=15000)
-            yield page, errors, visible
+            yield page, errors, visible, browser
             browser.close()
     finally:
         srv.shutdown()
 
 
 def test_switching_to_issue_map_replaces_the_workspace(mapped):
-    _page, _errors, visible = mapped
+    _page, _errors, visible, _b = mapped
     assert visible == 1, "views stacked instead of replacing each other"
 
 
 def test_the_page_runs_without_throwing(mapped):
-    _page, errors, _ = mapped
+    _page, errors, _v, _b = mapped
     assert errors == []
 
 
 def test_the_graph_draws_every_node(mapped):
-    page, _e, _v = mapped
+    page, _e, _v, _b = mapped
     assert page.locator(".gnode").count() == len(_map()["issue_graph"]["nodes"])
 
 
 def test_the_research_plan_is_shown(mapped):
-    page, _e, _v = mapped
+    page, _e, _v, _b = mapped
     assert "how this was researched" in page.inner_text("body").lower()
 
 
@@ -167,8 +167,23 @@ def test_the_issue_is_broken_into_sub_issues(mapped):
     assert "what is contested" in body
 
 
+def test_the_answer_comes_before_the_diagram(mapped):
+    """The graph is a navigation aid over the findings, not the findings.
+    Placed first it was the first thing on the page: circles and dotted lines
+    where the verdict should be."""
+    page, _e, _v, _b = mapped
+    body = page.inner_text("body").lower()
+    assert body.index("verdict") < body.index("the map"), \
+        "the diagram is above the analysis"
+
+
+def test_the_line_styles_are_explained_on_the_page(mapped):
+    body = mapped[0].inner_text("body").lower()
+    assert "solid line" in body and "dotted line" in body
+
+
 def test_selecting_a_node_synchronises_every_section(mapped):
-    page, _e, _v = mapped
+    page, _e, _v, _b = mapped
     before = page.evaluate(SECTIONS)
     labels = page.evaluate(
         "() => Array.from(document.querySelectorAll('.gnode')).map(n => n.textContent)")
@@ -189,3 +204,41 @@ def test_selecting_a_node_synchronises_every_section(mapped):
     page.query_selector_all(".gnode")[idx].click()
     page.wait_for_timeout(250)
     assert page.evaluate(SECTIONS) == before
+
+
+def test_a_graph_too_thin_to_read_is_not_drawn(mapped):
+    """Four dots and two lines tell a reader nothing the actor list did not
+    already say. Drawing it anyway is how a thin result comes to look like an
+    analytical one."""
+    import threading
+
+    from engine.api_server import render_frontend_document
+
+    browser = mapped[3]
+
+    thin = _map()
+    thin["issue_graph"] = {
+        "nodes": [{"id": "a", "type": "issue", "label": "IMF", "color": "#fff", "weight": 1,
+                   "evidence": []}],
+        "edges": [], "legend": [{"type": "issue", "color": "#fff", "count": 1}],
+        "stats": {"nodes": 1, "edges": 0, "isolated": 1},
+    }
+    srv = _server(render_frontend_document(), thin)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{port}/", wait_until="load")
+        page.click("button:has-text('Issue Map')")
+        page.fill("#pr", "Okiya Omtatah")
+        page.fill("#is", "International Monetary Fund (IMF)")
+        page.click("#mrun")
+        page.wait_for_selector("text=Intersection detail", timeout=15000)
+        page.wait_for_timeout(500)
+        body = page.inner_text("body").lower()
+        assert "too little connected material" in body
+        assert page.locator(".gnode").count() == 0
+        assert "verdict" in body   # the findings are still all there
+        page.close()
+    finally:
+        srv.shutdown()

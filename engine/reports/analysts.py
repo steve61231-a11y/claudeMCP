@@ -727,10 +727,12 @@ For each:
 - relation: **40-120 words** on what they actually did or said here — not a job title. What position did they take, when, against whom, and with what effect?
 - entity_type: person / organization / company
 - position: "for", "against" or "neutral" — use "neutral" unless the digest actually shows a stance
-- influence: 0-100, how much they shape the outcome""" + ISSUE_DIGEST_TAIL + """
+- influence: 0-100, how much they shape the outcome
+- track_record: **30-80 words** on what this actor has done BEFORE on this issue, where the digest shows it. Use `evidence=principal_side` and `evidence=issue_side` items for this — that is what they are there for. Leave it out entirely if the record does not show it.
+- modus_operandi: **20-60 words** on HOW they act here — litigation, the floor of the House, press, procurement, the street. Leave it out if the digest does not show it.""" + ISSUE_DIGEST_TAIL + """
 Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY — return every actor the digest supports, never the eight the example happens to show:
 {{"key_actors":[
- {{"name":"...","relation":"40-120 words on what they did or said here...","entity_type":"person","position":"for","influence":85}},
+ {{"name":"...","relation":"40-120 words on what they did or said here...","entity_type":"person","position":"for","influence":85,"track_record":"30-80 words, omit if unknown","modus_operandi":"20-60 words, omit if unknown"}},
  {{"name":"...","relation":"...","entity_type":"organization","position":"against","influence":70}},
  {{"name":"...","relation":"...","entity_type":"person","position":"neutral","influence":55}},
  {{"name":"...","relation":"...","entity_type":"company","position":"neutral","influence":40}},
@@ -788,6 +790,18 @@ Respond with ONLY this JSON. The example shows the FORM, not the QUANTITY:
  {{"sub_issue":"...","question":"...","root":false,"actors":["..."],"detail":"..."}}]}}"""
 
 
+ISSUE_BACKGROUND_PROMPT = ISSUE_PREAMBLE + """
+
+Your section: the BACKGROUND a reader needs before any of this makes sense, split in two.
+
+- international: what is happening with {issue} beyond Kenya — the institution's own history, its programmes and conditions elsewhere, the precedents and doctrines being invoked, the actors outside the country with a stake. **250-500 words.** The `evidence=issue_side` items are where most of this lives.
+- national: the Kenyan record {principal} is acting inside — the domestic history of this issue, the laws, offices and past fights it grows out of, and how it reached its present state. **250-500 words.**
+
+Both are context, not the intersection: write what is true of each half in its own right. If the digest supports only one of them, write that one properly and say plainly in the other that the record collected does not cover it.""" + ISSUE_DIGEST_TAIL + """
+Respond with ONLY this JSON:
+{{"international":"250-500 words...","national":"250-500 words..."}}"""
+
+
 ISSUE_SECTIONS = {
     "position": (ISSUE_POSITION_PROMPT, ("involvement", "tension_or_risk", "verdict")),
     "actors": (ISSUE_ACTORS_PROMPT, ("key_actors",)),
@@ -797,11 +811,16 @@ ISSUE_SECTIONS = {
     # thing. This runs in the same parallel pool as the other four, so it costs
     # a call, not wall time.
     "sub_issues": (ISSUE_SUB_ISSUES_PROMPT, ("sub_issues",)),
+    # The framework's background section reads `international_context` and
+    # `national_context` from the payload. Nothing has ever set them, so both
+    # halves of section 1 have rendered blank on every issue map ever produced.
+    "background": (ISSUE_BACKGROUND_PROMPT, ("international", "national")),
 }
 
 _ISSUE_EMPTY = {
     "involvement": "", "linking_narratives": [], "key_actors": [],
     "timeline": [], "tension_or_risk": "", "verdict": "", "sub_issues": [],
+    "international": "", "national": "",
 }
 
 

@@ -188,10 +188,24 @@ def test_coalitions_are_scheduled_before_the_dates_that_matter():
     assert "before the decision point" in window["rationale"]
 
 
-def test_past_events_are_not_offered_as_engagement_opportunities():
+def test_past_events_are_not_offered_as_upcoming_opportunities():
+    """The original rule, kept: a date that has passed is never presented as a
+    decision point still ahead. What changed is the empty section it produced —
+    an issue map runs over a LOOK-BACK window, so every development it finds has
+    already happened and this section was blank on every map ever made. It now
+    says where the sequence has reached, and labels itself as looking backward.
+    """
     past = {"timeline_of_major_developments": [
         {"date": (datetime.utcnow() - timedelta(days=30)).date().isoformat(), "event": "Gone"}]}
-    assert ifw.build_sequencing(past)["engagement_timeline"] == []
+    out = ifw.build_sequencing(past)
+
+    assert out["looking"] == "backward"
+    assert out["engagement_timeline"], "a section that is always empty is not a finding"
+    # Never framed as something to get ahead of: the window opens AFTER the date.
+    for window in out["coalition_windows"]:
+        assert "before" not in window
+        assert window["after"]
+    assert "is dated ahead of today" in out["note"]
 
 
 # --- 6 Data overview -------------------------------------------------------

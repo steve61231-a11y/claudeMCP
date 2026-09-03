@@ -355,24 +355,51 @@ def build_sequencing(background: dict, now: datetime | None = None) -> dict:
     matter, not during them.
     """
     reference = now or datetime.utcnow()
-    upcoming = [
-        item for item in background.get("timeline_of_major_developments", [])
-        if item.get("date") and item["date"] >= reference.date().isoformat()
-    ]
+    dated = [item for item in background.get("timeline_of_major_developments", [])
+             if item.get("date")]
+    today = reference.date().isoformat()
+    upcoming = [item for item in dated if item["date"] >= today]
+
+    if upcoming:
+        return {
+            "engagement_timeline": upcoming[:15],
+            "coalition_windows": [
+                {
+                    "before": item["date"],
+                    "action": f"Build alignment ahead of: {item.get('event')}",
+                    "rationale": "Coalitions must be in place before the decision point, not after.",
+                }
+                for item in upcoming[:5]
+            ],
+            "looking": "forward",
+            "note": ("Derived from dated developments in the record; policy calendars "
+                     "supplied by the client should be merged in."),
+        }
+
+    # Nothing ahead of today. This is the ordinary case, not the exception: an
+    # issue map runs over a LOOK-BACK window, so every development it finds has
+    # already happened, and this section rendered empty on every map ever made.
+    # Where the sequence stands is a real answer; "no engagement timeline" is
+    # not, and reads as a failure of the analysis rather than of the calendar.
+    recent = dated[-5:][::-1]
     return {
-        "engagement_timeline": upcoming[:15],
+        "engagement_timeline": recent,
         "coalition_windows": [
             {
-                "before": item["date"],
-                "action": f"Build alignment ahead of: {item.get('event')}",
-                "rationale": "Coalitions must be in place before the decision point, not after.",
+                "after": item["date"],
+                "action": f"Move while this is still live: {item.get('event')}",
+                "rationale": ("The most recent decision point in the record. Alignment built "
+                              "now lands before the next one, which is not yet public."),
             }
-            for item in upcoming[:5]
+            for item in recent[:3]
         ],
-        "note": (
-            "Derived from dated developments in the record; policy calendars supplied by "
-            "the client should be merged in."
-        ),
+        "looking": "backward",
+        "note": ("No development in this window is dated ahead of today, so this is where the "
+                 "sequence has reached rather than what is scheduled next. Forward dates come "
+                 "from policy calendars the client supplies."
+                 if dated else
+                 "No development in the record carries a date, so no sequence can be built "
+                 "from it. Dates are what this section is made of."),
     }
 
 

@@ -25,7 +25,7 @@ from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
 from engine.ingestion.gdelt_connector import GdeltConnector
-from engine.reports import decompose, issue_graph, relevance
+from engine.reports import decompose, issue_floor, issue_graph, relevance
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -451,6 +451,12 @@ def build_issue_map(
         principal, issue, digest,
         on_part=lambda name, partial: publish("intersection", partial),
     )
+    # If every analyst refused, the map is a form with nothing in it after a
+    # twenty-minute wait. The documents are right there; count them instead of
+    # rendering "not yet established" in every section. Only gaps are filled,
+    # and everything filled this way is marked as derived so the page can say
+    # where it came from.
+    analysis = issue_floor.fill(analysis, mentions, principal, issue)
     publish("intersection", analysis)
 
     sample = [
@@ -790,6 +796,65 @@ def _merge_corpus(primary: list[dict], extra: list[dict]) -> list[dict]:
     return merged
 
 
+def _actor_relationships(analysis: dict, known: set) -> list[dict]:
+    """Who is tied to whom, from the record rather than from nothing.
+
+    `relationships=[]` was passed in literally, so the stakeholder network has
+    rendered without a single edge on every issue map ever produced — a
+    "network" section that was a list with a picture of dots beside it.
+
+    Three sources, all already in the analysis and all evidenced: two actors
+    named in the same timeline moment, two actors on the same sub-issue, and
+    two actors holding the same stance on the issue itself. Directed both ways
+    so either name finds the other.
+    """
+    edges: dict[tuple, dict] = {}
+
+    def link(a: str, b: str, rel_type: str) -> None:
+        if a == b or a not in known or b not in known:
+            return
+        for source, target in ((a, b), (b, a)):
+            entry = edges.get((source, target))
+            if entry is None:
+                edges[(source, target)] = {"source": source, "target": target,
+                                           "rel_type": rel_type, "weight": 1}
+            else:
+                entry["weight"] += 1
+
+    def named_in(text: str) -> list[str]:
+        haystack = str(text or "").lower()
+        return [name for name in known if name and name.lower() in haystack]
+
+    for moment in analysis.get("timeline") or []:
+        if isinstance(moment, dict):
+            present = named_in(moment.get("event"))
+            for i, left in enumerate(present):
+                for right in present[i + 1:]:
+                    link(left, right, "named in the same development")
+
+    for sub in analysis.get("sub_issues") or []:
+        if not isinstance(sub, dict):
+            continue
+        on_it = [n for n in (sub.get("actors") or []) if n in known]
+        for i, left in enumerate(on_it):
+            for right in on_it[i + 1:]:
+                link(left, right, f"both on: {sub.get('sub_issue')}")
+
+    by_stance: dict[str, list[str]] = {}
+    for actor in analysis.get("key_actors") or []:
+        if isinstance(actor, dict) and actor.get("name") in known:
+            by_stance.setdefault(str(actor.get("position") or "neutral").lower(), []) \
+                .append(actor["name"])
+    for stance, names in by_stance.items():
+        if stance in ("", "neutral") or len(names) < 2:
+            continue
+        for i, left in enumerate(names):
+            for right in names[i + 1:]:
+                link(left, right, f"same stance ({stance})")
+
+    return sorted(edges.values(), key=lambda e: -e["weight"])
+
+
 def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
                      desired_outcome: str | None = None) -> dict | None:
     """Render the intersection to the client's Issue Analysis & Mapping Framework.
@@ -820,6 +885,12 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
                 "influence": actor.get("influence") if isinstance(actor.get("influence"), (int, float)) else 0,
                 "rationale": actor.get("relation") or "",
                 "position_on_issue": actor.get("relation") or "",
+                # The framework's hover profile. These three keys were read by
+                # build_stakeholder_networks and never written by anything, so
+                # every profile rendered as three empty fields under a name.
+                "history": actor.get("history") or actor.get("track_record") or "",
+                "track_record": actor.get("track_record") or "",
+                "modus_operandi": actor.get("modus_operandi") or "",
             })
 
         events = []
@@ -834,11 +905,18 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
                 "independent_domains": moment.get("sources"),
             })
 
+        relationships = _actor_relationships(analysis, {s["name"] for s in stakeholders})
+
         framework_payload = dict(payload)
         framework_payload["issue_outline"] = analysis.get("involvement") or ""
+        # Section 1's two halves. `build_background` has always read these keys
+        # and nothing has ever written them, so "international" and "national"
+        # rendered empty on every map regardless of how much was collected.
+        framework_payload["international_context"] = analysis.get("international") or ""
+        framework_payload["national_context"] = analysis.get("national") or ""
         return ifw.build(
             issue=issue, principal=principal, payload=framework_payload,
-            stakeholders=stakeholders, relationships=[], events=events,
+            stakeholders=stakeholders, relationships=relationships, events=events,
             desired_outcome=desired_outcome,
         )
     except Exception as exc:  # the framework is a view; never let it take the map down
