@@ -23,7 +23,7 @@ from engine.ingestion import orchestrator
 from engine.intelligence import graph, influence, narratives as narrative_module
 # `sentiment` was imported here and never called — per-mention scoring lives in
 # engine.agents.score, which is batched. A dead import reads as a live stage.
-from engine.processing import cleaning, entities
+from engine.processing import cleaning, entities, sentiment
 from engine.reports.generator import generate_report_payload
 from engine.reports.sections import enrich_report_payload
 
@@ -386,6 +386,28 @@ def run_analysis(
     sentiments_by_mention = {
         row.mention_id: {"sentiment": row.sentiment, "intensity": row.intensity} for row in sentiment_rows
     }
+
+    # A mention with no row above was never persisted, on purpose: score_items
+    # leaves a genuinely-unscored item OUT so a later, healthier run retries it
+    # against the real model rather than being stuck with a written-once wrong
+    # guess. That is correct for the DATABASE and wrong for the reader looking
+    # at THIS report: when the model fails every call, every mention lacked a
+    # row, and the report rendered "Positive —, Negative —" for the whole
+    # corpus with nothing behind that honesty. This fills the gap for the
+    # report only — lexicon_sentiment is never written to MentionSentiment,
+    # so nothing here blocks a future run from getting a real score instead.
+    lexicon_scored = 0
+    for mention in stored_mentions:
+        if mention["id"] not in sentiments_by_mention:
+            reading = sentiment.lexicon_sentiment(mention.get("text") or "")
+            sentiments_by_mention[mention["id"]] = {
+                "sentiment": reading["sentiment"], "intensity": reading["intensity"],
+                "source": "lexicon",
+            }
+            lexicon_scored += 1
+    if lexicon_scored:
+        scoring_report["scored_by_lexicon"] = lexicon_scored
+        scoring_report["scored_by_model"] = scoring_report.get("scored", 0)
 
     # The subject's own name distinguishes nothing inside their own corpus, so
     # it is excluded from any label derived from cluster text.

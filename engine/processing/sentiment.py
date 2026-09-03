@@ -99,3 +99,87 @@ def analyze_sentiment(text: str) -> dict:
         "confidence": local_result["confidence"],
         "source": "local",
     }
+
+# ---------------------------------------------------------------------------
+# Lexicon fallback: a sentiment reading that costs no model call at all.
+#
+# Every path above — local_sentiment (a downloaded transformer) and
+# llm_sentiment_and_context (a model call) — can fail or be unavailable at
+# once: no network route to HuggingFace Hub, and a free LLM backend refusing
+# every request. When that happens the correct, honest thing was already
+# built here — an unanswered call returns `scored: False`, never a fabricated
+# "neutral" — but the CONSEQUENCE was that Positive/Negative rendered as "—"
+# for the whole corpus, on every mention, with nothing behind that honesty.
+# derived_label() already does this for narratives (a keyword-derived name
+# instead of "narrative-3"); this is the same idea for sentiment: weak,
+# clearly labelled, and never confused with a model's reading.
+# ---------------------------------------------------------------------------
+
+_POSITIVE_WORDS = frozenset("""
+good great excellent success successful win wins won winning praise praised
+progress improve improved improving support supports supported supportive
+achievement achievements deliver delivers delivered delivering strong
+welcome welcomed applaud applauds impressive commend commends thank thanks
+grateful proud pride hope hopeful optimism optimistic breakthrough milestone
+victory triumph endorse endorses endorsed backing celebrate celebrated
+poa nzuri vizuri safi sawa
+""".split())
+
+_NEGATIVE_WORDS = frozenset("""
+bad terrible fail fails failed failure failing corrupt corruption scandal
+crisis condemn condemns condemned condemnation criticize criticizes
+criticized criticism attack attacks attacked outrage outraged anger angry
+protest protests protested protesting resign resigns resigned resignation
+arrest arrests arrested arraigned charged accuse accuses accused accusation
+disaster disastrous collapse collapsed betray betrayed betrayal shame
+shameful reject rejects rejected rejection blame blamed blames worst
+scandalous embezzle embezzlement fraud fraudulent lie lies lied lying
+mbaya wizi ufisadi uongo aibu
+""".split())
+
+_WORD_SPLIT_RE = None
+
+
+def lexicon_sentiment(text: str) -> dict:
+    """A sentiment reading with no model and no network call.
+
+    Deliberately crude — counting matched words, not understanding the text —
+    and deliberately never claims otherwise: `confidence` is fixed low and
+    `source` is always "lexicon", so nothing downstream can mistake this for a
+    model's judgement of tone. It exists because a reading this weak still
+    beats the alternative, which was every mention rendering as unscored the
+    moment the local model AND the LLM were both unavailable in the same run.
+    """
+    import re as _re
+
+    global _WORD_SPLIT_RE
+    if _WORD_SPLIT_RE is None:
+        _WORD_SPLIT_RE = _re.compile(r"[a-zA-Z']+")
+
+    words = [w.lower() for w in _WORD_SPLIT_RE.findall(text or "")]
+    positive = sum(1 for w in words if w in _POSITIVE_WORDS)
+    negative = sum(1 for w in words if w in _NEGATIVE_WORDS)
+
+    if positive == 0 and negative == 0:
+        sentiment = "neutral"
+        intensity = 1
+    elif positive > negative:
+        sentiment = "positive"
+        intensity = max(1, min(5, 1 + positive - negative))
+    elif negative > positive:
+        sentiment = "negative"
+        intensity = max(1, min(5, 1 + negative - positive))
+    else:
+        sentiment = "neutral"
+        intensity = 2
+
+    return {
+        "sentiment": sentiment,
+        "intensity": intensity,
+        "context_tag": None,
+        # Fixed and low on purpose: this must never look more certain than a
+        # model's own low-confidence threshold (sentiment_confidence_threshold,
+        # 0.55 by default) so nothing treats it as a real analyst reading.
+        "confidence": 0.2,
+        "source": "lexicon",
+    }

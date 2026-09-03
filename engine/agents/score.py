@@ -15,10 +15,12 @@ fails to answer for is simply left unscored so a later run retries it rather
 than a wrong value being written.
 """
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from engine import llm
 from engine.config import settings
+from engine.processing.sentiment import lexicon_sentiment
 
 _MAX_ITEM_CHARS = 600
 _BATCH_WORKERS = 4
@@ -107,9 +109,21 @@ def _score_batch(subject: str, items: list[tuple[str, str]],
 # How small a batch may get before splitting stops helping.
 _MIN_SPLIT_SIZE = 3
 
+#: Total wall-clock budget for scoring the WHOLE corpus, shared across every
+#: batch and every split-retry — the same missing-deadline defect that let
+#: narrative labelling run unbounded (label_clusters), applied here to the
+#: highest-volume stage in the pipeline. Each batch call is already bounded
+#: by llm.py's own retry budget, but splitting on failure recurses with no
+#: cap on the total, and a model that fails most calls but occasionally
+#: succeeds never trips the circuit breaker (any success resets it) — so
+#: every one of dozens of batches could pay its own full retry budget in
+#: turn, with nothing summing them. Past this deadline, remaining items are
+#: scored by lexicon_sentiment instead of attempted against the model.
+SCORE_DEADLINE_SECONDS = 150.0
+
 
 def _score_with_split(subject: str, batch: list[tuple[str, str]],
-                      failures: list[str]) -> dict[str, dict]:
+                      failures: list[str], deadline: float) -> dict[str, dict]:
     """Score a batch, halving it and retrying whatever came back unscored.
 
     One oversized reply, one item the model chokes on, one truncation — any of
@@ -119,6 +133,10 @@ def _score_with_split(subject: str, batch: list[tuple[str, str]],
     smaller. A corpus of 109 going from 0 scored to most-of-109 is the
     difference between a sentiment reading and a blank.
     """
+    if time.monotonic() > deadline:
+        failures.append(f"deadline exceeded before {len(batch)} item(s) could be scored")
+        return {}
+
     scored = _score_batch(subject, batch, failures)
     missing = [item for item in batch if item[0] not in scored]
     if not missing or len(batch) <= _MIN_SPLIT_SIZE:
@@ -132,7 +150,7 @@ def _score_with_split(subject: str, batch: list[tuple[str, str]],
     middle = len(missing) // 2 or 1
     for half in (missing[:middle], missing[middle:]):
         if half:
-            scored.update(_score_with_split(subject, half, failures))
+            scored.update(_score_with_split(subject, half, failures, deadline))
     return scored
 
 
@@ -143,6 +161,13 @@ def score_items(subject: str, items: list[tuple[str, str]],
     Batches run concurrently. A batch that fails is split and retried rather
     than abandoned, and `report` — when given — receives the coverage and the
     reasons anything was lost, so a stage that scores nothing can say why.
+
+    An item this cannot answer is left OUT of the returned dict, on purpose:
+    the caller persists only what this actually scored, so nothing gets a
+    wrong or invented value written against it, and a mention with no row
+    is retried by whatever run comes after this one — including once the
+    model is healthy again. (Callers that want a reading for every item RIGHT
+    NOW, never persisted, use score_items_with_floor below.)
     """
     if not items:
         return {}
@@ -151,9 +176,10 @@ def score_items(subject: str, items: list[tuple[str, str]],
 
     scored: dict[str, dict] = {}
     failures: list[str] = []
+    deadline = time.monotonic() + SCORE_DEADLINE_SECONDS
     workers = llm.concurrency(min(_BATCH_WORKERS, len(batches)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for partial in pool.map(lambda b: _score_with_split(subject, b, failures), batches):
+        for partial in pool.map(lambda b: _score_with_split(subject, b, failures, deadline), batches):
             scored.update(partial)
 
     if report is not None:
@@ -164,4 +190,30 @@ def score_items(subject: str, items: list[tuple[str, str]],
             # Deduped: twenty batches failing the same way is one fact.
             "failures": sorted(set(failures))[:5],
         })
+    return scored
+
+
+def score_items_with_floor(subject: str, items: list[tuple[str, str]],
+                           report: dict | None = None) -> dict[str, dict]:
+    """score_items, with a lexicon reading for anything the model could not
+    answer — for building THIS report, never for persisting.
+
+    score_items' contract (leave it out, let a later run retry against a
+    healthy model) is exactly right for the database: a wrong guess written
+    once is never corrected. It is exactly wrong for the page the reader is
+    looking at right now, which was rendering "Positive —, Negative —" for a
+    corpus of 109 mentions because the model failed every call and nothing
+    stood behind that honesty. This fills the gap for the CALLER's copy of
+    the scores only — callers must not persist entries this adds that
+    score_items itself did not return.
+    """
+    scored = score_items(subject, items, report=report)
+    lexicon_scored = 0
+    for item_id, text in items:
+        if item_id not in scored:
+            scored[item_id] = lexicon_sentiment(text)
+            lexicon_scored += 1
+    if report is not None:
+        report["scored_by_model"] = report.get("scored", 0)
+        report["scored_by_lexicon"] = lexicon_scored
     return scored

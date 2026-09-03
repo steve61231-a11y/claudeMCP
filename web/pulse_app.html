@@ -1838,9 +1838,18 @@
     const pct=Math.round(100*(sc.scored||0)/sc.eligible);
     const bad=pct<50;
     const c=deepCard('Sentiment coverage',
-      `${fmt(sc.scored)} of ${fmt(sc.eligible)} mentions scored (${pct}%) across ${fmt(sc.batches)} batches`);
+      `${fmt(sc.scored)} of ${fmt(sc.eligible)} mentions read by the analyst (${pct}%) across ${fmt(sc.batches)} batches`);
     if(bad)c.appendChild(el('div','',`<div class="qt" style="border-left-color:var(--neg);font-style:normal;color:var(--neg)">
-      Most of the corpus was not scored, so any sentiment figure in this report rests on a minority of it.</div>`));
+      Most of the corpus was not scored by the model, so any sentiment figure sourced from it rests on a minority of it.</div>`));
+    // The rest of the corpus is not left blank — a mention the model could not
+    // answer for still gets a rough, no-model keyword reading (positive/
+    // negative word counts, nothing more) so the Positive/Negative split above
+    // is a real number rather than "—". This is weaker than a model's reading
+    // and is labelled that way everywhere it appears (source: "lexicon").
+    if(sc.scored_by_lexicon)c.appendChild(el('div','',
+      `<div class="qt" style="border-left-color:var(--amber);font-style:normal">
+       ${fmt(sc.scored_by_lexicon)} more mention(s) were not read by the model — the sentiment
+       split above includes a rough keyword-based estimate for those, not an analyst reading.</div>`));
     (sc.failures||[]).forEach(f=>c.appendChild(el('div','mentr',
       `<div style="font-size:13.5px;font-family:ui-monospace,monospace">${esc(f)}</div>`)));
     return c;
