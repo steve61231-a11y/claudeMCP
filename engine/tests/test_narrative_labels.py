@@ -93,6 +93,91 @@ def test_model_returning_a_placeholder_is_rejected(monkeypatch):
     assert nar.label_clusters([(0, ["a"])]) == {}
 
 
+# --- the deadline --------------------------------------------------------
+#
+# label_clusters splits a failing batch in half and retries each half. That
+# is bounded per call by llm.py's own retry budget, but nothing previously
+# bounded the TOTAL time across the whole recursive tree. A model that fails
+# repeatedly but occasionally succeeds resets the circuit breaker on every
+# success (any success clears it), so the breaker can never fully open — and
+# every one of dozens of clusters pays its own full retry budget in turn. A
+# live run sat on "Narratives" indefinitely because of exactly this.
+
+def test_the_whole_tree_is_bounded_even_when_every_call_is_slow(monkeypatch):
+    import time as time_mod
+
+    monkeypatch.setattr(nar, "LABEL_CLUSTERS_DEADLINE_SECONDS", 1.0)
+    calls = {"n": 0}
+
+    def always_fails_slowly(system, user, expected_keys=None, max_tokens=None):
+        calls["n"] += 1
+        time_mod.sleep(0.3)
+        raise RuntimeError("still down")
+
+    monkeypatch.setattr(nar.llm, "call_json_untrusted", always_fails_slowly)
+
+    clusters = [(i, [f"post about topic {i}"]) for i in range(30)]
+    started = time_mod.monotonic()
+    result = nar.label_clusters(clusters)
+    elapsed = time_mod.monotonic() - started
+
+    assert elapsed < 3.0, f"label_clusters ran {elapsed:.1f}s past its 1s deadline"
+    assert result == {}
+    # It stopped well short of the ~59 calls the full recursive tree would
+    # need for 30 clusters without a deadline.
+    assert calls["n"] < 10
+
+
+def test_a_flaky_model_that_never_trips_the_breaker_is_still_bounded(monkeypatch):
+    """The exact production scenario: fails most of the time, but succeeds
+    often enough that no run of 5 consecutive failures ever happens, so the
+    circuit breaker (which needs 5-in-a-row) never opens."""
+    import time as time_mod
+
+    from engine import llm
+
+    llm.reset_breaker()
+    monkeypatch.setattr(nar, "LABEL_CLUSTERS_DEADLINE_SECONDS", 1.0)
+    calls = {"n": 0}
+
+    def flaky(prompt, max_tokens=1024, model=None):
+        calls["n"] += 1
+        if calls["n"] % 4 == 0:  # succeeds just often enough to reset the breaker
+            return {"clusters": []}
+        time_mod.sleep(0.15)
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(llm, "_call_json", flaky)
+    clusters = [(i, [f"post about topic {i}"]) for i in range(30)]
+
+    started = time_mod.monotonic()
+    result = nar.label_clusters(clusters)
+    elapsed = time_mod.monotonic() - started
+
+    assert elapsed < 3.0, f"a flaky-but-never-tripping model ran unbounded for {elapsed:.1f}s"
+
+
+def test_clusters_past_the_deadline_still_get_a_derived_label(monkeypatch):
+    """label_clusters returning early with {} must not mean an unlabelled or
+    numbered narrative — build_narratives falls back to derived_label."""
+    monkeypatch.setattr(nar, "LABEL_CLUSTERS_DEADLINE_SECONDS", 0.0)
+    monkeypatch.setattr(nar, "cluster_mentions", lambda texts: [0, 0, 0])
+
+    def would_have_worked(*a, **k):
+        raise AssertionError("the model should never be called once the deadline has passed")
+
+    monkeypatch.setattr(nar.llm, "call_json_untrusted", would_have_worked)
+    built = nar.build_narratives([
+        _mention("m1", "Sifuna holds a mega rally in Kitale"),
+        _mention("m2", "Kitale rally draws crowds"),
+        _mention("m3", "The Kitale rally continues"),
+    ], subject_terms={"sifuna"})
+
+    assert len(built) == 1
+    assert not built[0]["label"].lower().startswith("narrative")
+    assert built[0]["labelled_by"] == "derived"
+
+
 # --- end to end --------------------------------------------------------------
 
 def _clustered(monkeypatch, labels):

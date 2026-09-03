@@ -1,5 +1,6 @@
 import re
 import threading
+import time
 from collections import defaultdict
 
 import numpy as np
@@ -209,7 +210,24 @@ def label_cluster(sample_texts: list[str]) -> dict:
     return labelled.get(0, {})
 
 
-def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0) -> dict[int, dict]:
+#: Total wall-clock budget for labelling EVERY cluster, however many calls
+#: that ends up taking. Each individual call is already bounded by llm.py's
+#: own retry budget (up to 240s, shrinking as failures accumulate) — but on
+#: failure this function recurses, splitting the batch in half and retrying
+#: each half, and NOTHING previously bounded the total depth of that tree. A
+#: flaky free model that fails four times then succeeds once resets the
+#: circuit breaker on every success, so the breaker never opens and every one
+#: of dozens of clusters can pay its own full multi-minute retry budget in
+#: turn — the run sits on "Narratives" for as long as the model keeps being
+#: just reliable enough to avoid tripping the breaker. Every cluster already
+#: has a derived, keyword-based fallback label (`derived_label`, used by
+#: `build_narratives` for anything this returns without an entry) — a report
+#: with derived labels beats a report that never advances.
+LABEL_CLUSTERS_DEADLINE_SECONDS = 150.0
+
+
+def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0,
+                   _deadline: float | None = None) -> dict[int, dict]:
     """Label every cluster in ONE call, splitting the batch when a call fails.
 
     Previously each cluster got its own concurrent call — up to two dozen at
@@ -219,6 +237,21 @@ def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0) -> di
     does happen degrades a half, not the report.
     """
     if not clusters:
+        return {}
+
+    # Set once, at the top of the tree, and threaded through every recursive
+    # call so the WHOLE tree shares one clock rather than each split getting
+    # its own fresh budget.
+    if _deadline is None:
+        _deadline = time.monotonic() + LABEL_CLUSTERS_DEADLINE_SECONDS
+    elif time.monotonic() > _deadline:
+        # Out of time, not out of clusters. Stop asking the model and hand
+        # everything remaining back unlabelled — build_narratives derives a
+        # label from each cluster's own text instead.
+        stages.current().failed(
+            f"narrative_labelling[{len(clusters)}]",
+            f"labelling stage exceeded its {LABEL_CLUSTERS_DEADLINE_SECONDS:g}s budget; "
+            f"{len(clusters)} cluster(s) will get a derived label instead of a model one")
         return {}
 
     blocks = []
@@ -240,8 +273,8 @@ def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0) -> di
         if len(clusters) > 1:
             middle = len(clusters) // 2
             return {
-                **label_clusters(clusters[:middle], _depth + 1),
-                **label_clusters(clusters[middle:], _depth + 1),
+                **label_clusters(clusters[:middle], _depth + 1, _deadline),
+                **label_clusters(clusters[middle:], _depth + 1, _deadline),
             }
         return {}
 
