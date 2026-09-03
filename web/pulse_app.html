@@ -1990,6 +1990,27 @@
       </div>`;
     wrap.appendChild(head);
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
+    // Nothing was collected. Rendering the usual empty sections made this look
+    // like a subject with no story, or like the app was broken. It is neither:
+    // it is a collection result, and it is the only thing worth saying.
+    const nc=r.nothingCollected;
+    if(nc){
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+      c.innerHTML=`<div class="row" style="gap:12px;align-items:flex-start">
+        <div style="font-size:26px">📭</div><div style="flex:1">
+        <b style="font-size:16px">No mentions were collected for this subject.</b>
+        <div class="muted" style="font-size:13.5px;margin-top:6px">${esc(nc.why)}
+          Window: ${esc(nc.window||'')}. Nothing below was analysed, because there was
+          nothing to analyse — this is not a finding that the subject has no coverage.</div>
+        ${(nc.notes||[]).length?`<div class="lbl" style="margin-top:12px">What the sources said</div>
+          ${nc.notes.map(n=>'<div class="mentr" style="padding:8px 10px;font-size:13px">'+esc(n)+'</div>').join('')}`:''}
+        ${(nc.guidance||[]).length?`<div class="lbl" style="margin-top:12px">What to try</div>
+          <ul style="font-size:13.5px;margin:6px 0 0 18px;line-height:1.6">
+          <li>${nc.guidance.map(esc).join('</li><li>')}</li></ul>`:''}
+        </div></div>`;
+      wrap.appendChild(c);
+    }
     const db=derivedBanner(r.derivedSections||r.derived_sections);
     if(db)wrap.appendChild(db);
 

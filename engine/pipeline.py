@@ -506,6 +506,31 @@ def run_analysis(
         publish("data_provenance", payload["data_provenance"])
         publish("data_coverage", payload["data_coverage"])
 
+    # Nothing was collected. This is a real and common outcome — every source
+    # blocked, a name nobody has written about in the window, an egress
+    # problem — and it produced a report that returned ok, filled seventeen
+    # scaffolding keys, rendered no sections and explained nothing. To the
+    # reader that is "Search not working", and it is indistinguishable from a
+    # subject with no coverage. Say which, once, at the top.
+    if not corpus:
+        coverage = payload.get("data_coverage") or {}
+        degraded = coverage.get("degraded") or []
+        notes = coverage.get("notes") or []
+        payload["nothing_collected"] = {
+            "window": f"{window_start:%Y-%m-%d} to {window_end:%Y-%m-%d}",
+            "why": ("No source returned anything for this subject in this window."
+                    if not degraded else
+                    f"{len(degraded)} source(s) did not deliver: {', '.join(map(str, degraded))}."),
+            "notes": notes[:8],
+            "guidance": [
+                "Widen the look-back — a short window on a quiet subject is often empty.",
+                "Check the spelling and try the name as it appears in headlines.",
+                "Open /api/admin/source-check to see which connectors are answering "
+                "right now and what each one said.",
+            ],
+        }
+        publish("nothing_collected", payload["nothing_collected"])
+
     # What the disambiguation gate did. Filtering that nobody can see is
     # indistinguishable from data loss, so the counts travel with the report.
     payload["evidence_gate"] = gate_stats

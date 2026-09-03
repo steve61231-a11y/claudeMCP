@@ -1,4 +1,5 @@
 import re
+import threading
 from collections import defaultdict
 
 import numpy as np
@@ -7,6 +8,20 @@ from engine import llm, stages
 
 _embedder = None
 _embedder_unavailable = False
+
+#: Seconds to wait for the sentence-transformer to load before giving up on it.
+#:
+#: `SentenceTransformer("all-MiniLM-L6-v2")` DOWNLOADS the model on first use.
+#: On a cold instance with a slow or blocked route to the HuggingFace hub that
+#: call can take many minutes or never return, and it sits inside the narrative
+#: stage — so a run that had already read the corpus and scored sentiment would
+#: sit on "Narratives" indefinitely with nothing to show and no error. The
+#: fallback for a FAILED load was always there; a load that never finishes is
+#: not a failure, and nothing was watching for it.
+EMBEDDER_LOAD_TIMEOUT = 90.0
+
+_embedder_thread = None
+_embedder_holder: dict = {}
 
 
 def get_embedder():
@@ -21,14 +36,59 @@ def get_embedder():
         _embedder_unavailable = True
         raise RuntimeError("local ML disabled (USE_LOCAL_ML=false)")
     if _embedder is None:
-        from sentence_transformers import SentenceTransformer
-
-        try:
-            _embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        except Exception:
+        # A previous run may have finished loading in the background after we
+        # gave up waiting. Adopt it rather than paying for TF-IDF forever.
+        if _embedder_holder.get("model") is not None:
+            _embedder = _embedder_holder["model"]
+            return _embedder
+        if _embedder_holder.get("error"):
             _embedder_unavailable = True
-            raise
+            raise RuntimeError(str(_embedder_holder["error"]))
+
+        _start_embedder_load()
+        _embedder_thread.join(EMBEDDER_LOAD_TIMEOUT)
+        if _embedder_holder.get("model") is not None:
+            _embedder = _embedder_holder["model"]
+            return _embedder
+        if _embedder_holder.get("error"):
+            _embedder_unavailable = True
+            raise RuntimeError(str(_embedder_holder["error"]))
+        # Still loading. Do not mark it permanently unavailable — it may well
+        # arrive — but do not hold the run behind it either.
+        raise TimeoutError(
+            f"sentence embedder did not load within {EMBEDDER_LOAD_TIMEOUT:g}s "
+            "(it downloads on first use); clustering continues without it")
     return _embedder
+
+
+def _start_embedder_load() -> None:
+    """Load the model on a daemon thread, once."""
+    global _embedder_thread
+    if _embedder_thread is not None and _embedder_thread.is_alive():
+        return
+    if _embedder_thread is not None:
+        return  # finished: the holder already carries the result
+
+    def _load():
+        try:
+            from sentence_transformers import SentenceTransformer
+
+            _embedder_holder["model"] = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception as exc:  # noqa: BLE001
+            _embedder_holder["error"] = f"{type(exc).__name__}: {exc}"[:200]
+
+    _embedder_thread = threading.Thread(target=_load, daemon=True,
+                                        name="embedder-load")
+    _embedder_thread.start()
+
+
+def reset_embedder_state() -> None:
+    """Test seam: forget everything learned about the embedder."""
+    global _embedder, _embedder_unavailable, _embedder_thread
+    _embedder = None
+    _embedder_unavailable = False
+    _embedder_thread = None
+    _embedder_holder.clear()
 
 
 def embed_texts(texts: list[str]) -> np.ndarray:
