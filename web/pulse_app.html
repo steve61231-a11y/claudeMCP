@@ -2505,7 +2505,20 @@
         court filings, committee reports and archived pages — ${fmt(disc.queries)} queries were
         ready to run. Everything below was built without it.</div>`;
       host.appendChild(c);
-    } else if(disc&&disc.documents!=null){
+    }
+    // Which social backbone this run had. Paying for the paid tier and seeing
+    // no difference, with nothing on the page saying whether it was used, is
+    // indistinguishable from paying for nothing.
+    const st2=(m.acquisition||{}).social_tier;
+    if(st2&&st2.tier){
+      host.appendChild(el('div','card',
+        `<div class="lbl">Social sources</div>
+         <div class="muted" style="font-size:13px;margin-top:4px">${
+           st2.tier==='managed'
+             ? 'Paid backbone active — '+fmt(st2.mentions||0)+' mentions from TikTok, Instagram, LinkedIn and X. '+esc(st2.reason||'')
+             : 'Free sources only — '+esc(st2.reason||'')+'. News, Reddit, YouTube and web discovery were still swept.'}</div>`));
+    }
+    if(disc&&disc.documents!=null&&!(disc.error||disc.skipped)){
       host.appendChild(el('div','card',
         `<div class="lbl">Discovery sweep</div>
          <div class="muted" style="font-size:13px;margin-top:4px">${fmt(disc.queries)} queries returned

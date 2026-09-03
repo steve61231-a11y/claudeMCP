@@ -833,6 +833,9 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
             _save_progress(_subject_key(politician.name), "report", job_id=job_id,
                            status="done", stage="Complete.",
                            sections_ready=sorted(report.payload or {}), payload=finished)
+            # A run that just ingested new sources makes the cached graph
+            # wrong, not stale-but-fine.
+            _invalidate_network(politician.name)
             _jobs[job_id] = {
                 "status": "done", "ok": True,
                 "report": finished,
@@ -949,6 +952,7 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
         # analysts are simply gone when it does, and the client's poll 404s
         # with nothing to fall back on.
         _store_issue_map(principal, issue, payload)
+        _invalidate_network(principal)
         _save_progress(_subject_key(principal, issue), "issue_map", job_id=job_id,
                        status="done", stage="Complete.",
                        sections_ready=sorted(payload), payload=payload)
@@ -1298,6 +1302,17 @@ def livefeed(name: str, limit: int = 40, x_api_key: str | None = Header(default=
 
 
 _network_cache: dict[str, dict] = {}
+
+
+def _invalidate_network(name: str) -> None:
+    """Drop the cached graph for a subject.
+
+    The network is built from the database, so it picks up new sources for
+    free — but behind a 30-minute cache. Turning on a paid backbone and then
+    seeing the same graph for half an hour reads as the money having changed
+    nothing, so a completed run clears its own subject's entry.
+    """
+    _network_cache.pop((name or "").strip().lower(), None)
 _NETWORK_TTL = 1800
 
 # Pre-computed graphs for demo names: like _PRECACHED_REPORTS, this decouples

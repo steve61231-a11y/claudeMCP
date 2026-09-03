@@ -117,12 +117,28 @@ def _youtube_intersection(identity: str, issue_term: str, ws: datetime, we: date
     return YouTubeConnector().fetch(f"{identity} {issue_term}", [], ws, we)
 
 
+def _socialcrawl_intersection(identity: str, issue_term: str,
+                             ws: datetime, we: datetime) -> list[IngestedMention]:
+    """The paid social backbone: TikTok, Instagram, LinkedIn, X, YouTube.
+
+    This is where hashtag-level and platform-native material lives, and the
+    issue map has never asked for any of it — it swept the four free news and
+    forum sources and nothing else, so paying for SocialCrawl changed the
+    report and left the map exactly as it was.
+    """
+    from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
+
+    return SocialCrawlConnector().fetch(f"{identity} {issue_term}", [], ws, we)
+
+
 # How many identity x issue-name pairs each source is asked for. GDELT and
 # Google News are cheap keyless requests and carry the news record, so they get
 # the widest sweep; YouTube costs a yt-dlp subprocess per query, so it gets the
 # fewest. One literal query per source is what made the issue map shallow —
 # these numbers are the fix, and they are here to be tuned rather than buried.
-PAIR_BUDGET = {"gdelt": 8, "google_news": 8, "reddit": 4, "youtube": 3}
+PAIR_BUDGET = {"gdelt": 8, "google_news": 8, "reddit": 4, "youtube": 3,
+               # Paid, and charged per call: fewer pairs, best-first.
+               "socialcrawl": 4}
 
 
 def _pairs(identities: list[str], issue_terms: list[str], budget: int) -> list[tuple[str, str]]:
@@ -140,6 +156,22 @@ def _pairs(identities: list[str], issue_terms: list[str], budget: int) -> list[t
     return out[:budget]
 
 
+def _social_tier() -> tuple[str, float | None, str]:
+    """Which social backbone this sweep may use, right now.
+
+    Isolated so a probe failure can never take the map down: unreachable means
+    "assume available", the same fail-open the report path uses, because a
+    transient blip must not silently downgrade a run.
+    """
+    try:
+        from engine.ingestion.orchestrator import resolve_social_tier
+
+        return resolve_social_tier()
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("issue_map:social_tier", exc)
+        return "free", None, f"tier probe failed: {type(exc).__name__}"
+
+
 def acquire_intersection(
     principal: str,
     issue: str,
@@ -147,6 +179,7 @@ def acquire_intersection(
     we: datetime,
     identities: list[str] | None = None,
     issue_terms: list[str] | None = None,
+    report: dict | None = None,
 ) -> list[IngestedMention]:
     """Gather mentions that connect the principal and the issue.
 
@@ -187,6 +220,21 @@ def acquire_intersection(
         _sweep("reddit", _reddit_intersection)
     if settings.enable_youtube:
         _sweep("youtube", _youtube_intersection)
+
+    # The paid tier, decided live. `resolve_social_tier` probes the balance on
+    # every call and caches nothing, so topping up credits takes effect on the
+    # very next run with no redeploy and no setting to change — and running out
+    # mid-run drops back to the free sources instead of burning the run on
+    # requests that will 402.
+    tier, balance, reason = _social_tier()
+    if report is not None:
+        report.update({"tier": tier, "balance": balance, "reason": reason})
+    if tier == "managed":
+        before = len(mentions)
+        _sweep("socialcrawl", _socialcrawl_intersection)
+        if report is not None:
+            report["mentions"] = len(mentions) - before
+    stages.current().ok("issue_map:social_tier", f"{tier} — {reason}")
 
     if mentions:
         from engine.ingestion.article_text import enrich_with_article_text
@@ -679,8 +727,13 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             for d in dimensions])
         publish("stage", f"Searching {len(identities)} name variants × "
                          f"{len(issue_terms)} issue terms across every source…")
+        social_report: dict = {}
         fresh = acquire_intersection(principal, issue, ws, we,
-                                     identities=identities, issue_terms=issue_terms)
+                                     identities=identities, issue_terms=issue_terms,
+                                     report=social_report)
+        if social_report.get("tier") == "managed":
+            publish("stage", f"Paid social backbone active — "
+                             f"{social_report.get('mentions', 0)} platform mentions added…")
         publish("stage", f"Sweeping {len(discovery)} discovery probes for full-text sources…")
         # Match discovered pages against the principal's own names, and against
         # the issue's — a document about the IMF's Kenya programme is evidence
@@ -737,6 +790,7 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             "issue_terms": issue_terms,
             "discovery_probes": len(discovery),
             "discovery": discovery_report,
+            "social_tier": social_report,
             "fresh_mentions": len(fresh),
             "fresh_documents": len(documents),
             **stored,
@@ -747,8 +801,13 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         }
     except Exception:  # noqa: BLE001
         traceback.print_exc()
+        social_report: dict = {}
         fresh = acquire_intersection(principal, issue, ws, we,
-                                     identities=identities, issue_terms=issue_terms)
+                                     identities=identities, issue_terms=issue_terms,
+                                     report=social_report)
+        if social_report.get("tier") == "managed":
+            publish("stage", f"Paid social backbone active — "
+                             f"{social_report.get('mentions', 0)} platform mentions added…")
         return _as_corpus(fresh), {"stored": False, "reason": "acquisition or storage failed"}
     finally:
         try:
