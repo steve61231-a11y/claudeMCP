@@ -56,11 +56,21 @@ def detect_indirect_mention(text: str, politician_name: str, aliases: list[str],
     instructions = INDIRECT_PROMPT.format(
         name=politician_name, aliases=", ".join(aliases) or "none", keywords=", ".join(keywords) or "none"
     )
+    unmatched = {"matched": False, "match_type": "indirect_llm", "confidence": 0.0}
     try:
         result = llm.call_json_untrusted(instructions, text, expected_keys={"matched"}, max_tokens=256)
     except ValueError:
         # A malformed/injected reply must never link a mention.
-        return {"matched": False, "match_type": "indirect_llm", "confidence": 0.0}
+        return unmatched
+    except Exception as exc:  # noqa: BLE001
+        # Only ValueError was caught here, so a provider that refused — a 429,
+        # a timeout, an outage — raised straight out of the linking loop and
+        # killed the entire run before a single section was written. An
+        # unlinkable mention is a missed link, not a dead report.
+        from engine import stages
+
+        stages.current().failed("entity_link:indirect", exc)
+        return unmatched
     return {
         "matched": bool(result.get("matched")),
         "match_type": "indirect_llm",
