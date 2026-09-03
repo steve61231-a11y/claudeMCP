@@ -50,6 +50,10 @@ def test_corpus_map_step_runs_on_the_bulk_tier(recorder, monkeypatch):
     mentions = [{"id": f"m{i}", "platform": "x", "text": "some text " * 40,
                  "author_handle": "a", "posted_at": None, "engagement": {}}
                 for i in range(40)]
+    # A corpus that fits in one analyst window is sent whole and never
+    # compressed, so the map step would make no calls at all and this would
+    # assert about a stage that did not run. Shrink the window to force it.
+    monkeypatch.setattr(digest_module, "DIGEST_CONTEXT_CHARS", 4000)
     digest_module.build_corpus_digest("Subject", mentions)
 
     assert recorder, "the map step made no calls at all"

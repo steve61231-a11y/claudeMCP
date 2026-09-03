@@ -2764,7 +2764,15 @@
     const head=el('div','card glow');
     head.innerHTML=`<div class="eyebrow">${esc(m.principal)} × ${esc(m.issue)}</div>
       <div class="hero-one" style="margin-top:10px">${esc((m.intersection||{}).verdict||'')}</div>
-      <div class="row" style="margin-top:12px"><span class="chip">Analysed ${fmt((m.coverage||{}).mentions_analyzed)} of ${fmt((m.coverage||{}).mentions_total)}</span></div>`;
+      <div class="row" style="margin-top:12px">${(()=>{
+        const cv=m.coverage||{};
+        // "Analysed 0 of 23" was true and useless: it said the compression
+        // step failed without saying the documents were read anyway.
+        if(cv.mode==='raw')return '<span class="chip">Read '+fmt(cv.mentions_total)+' documents in full</span>';
+        if(cv.mode==='raw_fallback')return '<span class="pill amber">Summarising failed — '
+          +'analysts read the documents directly</span>';
+        return '<span class="chip">Analysed '+fmt(cv.mentions_analyzed)+' of '+fmt(cv.mentions_total)+'</span>';
+      })()}</div>`;
     out.appendChild(head);
 
     // The framework is the client deliverable; the intersection detail is the

@@ -25,7 +25,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports.analysts import GROUNDING_RULES, _render_mention
+from engine.reports.analysts import (DIGEST_CONTEXT_CHARS, GROUNDING_RULES,
+                                     _render_mention)
 
 CHUNK_CHARS = 16000          # per-chunk prompt budget for the map step
 # The map step is where corpus detail is either preserved or lost forever —
@@ -137,12 +138,62 @@ def _digest_chunk(name: str, chunk: list[dict], index: int) -> dict:
     return digest
 
 
+def raw_corpus_context(mentions: list[dict], max_chars: int) -> str:
+    """The documents themselves, rendered for a prompt.
+
+    The digest exists to COMPRESS a corpus too large to send. When the corpus
+    already fits, compressing it is pure loss: it spends model calls, throws
+    away the wording, and — the reason this exists — it is a single point of
+    failure in front of everything. A run that collected 23 documents and
+    reported "analysed 0 of 23" had every one of them sitting in memory while
+    the analysts were handed an empty digest and produced nothing.
+    """
+    header = ("THESE ARE THE SOURCE DOCUMENTS THEMSELVES, not a digest of them. "
+              "One per line, each prefixed with its ref id. Quote from them directly.\n")
+    lines, used = [], len(header)
+    for mention in mentions:
+        line = _render_mention(mention)
+        if used + len(line) + 1 > max_chars:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return header + "\n".join(lines)
+
+
+def fits_without_compression(mentions: list[dict], max_chars: int) -> bool:
+    """Would the whole corpus fit in one analyst window, uncompressed?"""
+    total = 0
+    for mention in mentions:
+        total += len(_render_mention(mention)) + 1
+        if total > max_chars:
+            return False
+    return True
+
+
 def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
     """Map every mention through the model in chunks, returning the per-chunk
-    digests plus a coverage record proving the whole corpus was read."""
+    digests plus a coverage record proving the whole corpus was read.
+
+    A corpus small enough to send whole skips the model entirely.
+    """
     chunks = _chunk_mentions(mentions)
     if not chunks:
         return {"digests": [], "coverage": {"mentions_total": 0, "mentions_analyzed": 0, "chunks": 0}}
+
+    budget = int(DIGEST_CONTEXT_CHARS)
+    if fits_without_compression(mentions, budget):
+        # Nothing to compress, so nothing to fail. The analysts read the
+        # documents, which is strictly better than reading a summary of them.
+        return {
+            "digests": [],
+            "raw": raw_corpus_context(mentions, budget),
+            "coverage": {
+                "mentions_total": len(mentions), "mentions_analyzed": len(mentions),
+                "chunks": 0, "chunks_failed": 0, "complete": True, "mode": "raw",
+                "note": ("The corpus fitted in one window, so the analysts read every "
+                         "document in full rather than a compressed digest of them."),
+            },
+        }
 
     from engine.config import settings
 
@@ -157,6 +208,25 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
     # most damaging single lie this pipeline was capable of, because it is the
     # number that makes the thin sections beneath it look like the truth.
     read = [d for d in digests if not d.get("_failed")]
+    # Every pass failed. The documents are still here; handing the analysts an
+    # empty digest instead is how a run reports "analysed 0 of 23" and then
+    # renders every section blank.
+    if not read:
+        stages.current().failed(
+            "digest", f"all {len(chunks)} passes failed; falling back to raw documents")
+        return {
+            "digests": digests,
+            "raw": raw_corpus_context(mentions, int(DIGEST_CONTEXT_CHARS)),
+            "coverage": {
+                "mentions_total": len(mentions),
+                "mentions_analyzed": 0, "chunks": len(chunks),
+                "chunks_failed": len(chunks), "complete": False, "mode": "raw_fallback",
+                "note": (f"All {len(chunks)} passes over the corpus failed, so "
+                         f"{len(mentions)} mentions were never read by the map step. The "
+                         "analysts were given the documents themselves instead, up to what "
+                         "one window holds — nothing was summarised first."),
+            },
+        }
     failed_chunks = [d for d in digests if d.get("_failed")]
     analyzed = sum(d.get("_mentions_in_chunk", 0) for d in read)
     coverage = {
@@ -179,5 +249,9 @@ def digest_context(digest: dict, max_chars: int = 40000) -> str:
     step / analysts read — a complete, compressed view of the whole corpus."""
     import json
 
+    # A raw corpus, when the digest was skipped or every pass failed.
+    raw = digest.get("raw")
+    if raw:
+        return raw[:max_chars]
     blob = json.dumps(digest.get("digests", []), default=str)
     return blob[:max_chars]

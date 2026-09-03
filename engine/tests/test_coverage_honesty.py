@@ -32,7 +32,13 @@ def _mentions(n, words=60):
 
 
 def _run(side_effect):
-    with patch.object(digest.llm, "call_json", side_effect=side_effect), \
+    # A corpus that FITS in one analyst window is now sent whole and never
+    # compressed — correct, and covered in test_digest_is_not_a_chokepoint.py.
+    # These tests are about the map step, so the window is shrunk to force the
+    # corpus through it. Without this they assert about a step that no longer
+    # runs, and pass or fail for the wrong reason.
+    with patch.object(digest, "DIGEST_CONTEXT_CHARS", 4000), \
+         patch.object(digest.llm, "call_json", side_effect=side_effect), \
          patch.object(digest.llm, "bulk_model", lambda: "m"), \
          patch.object(digest.llm, "concurrency", lambda n: 1):
         return digest.build_corpus_digest("Subject", _mentions(60))
@@ -80,9 +86,14 @@ def test_a_clean_run_still_reports_complete():
 
 
 def test_every_failed_chunk_is_named_in_the_ledger():
-    _run(RuntimeError("HTTP 404"))
+    result = _run(RuntimeError("HTTP 404"))
     failed = [r.name for r in stages.current().failures]
-    assert failed and all(name.startswith("digest_chunk:") for name in failed)
+    chunks = [name for name in failed if name.startswith("digest_chunk:")]
+    assert len(chunks) == result["coverage"]["chunks"], "a failed chunk went unnamed"
+    # A run where EVERY pass failed also records the step itself, so the reader
+    # is told the corpus was never compressed rather than having to infer it
+    # from a list of chunk failures.
+    assert "digest" in failed
 
 
 # --- a failed call must not become a scored reading --------------------------
