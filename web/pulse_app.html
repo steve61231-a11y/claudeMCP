@@ -2189,8 +2189,17 @@
       if(LIVE){
         const prior=await fetchProgress(principal,'issue_map',issue);
         if(prior&&prior.payload&&prior.payload.intersection){
-          if(prior.status==='running')out.appendChild(stillRunningNote(prior));
-          renderIssue(out,prior.payload);
+          // Pressing "Map it" starts a NEW run. The stored map from the last
+          // one is worth showing while this one works, but unlabelled it reads
+          // as the result of the run now in progress — which is how a fresh
+          // run appeared to come back with "Analysed 0 of 2" seconds after it
+          // started.
+          renderIssueUnder(out,
+            prior.status==='running' ? stillRunningNote(prior)
+              : noteCard('Previous result',
+                  'The stored map from the last run of this pair. The new run is in '
+                  +'progress and replaces this as its sections land.'),
+            prior.payload);
         }
       }
       const tick=m=>msg.innerHTML='<span class="spinner"></span> '+m;
@@ -2235,16 +2244,16 @@
           // no longer exists anywhere.
           const prog=await fetchProgress(principal,'issue_map',issue);
           if(prog&&prog.payload&&prog.payload.intersection){
-            out.innerHTML='';
-            if(prog.status!=='done')out.appendChild(stillRunningNote(prog));
-            renderIssue(out,prog.payload);
+            renderIssueUnder(out, prog.status!=='done'?stillRunningNote(prog):null,
+                             prog.payload);
           } else if(errorBelongsToRun(prog,jobId)){
             out.appendChild(errCard(prog.error));
           } else {
             try{
               const rec=await api('/api/issue-map/latest?principal='+encodeURIComponent(principal)+'&issue='+encodeURIComponent(issue));
-              out.appendChild(noteCard('Recovered','This is the most recent stored map for this pair — re-run to refresh it.'));
-              renderIssue(out,rec.issue_map);
+              renderIssueUnder(out, noteCard('Recovered',
+                'The most recent stored map for this pair — re-run to refresh it.'),
+                rec.issue_map);
             }catch(_){
               out.appendChild(workingNote(prog, principal+' × '+issue));
             }
@@ -2631,6 +2640,17 @@
       paintEv(null);onGraphSelect(paintEv);
       host.appendChild(c);
     }
+  }
+
+  /** A note ABOVE a rendered map. `renderIssue` clears its host, so appending
+      a note and then rendering into the same element silently destroyed the
+      note — which is why a stored map from an old run appeared with nothing
+      saying it was old. The map gets its own box beneath the note instead. */
+  function renderIssueUnder(out,note,payload){
+    out.innerHTML='';
+    if(note)out.appendChild(note);
+    const box=el('div','');out.appendChild(box);
+    renderIssue(box,payload);
   }
 
   function renderIssue(out,m){

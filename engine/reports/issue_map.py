@@ -195,7 +195,9 @@ def acquire_intersection(
     return mentions
 
 
-def acquire_intersection_documents(discovery_queries: list[str]) -> list[dict]:
+def acquire_intersection_documents(discovery_queries: list[str],
+                                   subject_name: str = "",
+                                   aliases: list[str] | None = None) -> list[dict]:
     """Full-page documents at the intersection, via metasearch discovery.
 
     This is the layer that reaches the material no fixed connector indexes —
@@ -208,8 +210,14 @@ def acquire_intersection_documents(discovery_queries: list[str]) -> list[dict]:
     try:
         from engine.ingestion.discovery_connector import DiscoveryConnector
 
+        # The subject is the PRINCIPAL, not the first query string. Passing the
+        # query meant the on-topic check ran against the literal text
+        # `"Okiya Omtatah" "International Monetary Fund"` — quote marks and all
+        # — which appears in no page on earth, and the surname it derived was
+        # `fund"`. Every discovered document failed the check and the single
+        # richest source of depth returned nothing on every run it ever made.
         return DiscoveryConnector().fetch_documents(
-            discovery_queries[0], [], discovery_queries
+            subject_name or discovery_queries[0], list(aliases or []), discovery_queries
         )
     except Exception as exc:  # noqa: BLE001 — discovery is additive, never required
         stages.current().failed("issue_map:discovery", exc)
@@ -551,6 +559,20 @@ def _nothing_on_topic(principal: str, issue: str, ws, we, mentions: list[dict],
     }
 
 
+def _merge_queries(*groups) -> list[str]:
+    """Every query, in order, without repeats. Case-folded so `"IMF" "Omtatah"`
+    and `"imf" "omtatah"` do not both cost a sweep."""
+    seen: set[str] = set()
+    merged: list[str] = []
+    for group in groups:
+        for query in group or []:
+            key = " ".join(str(query).lower().split())
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(query)
+    return merged
+
+
 def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
                        issue_aliases: list[str] | None,
                        publish) -> tuple[list[dict], dict]:
@@ -595,6 +617,16 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # of it. Add a query per research dimension: background on each half,
         # the conflict, the institutions with formal power, and older material
         # that a recency-ranked search buries.
+        # Match on the NAMES inside the boxes, not the boxes as typed. A
+        # principal of "Odious debt case by Okiya Omtatah" is a claim with a
+        # person inside it; demanding the whole phrase discarded an interview
+        # headlined "Okiya Omtatah: The Truth Behind Kenya's Debt and the IMF
+        # Fall-out" for not mentioning the principal.
+        principal_parts = decompose.decompose(principal)
+        issue_parts = decompose.decompose(issue)
+        match_identities = relevance.merge_terms(identities, principal_parts["identities"])
+        match_issue_terms = relevance.merge_terms(issue_terms, issue_parts["identities"])
+
         dimensions = decompose.research_dimensions(principal, issue)
         dimension_queries = [q for d in dimensions for q in d["queries"]]
         if relevance.needs_market_anchor(principal, issue):
@@ -610,7 +642,12 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         fresh = acquire_intersection(principal, issue, ws, we,
                                      identities=identities, issue_terms=issue_terms)
         publish("stage", f"Sweeping {len(discovery)} discovery probes for full-text sources…")
-        documents = acquire_intersection_documents(discovery)
+        # Match discovered pages against the principal's own names, and against
+        # the issue's — a document about the IMF's Kenya programme is evidence
+        # for the issue side even when it never names him.
+        document_terms = _merge_queries(match_identities, match_issue_terms)
+        documents = acquire_intersection_documents(
+            discovery, subject_name=principal, aliases=document_terms)
 
         stored = _persist_intersection(db, subject, fresh, documents, issue)
         gate = _gate_documents(db, subject)
@@ -628,15 +665,6 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # a run was ever checked — which is how 370 documents of American local
         # news reached the analysts for a Kenyan "senate × forestry" mapping.
         require_market = relevance.needs_market_anchor(principal, issue)
-        # Match on the NAMES inside the boxes, not the boxes as typed. A
-        # principal of "Odious debt case by Okiya Omtatah" is a claim with a
-        # person inside it; demanding the whole phrase discarded an interview
-        # headlined "Okiya Omtatah: The Truth Behind Kenya's Debt and the IMF
-        # Fall-out" for not mentioning the principal.
-        principal_parts = decompose.decompose(principal)
-        issue_parts = decompose.decompose(issue)
-        match_identities = relevance.merge_terms(identities, principal_parts["identities"])
-        match_issue_terms = relevance.merge_terms(issue_terms, issue_parts["identities"])
         # Sort into pools rather than gating on a hard AND. Demanding both
         # halves in every document kept TWO articles out of hundreds for
         # "Odious debt case by Okiya Omtatah" × "IMF", and five analysts then
