@@ -676,6 +676,33 @@ class _PartialReport:
 _PARTIAL_MIN_INTERVAL_SECONDS = 1.0
 
 
+def _has_real_content(value) -> bool:
+    """True when this is genuine content, not the empty/placeholder shape a
+    preview publishes to keep the payload's structure stable while the real
+    number isn't known yet.
+
+    `corpus_preview()` publishes `sentiment_breakdown` early as
+    `{"positive_pct": None, "neutral_pct": None, "negative_pct": None,
+    "total_mentions_analyzed": 0}` — a non-empty dict, so the old check
+    (`v not in (None, [], {}, "")`) marked it "ready" the instant it was
+    published. The checklist then showed a green check and "finished and
+    safe to read" next to a card whose every number was still "—", for as
+    long as the real analysis took to run — seconds when the model answered
+    fast, minutes once it didn't. A dict (or list) counts as real content
+    only if something inside it is non-empty; a scalar counts if it isn't
+    itself None/[]/{}/"" .
+    """
+    if isinstance(value, dict):
+        return any(_has_real_content(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_real_content(v) for v in value)
+    # Plain Python truthiness, not a specific-placeholder check: the preview's
+    # `total_mentions_analyzed: 0` and `positive_pct: None` are both falsy, and
+    # so is every other "not yet known" value this codebase uses (documented
+    # explicitly in generator.py: "None, not 0.0, when nothing was scored").
+    return bool(value)
+
+
 def _publish_partial(job_id: str, politician, payload: dict,
                      window_start: datetime, window_end: datetime) -> None:
     """Shape whatever the pipeline has produced so far into the frontend's
@@ -711,7 +738,7 @@ def _publish_partial(job_id: str, politician, payload: dict,
         # and nothing anywhere said so.
         stages_mod.current().failed("publish_partial", exc)
         return
-    ready = sorted(k for k, v in payload.items() if v not in (None, [], {}, ""))
+    ready = sorted(k for k, v in payload.items() if _has_real_content(v))
     job["partial"] = shaped
     job["sections_ready"] = ready
     # And durably, keyed by subject, so the run outlives this process and this
