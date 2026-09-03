@@ -168,7 +168,7 @@
 
 <div id="zenith">
   <nav class="nav"><div class="wrap">
-    <div class="brand"><svg class="mark" viewBox="0 0 100 62" width="26" height="17" fill="none" stroke="currentColor" stroke-width="4.2" stroke-linejoin="miter" aria-hidden="true"><path d="M4 60 L34 6 L64 60"/><path d="M17 60 L41 17 L64 60" opacity=".8"/><path d="M36 60 L58 22 L80 60" opacity=".65"/><path d="M52 60 L70 12 L96 60" opacity=".8"/></svg>Zenith<span class="tagline">Mũũgĩ</span></div>
+    <div class="brand"><svg class="mark" viewBox="0 0 100 62" width="26" height="17" fill="none" stroke="currentColor" stroke-width="4.2" stroke-linejoin="miter" aria-hidden="true"><path d="M4 60 L34 6 L64 60"/><path d="M17 60 L41 17 L64 60" opacity=".8"/><path d="M36 60 L58 22 L80 60" opacity=".65"/><path d="M52 60 L70 12 L96 60" opacity=".8"/></svg>Mũũgĩ</div>
     <div class="tabs" id="tabs"></div>
     <div class="status" id="status"><span class="sd"></span><span id="statusTxt">connecting…</span></div>
   </div></nav>
@@ -1471,7 +1471,7 @@
     const w=el('div','grid');
     w.appendChild(el('div','',`<div class="eyebrow">Intelligence report</div>
       <h1>Read anyone's public signal.</h1>
-      <div class="sub">A person, politician, organization, ministry or business. Zenith pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
+      <div class="sub">A person, politician, organization, ministry or business. Mũũgĩ pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
     const form=el('div','card glow');
     form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 170px 160px;gap:12px">
       <div><label class="fl">Subject</label><input id="q" placeholder="e.g. William Ruto" autocomplete="off"></div>
@@ -1562,7 +1562,7 @@
         }
         if(!LIVE){ out.appendChild(noteCard('Demo preview','Showing a sample report. Host this file (or open Settings and point it at your API) to run this live for real.')); renderReport(out,DEMO.report,{live:false}); }
         else out.appendChild(el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>Report call failed: ${esc(e.message||e)}</span></div>
-          <div class="muted" style="font-size:13px;margin-top:10px">API base is <b>${esc(CFG.base)}</b>. If that's not your Zenith engine (e.g. it's a static host with no backend), open <b>Settings</b> and set it to your engine URL, then Save. A 404 usually means the request hit something that isn't the engine.</div>`));
+          <div class="muted" style="font-size:13px;margin-top:10px">API base is <b>${esc(CFG.base)}</b>. If that's not your Mũũgĩ engine (e.g. it's a static host with no backend), open <b>Settings</b> and set it to your engine URL, then Save. A 404 usually means the request hit something that isn't the engine.</div>`));
       } finally{ btn.disabled=false; }
     };
     $('#grun',form).onclick=run;
@@ -2842,7 +2842,7 @@
   function settingsView(){
     const w=el('div','grid');
     w.appendChild(el('div','',`<div class="eyebrow">Settings</div><h1>Connect to your engine.</h1>
-      <div class="sub">Point this app at your Zenith engine. Saved on this device only. When these are set and reachable, everything above goes live.</div>`));
+      <div class="sub">Point this app at your Mũũgĩ engine. Saved on this device only. When these are set and reachable, everything above goes live.</div>`));
     const c=el('div','card glow');
     c.innerHTML=`<label class="fl">API base URL</label><input id="sbase" value="${esc(CFG.base)}" placeholder="https://your-engine.onrender.com">
       <label class="fl" style="margin-top:16px">API key (x-api-key) — leave blank if none</label><input id="skey" value="${esc(CFG.key)}" placeholder="optional">

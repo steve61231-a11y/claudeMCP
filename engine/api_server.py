@@ -1972,8 +1972,8 @@ _FRONTEND_HEAD = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#070b12">
-<title>Zenith Intelligence</title>
-<meta name="description" content="Zenith Intelligence platform.">
+<title>Mũũgĩ</title>
+<meta name="description" content="Mũũgĩ intelligence platform.">
 <style>html,body{margin:0;background:#070b12}</style>
 </head>
 <body>
@@ -1988,7 +1988,7 @@ def render_frontend_document() -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
-    """Serve the Zenith frontend from the engine itself, so the app and API
+    """Serve the Mũũgĩ frontend from the engine itself, so the app and API
     share one origin — no separate hosting, no CORS setup, no demo mode. Just
     open the engine's URL and it IS the live app. (Falls back to a tiny notice
     if the web bundle wasn't shipped.)"""
@@ -2003,7 +2003,7 @@ def serve_frontend():
             headers={"Cache-Control": "no-cache, must-revalidate"},
         )
     return HTMLResponse(
-        "<h1>Zenith engine</h1><p>API is live. Frontend bundle not found — "
+        "<h1>Mũũgĩ engine</h1><p>API is live. Frontend bundle not found — "
         "hit <a href='/api/health'>/api/health</a>.</p>",
         status_code=200,
     )

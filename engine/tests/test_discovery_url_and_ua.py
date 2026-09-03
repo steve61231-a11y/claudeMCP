@@ -72,6 +72,9 @@ def test_the_shared_session_identifies_itself():
     """Wikipedia returns 403 to a client that does not."""
     session = http.build_session()
     agent = session.headers.get("User-Agent", "")
-    assert "Zenith" in agent
+    assert "Muugi" in agent
+    # ASCII on purpose: headers are latin-1, and "Mũũgĩ" cannot be encoded in
+    # it — the accented form would raise before the request is sent.
+    agent.encode("latin-1")
     assert agent != "python-requests"
     assert "+http" in agent, "Wikipedia's policy asks for contact information"

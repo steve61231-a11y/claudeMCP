@@ -5,8 +5,10 @@ from urllib3.util.retry import Retry
 DEFAULT_TIMEOUT = 30
 
 
+# ASCII, deliberately: HTTP headers are latin-1 and "Mũũgĩ" is not encodable
+# in it — sending the accented form raises before the request leaves.
 USER_AGENT = (
-    "ZenithIntelligence/1.0 "
+    "Muugi/1.0 "
     "(+https://github.com/steve61231-a11y/claudemcp; political research) "
     "python-requests"
 )
