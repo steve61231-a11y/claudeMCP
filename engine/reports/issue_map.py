@@ -973,11 +973,27 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
         # rendered empty on every map regardless of how much was collected.
         framework_payload["international_context"] = analysis.get("international") or ""
         framework_payload["national_context"] = analysis.get("national") or ""
-        return ifw.build(
+        framework = ifw.build(
             issue=issue, principal=principal, payload=framework_payload,
             stakeholders=stakeholders, relationships=relationships, events=events,
             desired_outcome=desired_outcome,
         )
+
+        # "— not yet established from the evidence" blames the corpus. Usually
+        # the corpus is fine and the analyst that writes this section never
+        # answered, and those are opposite findings: one says the record is
+        # silent, the other says we did not read it. Say which.
+        background = framework.get("background_and_context") or {}
+        if not (background.get("international") or background.get("national")):
+            wrote_nothing = not analysis.get("key_actors") or bool(
+                analysis.get("derived_sections"))
+            background["unavailable"] = (
+                "The analyst that writes this section did not answer, so it was not "
+                "written. This is not a finding about the record."
+                if wrote_nothing else
+                "No document collected described the issue in its own right, "
+                "independent of the principal.")
+        return framework
     except Exception as exc:  # the framework is a view; never let it take the map down
         # The Issue Framework tab simply never appears when this fails, which
         # is indistinguishable from a subject the framework had nothing to say

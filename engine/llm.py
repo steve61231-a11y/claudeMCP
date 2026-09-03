@@ -159,7 +159,17 @@ def short_budget(seconds: float):
 
 
 def _total_budget() -> float:
-    return _BUDGET_OVERRIDE if _BUDGET_OVERRIDE is not None else OPENAI_COMPATIBLE_TOTAL_BUDGET
+    base = _BUDGET_OVERRIDE if _BUDGET_OVERRIDE is not None else OPENAI_COMPATIBLE_TOTAL_BUDGET
+    # Evidence accumulates. The first failure could be a bad minute and is worth
+    # the full budget; the fourth in a row is a provider that is not serving us,
+    # and spending four more minutes proving it again is time taken from the
+    # reader. The breaker trips shortly after this and stops the calls entirely.
+    failures = _CONSECUTIVE_FAILURES
+    if failures >= 3:
+        return min(base, 45.0)
+    if failures >= 1:
+        return min(base, 120.0)
+    return base
 
 
 def budget_for(expected_output_tokens: int) -> int:
@@ -191,11 +201,25 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     from engine import health  # local import: health imports llm
 
     tracker = health.current()
+
+    # A provider refusing everything must not cost the reader the full retry
+    # budget on every remaining call. Past the threshold, fail here — before a
+    # request is sent — so the run reaches whatever it can produce without a
+    # model in minutes rather than in an hour.
+    if _breaker_blocks():
+        exc = ProviderUnavailable(
+            f"provider has failed {_CONSECUTIVE_FAILURES} calls in a row; not retrying "
+            "this one. The run continues on what can be produced without a model.")
+        tracker.record_failure(exc)
+        raise exc
+
     try:
         result = _call_json(prompt, max_tokens=max_tokens, model=model)
     except BaseException as exc:
+        _record_failure()
         tracker.record_failure(exc)
         raise
+    _record_success()
     tracker.record_success()
     return result
 
@@ -408,6 +432,71 @@ def adaptive_gap() -> float:
 def reset_adaptive_gap() -> None:
     global _ADAPTIVE_GAP
     _ADAPTIVE_GAP = 0.0
+    reset_breaker()
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker.
+#
+# Every call is allowed four attempts inside a 240-second budget. That is the
+# right shape for a provider having a bad minute. It is the wrong shape for a
+# provider that is refusing everything: a report makes fifteen to twenty calls,
+# and paying the full budget for each turns a dead backend into a forty-five
+# minute wait that ends in an empty report. The reader would rather be told in
+# two minutes.
+#
+# So: count consecutive total failures. Past the threshold, fail immediately
+# instead of retrying, and let one call in every PROBE_EVERY through to find
+# out whether the provider has come back. Any success closes the breaker.
+# ---------------------------------------------------------------------------
+
+_BREAKER_LOCK = threading.Lock()
+_CONSECUTIVE_FAILURES = 0
+_CALLS_SINCE_TRIP = 0
+BREAKER_THRESHOLD = 5
+BREAKER_PROBE_EVERY = 6
+
+
+class ProviderUnavailable(RuntimeError):
+    """The provider has failed enough consecutive calls that retrying each one
+    only costs the reader time. Raised without contacting it."""
+
+
+def reset_breaker() -> None:
+    global _CONSECUTIVE_FAILURES, _CALLS_SINCE_TRIP
+    with _BREAKER_LOCK:
+        _CONSECUTIVE_FAILURES = 0
+        _CALLS_SINCE_TRIP = 0
+
+
+def breaker_state() -> dict:
+    return {"consecutive_failures": _CONSECUTIVE_FAILURES,
+            "open": _CONSECUTIVE_FAILURES >= BREAKER_THRESHOLD,
+            "threshold": BREAKER_THRESHOLD}
+
+
+def _record_success() -> None:
+    global _CONSECUTIVE_FAILURES, _CALLS_SINCE_TRIP
+    with _BREAKER_LOCK:
+        _CONSECUTIVE_FAILURES = 0
+        _CALLS_SINCE_TRIP = 0
+
+
+def _record_failure() -> None:
+    global _CONSECUTIVE_FAILURES
+    with _BREAKER_LOCK:
+        _CONSECUTIVE_FAILURES += 1
+
+
+def _breaker_blocks() -> bool:
+    """Should this call be refused without trying? Every PROBE_EVERY-th call
+    goes through regardless, so a provider that recovers is noticed."""
+    global _CALLS_SINCE_TRIP
+    with _BREAKER_LOCK:
+        if _CONSECUTIVE_FAILURES < BREAKER_THRESHOLD:
+            return False
+        _CALLS_SINCE_TRIP += 1
+        return _CALLS_SINCE_TRIP % BREAKER_PROBE_EVERY != 0
 
 
 def _throttle() -> None:

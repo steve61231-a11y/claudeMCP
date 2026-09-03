@@ -277,6 +277,24 @@ def enrich_report_payload(
         pool.shutdown(wait=False, cancel_futures=True)
 
     if mentions:
+        # Before the synthesizer reads the analysts' output, fill the sections
+        # they did not write. When the provider refuses, every analyst returns
+        # its fallback and the reader waits forty-five minutes for a page with
+        # sentiment on it and nothing else — while the mentions sit collected,
+        # stored and counted. Which platforms carried the story, who the
+        # loudest accounts were and when things happened are questions about
+        # counting, and counting cannot refuse.
+        try:
+            from engine.reports import report_floor
+
+            filled = report_floor.fill(payload, mentions, politician_name)
+            for key in filled:
+                publish(key, payload[key])
+            if filled:
+                publish("derived_sections", payload.get("derived_sections"))
+        except Exception as exc:  # noqa: BLE001 — a floor must never cost a report
+            stages.current().failed("report_floor", exc)
+
         # Synthesizer reads every analyst's output ("the major AI that
         # analyzes all of that"), then the grounding verifier strips any
         # unsupported biographical/status claims from the free-prose sections.

@@ -1037,8 +1037,10 @@
     [['Outline',bg.outline],['International approach',bg.international],['National approach',bg.national]]
       .forEach(([label,text])=>{
         s1.appendChild(el('div','lbl',label));
+        // "not yet established from the evidence" blamed the corpus for a
+        // section the model never wrote. Those are opposite findings.
         s1.appendChild(text?el('div','muted',`<div style="margin:6px 0 14px;white-space:pre-wrap">${esc(text)}</div>`)
-                           :fwEmpty('not yet established from the evidence'));
+                           :fwEmpty(bg.unavailable||'not yet established from the evidence'));
       });
     s1.appendChild(el('div','lbl','Timeline of major developments'));
     s1.appendChild(timelineChart(bg.timeline_of_major_developments||[]));
@@ -1988,6 +1990,8 @@
       </div>`;
     wrap.appendChild(head);
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
+    const db=derivedBanner(r.derivedSections||r.derived_sections);
+    if(db)wrap.appendChild(db);
 
     // A run where the model did not answer is NOT a report. Empty sections
     // then mean "the backend was down", not "there was nothing to find", and
@@ -2724,6 +2728,25 @@
     if(note)out.appendChild(note);
     const box=el('div','');out.appendChild(box);
     renderIssue(box,payload);
+  }
+
+  /** Sections a model never wrote, on the report page. Same rule as the issue
+      map: an unmarked derived section is a lie about how much work was done. */
+  function derivedBanner(keys){
+    if(!keys||!keys.length)return null;
+    const label={platform_pulse:'Platform pulse',influencer_stances:'Loudest accounts',
+                 timeline:'Timeline',public_voice:'Public voice',
+                 executive_summary:'Executive summary'};
+    const c=el('div','card');
+    c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+    c.innerHTML=`<div class="lbl" style="color:var(--amber)">Counted, not read</div>
+      <div style="font-size:14px;margin-top:8px">The analyst did not return
+      ${keys.map(k=>esc(label[k]||k)).join(', ')}. Those sections were built by counting
+      platforms, accounts, dates and recurring terms in the documents collected — no model
+      read them.</div>
+      <div class="muted" style="font-size:12.5px;margin-top:6px">Tone and stance there are
+      <b>not established</b>. Every item still links to the document it came from.</div>`;
+    return c;
   }
 
   function renderIssue(out,m){
