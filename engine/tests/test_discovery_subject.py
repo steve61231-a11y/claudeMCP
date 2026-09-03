@@ -21,6 +21,7 @@ from engine.reports import issue_map
 class _Recorder:
     def __init__(self):
         self.call = None
+        self.last_error = None
 
     def fetch_documents(self, subject_name, aliases, queries):
         self.call = {"subject": subject_name, "aliases": list(aliases),
@@ -81,3 +82,30 @@ def test_the_research_dimensions_are_actually_searched():
 def test_merging_queries_folds_case_and_keeps_order():
     merged = issue_map._merge_queries(['"a" "b"', "x"], ['"A" "B"', "y"])
     assert merged == ['"a" "b"', "x", "y"]
+
+
+def test_a_broken_searxng_is_reported_not_swallowed(discovery):
+    """A dead instance and an empty result set returned the same []. The run
+    then described a thin corpus as if the sweep had run and found nothing."""
+    discovery.last_error = "HTTP 403 from http://searx.test/search"
+    report: dict = {}
+    issue_map.acquire_intersection_documents(QUERIES, subject_name="P", report=report)
+    assert report["error"] == "HTTP 403 from http://searx.test/search"
+
+
+def test_a_missing_url_says_so_rather_than_looking_empty(monkeypatch):
+    monkeypatch.setattr(issue_map.settings, "enable_discovery", True)
+    monkeypatch.setattr(issue_map.settings, "searxng_url", "")
+    report: dict = {}
+    assert issue_map.acquire_intersection_documents(
+        QUERIES, subject_name="P", report=report) == []
+    assert "SEARXNG_URL" in report["skipped"]
+    assert report["configured"] is False
+
+
+def test_a_working_sweep_reports_what_it_found(discovery):
+    report: dict = {}
+    issue_map.acquire_intersection_documents(QUERIES, subject_name="P", report=report)
+    assert report["documents"] == 1
+    assert report["error"] is None and report["skipped"] is None
+    assert report["queries"] == len(QUERIES)

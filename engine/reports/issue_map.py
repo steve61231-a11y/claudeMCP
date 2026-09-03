@@ -197,7 +197,8 @@ def acquire_intersection(
 
 def acquire_intersection_documents(discovery_queries: list[str],
                                    subject_name: str = "",
-                                   aliases: list[str] | None = None) -> list[dict]:
+                                   aliases: list[str] | None = None,
+                                   report: dict | None = None) -> list[dict]:
     """Full-page documents at the intersection, via metasearch discovery.
 
     This is the layer that reaches the material no fixed connector indexes —
@@ -205,7 +206,27 @@ def acquire_intersection_documents(discovery_queries: list[str],
     it is the single biggest source of depth available to an issue map. The
     issue map never used it.
     """
-    if not (settings.enable_discovery and settings.searxng_url and discovery_queries):
+    # Discovery failing is not the same as discovery finding nothing, and the
+    # two were indistinguishable from outside: a dead SearXNG returned [] and
+    # the run carried on reporting a thin corpus as if the sweep had run and
+    # come back empty. `report` is filled in either way and travels with the
+    # map, so a broken instance is visible instead of inferred.
+    diagnostics = report if report is not None else {}
+    diagnostics.update({
+        "enabled": bool(settings.enable_discovery),
+        "configured": bool(settings.searxng_url),
+        "queries": len(discovery_queries or []),
+        "documents": 0, "error": None, "skipped": None,
+    })
+    if not settings.enable_discovery:
+        diagnostics["skipped"] = "discovery is switched off"
+        return []
+    if not settings.searxng_url:
+        diagnostics["skipped"] = "SEARXNG_URL is not set — the deepest source of material is unreachable"
+        stages.current().failed("issue_map:discovery", diagnostics["skipped"])
+        return []
+    if not discovery_queries:
+        diagnostics["skipped"] = "no queries to sweep"
         return []
     try:
         from engine.ingestion.discovery_connector import DiscoveryConnector
@@ -216,10 +237,23 @@ def acquire_intersection_documents(discovery_queries: list[str],
         # — which appears in no page on earth, and the surname it derived was
         # `fund"`. Every discovered document failed the check and the single
         # richest source of depth returned nothing on every run it ever made.
-        return DiscoveryConnector().fetch_documents(
+        connector = DiscoveryConnector()
+        documents = connector.fetch_documents(
             subject_name or discovery_queries[0], list(aliases or []), discovery_queries
         )
+        diagnostics["documents"] = len(documents)
+        last_error = getattr(connector, "last_error", None)
+        diagnostics["error"] = last_error
+        if last_error:
+            stages.current().failed("issue_map:discovery", last_error)
+        elif not documents:
+            stages.current().empty("issue_map:discovery",
+                                   f"{len(discovery_queries)} queries returned no usable pages")
+        else:
+            stages.current().ok("issue_map:discovery", f"{len(documents)} documents")
+        return documents
     except Exception as exc:  # noqa: BLE001 — discovery is additive, never required
+        diagnostics["error"] = f"{type(exc).__name__}: {exc}"[:200]
         stages.current().failed("issue_map:discovery", exc)
         return []
 
@@ -646,8 +680,14 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # the issue's — a document about the IMF's Kenya programme is evidence
         # for the issue side even when it never names him.
         document_terms = _merge_queries(match_identities, match_issue_terms)
+        discovery_report: dict = {}
         documents = acquire_intersection_documents(
-            discovery, subject_name=principal, aliases=document_terms)
+            discovery, subject_name=principal, aliases=document_terms,
+            report=discovery_report)
+        if discovery_report.get("error") or discovery_report.get("skipped"):
+            publish("stage", "Discovery sweep unavailable — "
+                             + str(discovery_report.get("error")
+                                   or discovery_report.get("skipped")))
 
         stored = _persist_intersection(db, subject, fresh, documents, issue)
         gate = _gate_documents(db, subject)
@@ -690,6 +730,7 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             "identity_variants": len(identities),
             "issue_terms": issue_terms,
             "discovery_probes": len(discovery),
+            "discovery": discovery_report,
             "fresh_mentions": len(fresh),
             "fresh_documents": len(documents),
             **stored,

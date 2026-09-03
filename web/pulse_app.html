@@ -2471,6 +2471,25 @@
            (d.queries||[]).slice(0,4).map(q=>'<span class="chip" style="font-size:11px">'+esc(q)+'</span>').join('')}</div>`)));
       host.appendChild(rp);
     }
+    // Whether the deepest layer of the search actually ran. A dead SearXNG
+    // and a sweep that found nothing produced the same thin map, and nothing
+    // on the page could tell them apart.
+    const disc=(m.acquisition||{}).discovery;
+    if(disc&&(disc.error||disc.skipped)){
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+      c.innerHTML=`<div class="lbl" style="color:var(--amber)">Discovery sweep did not run</div>
+        <div style="font-size:14px;margin-top:8px">${esc(disc.error||disc.skipped)}</div>
+        <div class="muted" style="font-size:12.5px;margin-top:6px">This is the layer that reaches
+        court filings, committee reports and archived pages — ${fmt(disc.queries)} queries were
+        ready to run. Everything below was built without it.</div>`;
+      host.appendChild(c);
+    } else if(disc&&disc.documents!=null){
+      host.appendChild(el('div','card',
+        `<div class="lbl">Discovery sweep</div>
+         <div class="muted" style="font-size:13px;margin-top:4px">${fmt(disc.queries)} queries returned
+         ${fmt(disc.documents)} full-text documents.</div>`));
+    }
     if(m.intersection_gap){
       const c=el('div','card');
       c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
