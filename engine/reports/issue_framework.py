@@ -433,10 +433,26 @@ def build_data_overview(payload: dict, stakeholders: list[dict], events: list[di
     if not stakeholders:
         limitations.append("No stakeholders were identified — the mapping below is not yet supported.")
 
+    # "documents examined / on topic" used to read ONLY the disambiguation
+    # gate (evidence_gate) — which gates NEW discovery documents specifically,
+    # and is legitimately 0 whenever the discovery sweep itself found nothing
+    # new to gate. That produced "documents examined: 0, on topic: 0" on a
+    # report that had just said, two sections earlier, "Read 22 documents in
+    # full" and "22 of 29 documents mentioned both terms" — the corpus the
+    # analysis actually ran on is relevance_filter's, and it is almost always
+    # the one populated. Prefer it; fall back to the narrower discovery gate
+    # only when there is no corpus-level relevance filter to report at all.
+    if relevance_filter:
+        documents_examined = relevance_filter.get("examined")
+        documents_on_topic = relevance_filter.get("kept")
+    else:
+        documents_examined = gate.get("examined")
+        documents_on_topic = gate.get("on_topic")
+
     return {
         "data_used": {
-            "documents_examined": gate.get("examined"),
-            "documents_on_topic": gate.get("on_topic"),
+            "documents_examined": documents_examined,
+            "documents_on_topic": documents_on_topic,
             "events_resolved": len(events),
             "stakeholders_identified": len(stakeholders),
             "sources_scored": credibility.get("scored"),

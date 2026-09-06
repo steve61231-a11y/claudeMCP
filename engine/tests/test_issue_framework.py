@@ -210,6 +210,33 @@ def test_past_events_are_not_offered_as_upcoming_opportunities():
 
 # --- 6 Data overview -------------------------------------------------------
 
+def test_documents_examined_reads_the_corpus_relevance_filter_not_the_discovery_gate():
+    """A live report said "Read 22 documents in full" and "22 of 29 documents
+    mentioned both terms" in one section, then "documents examined: 0,
+    documents on topic: 0" in Data overview — self-contradictory. The gate
+    that was zero (`evidence_gate`) gates NEW discovery documents specifically
+    and is legitimately 0 whenever the discovery sweep found nothing new; the
+    corpus the analysis actually ran on is relevance_filter's, and that is
+    what "documents examined / on topic" must report.
+    """
+    payload = {
+        "acquisition": {
+            "relevance_filter": {"examined": 29, "kept": 22, "dropped": 7},
+            "evidence_gate": {"examined": 0, "on_topic": 0, "off_topic": 0, "ambiguous": 0},
+        },
+    }
+    overview = ifw.build_data_overview(payload, [{"name": "s"}], [])
+    assert overview["data_used"]["documents_examined"] == 29
+    assert overview["data_used"]["documents_on_topic"] == 22
+
+
+def test_documents_examined_falls_back_to_the_discovery_gate_with_no_relevance_filter():
+    payload = {"evidence_gate": {"examined": 5, "on_topic": 3}}
+    overview = ifw.build_data_overview(payload, [], [])
+    assert overview["data_used"]["documents_examined"] == 5
+    assert overview["data_used"]["documents_on_topic"] == 3
+
+
 def test_weak_spots_are_disclosed_not_hidden():
     """'To ensure that the user is aware of potential weak spots'"""
     payload = {"evidence_gate": {"examined": 50, "on_topic": 40, "ambiguous": 6},
