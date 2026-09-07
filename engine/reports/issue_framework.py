@@ -453,7 +453,12 @@ def build_data_overview(payload: dict, stakeholders: list[dict], events: list[di
         "data_used": {
             "documents_examined": documents_examined,
             "documents_on_topic": documents_on_topic,
-            "events_resolved": len(events),
+            # Named "_total", not "_resolved", because build_background()
+            # reports the same `events` list split into events_in_scope /
+            # events_excluded_by_cutoff a few lines later in this same
+            # payload — two genuinely different populations (all vs.
+            # within the cutoff window), not a discrepancy to reconcile.
+            "events_total": len(events),
             "stakeholders_identified": len(stakeholders),
             "sources_scored": credibility.get("scored"),
         },

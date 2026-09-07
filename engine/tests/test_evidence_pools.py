@@ -99,3 +99,24 @@ def test_blending_puts_the_intersection_first_and_caps_the_background():
     assert [d["text"] for d in blended[:3]] == ["c0", "c1", "c2"]
     assert len(blended) == 3 + issue_map.POOL_BUDGET["principal_side"] \
         + issue_map.POOL_BUDGET["issue_side"]
+
+
+def test_kept_is_reconciled_to_what_was_actually_blended_in():
+    """partition_corpus's "kept" counts every relevant document before the
+    per-pool budget caps what an analyst reads. Left alone, Data Overview
+    would report "documents on topic: 1003" while the digest and coverage
+    chips report the much smaller, budget-capped corpus actually analysed —
+    the exact class of self-contradicting report already fixed once."""
+    from engine.reports import issue_map
+
+    pools = {
+        "core": [{"text": f"c{i}", "posted_at": "2026-01-01"} for i in range(3)],
+        "principal_side": [{"text": f"p{i}", "posted_at": "2026-01-01"}
+                           for i in range(500)],
+        "issue_side": [{"text": f"i{i}", "posted_at": "2026-01-01"} for i in range(500)],
+    }
+    corpus = issue_map._blend_pools(pools)
+    report = issue_map._reconcile_relevance_report(
+        {"examined": 1003, "kept": 1003, "dropped": 0}, corpus)
+    assert report["kept"] == len(corpus) == 403
+    assert report["dropped"] == 1003 - 403

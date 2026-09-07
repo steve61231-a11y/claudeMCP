@@ -121,3 +121,23 @@ def test_no_dates_at_all_says_so_rather_than_showing_nothing():
     out = issue_framework.build_sequencing({"timeline_of_major_developments": []})
     assert out["engagement_timeline"] == []
     assert "no sequence can be built" in out["note"].lower()
+
+
+def test_events_single_source_count_reads_the_same_corroboration_as_the_timeline():
+    """ISSUE_TIMELINE_PROMPT never asks the model for a "sources" field, so
+    reading moment.get("sources") here always landed on None -> 0, meaning
+    build_data_overview's single_source count treated EVERY event as
+    single-source regardless of what triangulation.annotate (run earlier in
+    the same pipeline, over the same timeline) had already established from
+    real corroborating quotes."""
+    analysis = dict(ANALYSIS)
+    analysis["timeline"] = [
+        {"date": "2026-06-01", "event": "Okiya Omtatah files against National Treasury",
+         "corroboration": {"independent_sources": 3, "confirmed": True,
+                           "outlets": ["nation.africa", "standardmedia.co.ke", "the-star.co.ke"],
+                           "label": "Confirmed by 3 independent sources"}},
+    ]
+    framework = issue_map._issue_framework("Okiya Omtatah", "IMF", {"coverage": {}}, analysis)
+    limitations = framework["data_overview"]["limitations"]
+    assert not any("rest on a single source" in note for note in limitations), \
+        "an event corroborated by 3 outlets was still counted as single-source"

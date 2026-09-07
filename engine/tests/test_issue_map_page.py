@@ -265,3 +265,21 @@ def test_a_resolved_citation_becomes_a_real_clickable_link(mapped):
 def test_a_single_source_verdict_is_labelled_unconfirmed_not_hidden(mapped):
     body = mapped[0].inner_text("body").lower()
     assert "reported by a single source" in body
+
+
+def test_the_timeline_has_a_hoverable_clickable_strip(mapped):
+    """The CEO audience wants the shape of events at a glance, not a wall of
+    text. The strip is additive — it must not replace the full list below."""
+    page = mapped[0]
+    nodes = page.locator(".tl-strip-node")
+    assert nodes.count() == len(_map()["intersection"]["timeline"])
+    # The full list is still there underneath, unreduced.
+    assert page.locator("[data-tlidx]").count() == len(_map()["intersection"]["timeline"])
+
+
+def test_clicking_a_timeline_point_jumps_to_its_entry_below(mapped):
+    page = mapped[0]
+    nodes = page.locator(".tl-strip-node")
+    nodes.nth(1).click()
+    page.wait_for_timeout(300)
+    assert nodes.nth(1).evaluate("n => n.classList.contains('sel')")

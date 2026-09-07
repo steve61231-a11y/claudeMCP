@@ -599,6 +599,18 @@ def _blend_pools(pools: dict) -> list[dict]:
     return blended
 
 
+def _reconcile_relevance_report(relevance_report: dict, corpus: list[dict]) -> dict:
+    """partition_corpus's "kept" counts every relevant document found, before
+    _blend_pools caps each pool to POOL_BUDGET. Once blended, "kept" has to
+    mean what the analyst actually reads — otherwise Data Overview reports
+    one "documents on topic" number while the digest and coverage chips
+    report the smaller, budget-capped count, and the two disagree in the
+    same report."""
+    relevance_report["kept"] = len(corpus)
+    relevance_report["dropped"] = relevance_report["examined"] - len(corpus)
+    return relevance_report
+
+
 def _publish_graph(principal, issue, analysis, framework, mentions, payload, publish):
     """Build the graph and hand it to the reader. Never at the cost of the map:
     a view that fails is a missing view, not a failed investigation."""
@@ -789,6 +801,7 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         relevance_report["matched_on"] = {
             "principal": match_identities[:6], "issue": match_issue_terms[:6]}
         corpus = _blend_pools(pools)
+        relevance_report = _reconcile_relevance_report(relevance_report, corpus)
         counts = relevance_report["pools"]
         publish("stage",
                 f"{counts[relevance.POOL_CORE]} documents on the intersection, "
@@ -971,11 +984,18 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
             title = moment.get("event")
             if not title:
                 continue
+            # "sources" is never written by the analyst prompt — reading it
+            # here always landed on None, so this event was counted as
+            # single-source in Data Overview regardless of what the SAME
+            # moment's `corroboration` (built by triangulation.annotate,
+            # from this exact timeline's citations) says a few sections
+            # later in the same report.
+            corroboration = moment.get("corroboration") or {}
             events.append({
                 "title": title,
                 "occurred_at": moment.get("date") or None,
                 "event_type": "intersection",
-                "independent_domains": moment.get("sources"),
+                "independent_domains": corroboration.get("independent_sources"),
             })
 
         relationships = _actor_relationships(analysis, {s["name"] for s in stakeholders})

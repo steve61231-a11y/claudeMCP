@@ -148,6 +148,16 @@
     background:var(--sky2);box-shadow:0 0 0 3px rgba(56,189,248,.15)}
   #zenith .tl-date{font-size:11px;color:var(--sky2);font-weight:700;letter-spacing:.04em}
   #zenith .tl-event{font-size:14px;margin:2px 0 4px}
+  #zenith .tl-strip{position:relative;padding:26px 14px 8px;overflow-x:auto;overflow-y:visible}
+  #zenith .tl-strip svg{display:block;overflow:visible}
+  #zenith .tl-strip-node{cursor:pointer}
+  #zenith .tl-strip-node circle{transition:r .15s,fill .15s}
+  #zenith .tl-strip-node:hover circle,#zenith .tl-strip-node.sel circle{r:9}
+  #zenith .tl-tip{position:absolute;z-index:20;max-width:260px;background:var(--panel2,#111);
+    border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:12.5px;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none;transform:translate(-50%,-100%)}
+  #zenith .tl-tip .tl-tip-date{color:var(--sky2);font-weight:700;font-size:11px;margin-bottom:4px}
+  #zenith .tl-strip-hint{font-size:11.5px;color:var(--mut);margin-top:2px}
   #zenith .delta-stat{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:16px}
   #zenith .delta-value{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:4px 0}
   #zenith .delta-change{font-size:12px;font-weight:700}
@@ -659,6 +669,55 @@
       wrap.appendChild(row);
       setTimeout(()=>{row.style.transition='opacity .4s, transform .4s';row.style.opacity='1';row.style.transform='none';},60*idx);
     });
+    return wrap;
+  }
+
+  /** Compact hoverable/clickable timeline strip for the Issue Map. CEOs get
+      the shape of events at a glance; hovering a point shows what happened,
+      clicking it jumps to the full entry in the list below. The list below
+      is untouched — this never replaces or trims the underlying data, only
+      adds a faster way to scan it. */
+  function interactiveTimelineStrip(items,onSelect){
+    const wrap=el('div','tl-strip');
+    if(!items.length)return wrap;
+    const W=Math.max(560,items.length*90),H=54,y=27;
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('width',W);svg.setAttribute('height',H);
+    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    const line=document.createElementNS(svg.namespaceURI,'line');
+    line.setAttribute('x1',24);line.setAttribute('x2',W-24);
+    line.setAttribute('y1',y);line.setAttribute('y2',y);
+    line.style.stroke='var(--line2)';line.setAttribute('stroke-width','2');
+    svg.appendChild(line);
+    const tip=el('div','tl-tip');tip.style.display='none';
+    items.forEach((t,idx)=>{
+      const x=24+(W-48)*(items.length===1?0.5:idx/(items.length-1));
+      const tc=t.corroboration;
+      const fill=tc?(tc.confirmed?'var(--pos)':'var(--amber)'):'var(--sky2)';
+      const g=document.createElementNS(svg.namespaceURI,'g');
+      g.setAttribute('class','tl-strip-node');
+      const c=document.createElementNS(svg.namespaceURI,'circle');
+      c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',6);
+      c.style.fill=fill;c.style.stroke='var(--bg,#0a0e14)';c.setAttribute('stroke-width','2');
+      g.appendChild(c);svg.appendChild(g);
+      const show=()=>{
+        tip.style.display='block';
+        tip.innerHTML=`<div class="tl-tip-date">${esc(t.date||t.when||'undated')}</div>
+          <div>${esc(String(t.event||'').slice(0,180))}${String(t.event||'').length>180?'…':''}</div>
+          ${tc?`<div class="muted" style="margin-top:4px">${esc(tc.label)}</div>`:''}`;
+        tip.style.left=x+'px';tip.style.top=(y-8)+'px';
+      };
+      g.addEventListener('mouseenter',show);
+      g.addEventListener('mouseleave',()=>{tip.style.display='none';});
+      g.addEventListener('click',()=>{
+        wrap.querySelectorAll('.tl-strip-node').forEach(n=>n.classList.remove('sel'));
+        g.classList.add('sel');
+        if(onSelect)onSelect(idx);
+      });
+    });
+    wrap.appendChild(svg);
+    wrap.appendChild(tip);
+    wrap.appendChild(el('div','tl-strip-hint','Hover a point for the moment · click to jump to it below'));
     return wrap;
   }
 
@@ -2759,6 +2818,13 @@
     if(tl.length){
       const c=el('div','card');
       const head=el('div','');c.appendChild(head);
+      const jumpTo=idx=>{
+        const row=body.querySelector(`[data-tlidx="${idx}"]`);
+        if(row){row.scrollIntoView({behavior:'smooth',block:'center'});
+          row.style.transition='background .2s';row.style.background='rgba(56,189,248,.14)';
+          setTimeout(()=>{row.style.background='';},900);}
+      };
+      c.appendChild(interactiveTimelineStrip(tl,jumpTo));
       const body=el('div','');c.appendChild(body);
       // Selecting a node in the graph filters this to the moments that node is
       // connected to. That connection is the graph's own edges, so the two
@@ -2784,13 +2850,15 @@
         head.innerHTML=`<div class="lbl">Timeline</div>
           <div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
         body.innerHTML='';
-        (shown.length?shown:tl).forEach(t=>{const tc=t.corroboration;body.appendChild(el('div','mentr',
+        (shown.length?shown:tl).forEach(t=>{const tc=t.corroboration;const row=el('div','mentr',
           `<div class="row" style="gap:10px;align-items:center;justify-content:space-between">
              <div class="row" style="gap:10px;align-items:center">
                <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
                ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
              ${tc?`<span class="pill ${tc.confirmed?'pos':'amber'}" style="font-size:11px" title="${esc(tc.outlets.join(', '))}">${esc(tc.label)}</span>`:''}</div>
-           <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`));});
+           <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`);
+          row.setAttribute('data-tlidx',tl.indexOf(t));
+          body.appendChild(row);});
       };
       paint(null);
       onGraphSelect(paint);
