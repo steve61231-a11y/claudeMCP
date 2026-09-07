@@ -180,6 +180,25 @@
   const $ = (s,r)=> (r||document).querySelector(s);
   const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
   const esc = s => String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+  /** [1], [2] markers left by citations.linkify_analysis (server-side), turned
+      into real clickable citations. Input is already esc()'d, so the only
+      thing this touches is literal "[" digit "]" runs — safe to inject a
+      trusted-source href into, since the URL comes from our own analysis
+      object, never from the escaped text itself. An unresolved ref (url is
+      null) renders as a plain, undecorated number rather than a dead link —
+      the honest state is "cited, source not traced", not a broken click. */
+  function linkifyRefs(escapedHtml, cites){
+    if(!cites||!cites.length)return escapedHtml;
+    const byN={};cites.forEach(c=>byN[c.n]=c);
+    return escapedHtml.replace(/\[(\d+)\]/g,(whole,n)=>{
+      const c=byN[n];
+      if(!c)return whole;
+      if(!c.url)return `<sup class="muted" style="font-size:10px" title="source not traced">[${n}]</sup>`;
+      return `<sup><a class="src-link" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" `
+        +`title="${esc(c.platform||'source')}" style="font-size:10px">[${n}]</a></sup>`;
+    });
+  }
   const fmt = n => (n==null?'—':Number(n).toLocaleString());
   const pct = n => (n==null?'—':Math.round(n)+'%');
 
@@ -206,6 +225,33 @@
     key:  store('zenith_key')  || ''
   };
   let LIVE = false;
+
+  /** Fetch a PDF (authenticated via header, never in the URL) and hand it to
+      the browser's own download flow — createObjectURL + a synthetic click,
+      the standard pattern, not the sandboxed-Artifact one; this is a real
+      deployed page and downloads work normally here. */
+  async function downloadPdf(path, filename, btn, msg){
+    if(btn)btn.disabled=true;
+    if(msg)msg.textContent='Building PDF…';
+    try{
+      const h={};if(CFG.key)h['x-api-key']=CFG.key;
+      const res=await fetch(CFG.base.replace(/\/$/,'')+path,{headers:h});
+      if(!res.ok){
+        const body=await res.text().catch(()=>'');
+        throw new Error('HTTP '+res.status+(body?': '+body.slice(0,200):''));
+      }
+      const blob=await res.blob();
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=filename;document.body.appendChild(a);a.click();
+      a.remove();URL.revokeObjectURL(url);
+      if(msg)msg.textContent='';
+    }catch(e){
+      if(msg)msg.textContent='Download failed: '+e.message;
+    }finally{
+      if(btn)btn.disabled=false;
+    }
+  }
 
   async function api(path, opts){
     opts = opts||{};
@@ -1992,12 +2038,20 @@
         ${meta&&meta.stale_fallback?'<span class="pill amber">stale fallback</span>':''}
         ${r.grade&&r.grade.production===false?`<span class="pill neg" title="${esc(r.grade.warning||'')}">⚠ Test-grade · ${esc(r.grade.backend||'')}</span>`:''}
       </div></div>
-      <div class="row" style="margin-top:12px;gap:16px">
+      <div class="row" style="margin-top:12px;gap:16px;align-items:center">
         <span class="chip">Updated ${esc((r.generatedAt||'').slice(0,16).replace('T',' '))||'—'}</span>
         <span class="chip">${fmt(fresh.mentionsLast24h)} new · 24h</span>
         <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
+        <button class="btn ghost" id="dlPdf" style="margin-left:auto">Download PDF</button>
+        <span class="muted" id="dlMsg" style="font-size:12.5px"></span>
       </div>`;
     wrap.appendChild(head);
+    // A file to hand to someone outside this app — no link, no login, just a
+    // PDF of exactly what this page shows right now.
+    $('#dlPdf',head).onclick=()=>downloadPdf(
+      '/api/report/download?name='+encodeURIComponent(r.name||''),
+      (r.name||'report').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'-report.pdf',
+      $('#dlPdf',head), $('#dlMsg',head));
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
     // Nothing was collected. Rendering the usual empty sections made this look
     // like a subject with no story, or like the app was broken. It is neither:
@@ -2576,6 +2630,22 @@
         the document it came from.</div>`;
       host.appendChild(c);
     }
+    // House-style violations a prompt instruction can't guarantee it prevented.
+    // Never silently rewritten — flagged, so a reader sees exactly where.
+    if(it.style_flags && Object.keys(it.style_flags).length){
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
+      const rows=Object.entries(it.style_flags).map(([field,hits])=>
+        hits.map(h=>`<div class="mentr" style="padding:8px 10px"><span class="chip">${esc(field)}</span> `
+          +`<span class="muted" style="font-size:12.5px">${esc(h.kind==='first_person'?'first person':'hedge')}: `
+          +`"${esc(h.phrase)}"</span><div style="font-size:12.5px;margin-top:4px;font-style:italic">`
+          +`…${esc(h.context)}…</div></div>`).join('')).join('');
+      c.innerHTML=`<div class="lbl" style="color:var(--amber)">House-style flags</div>
+        <div class="muted" style="font-size:13px;margin-top:4px">Written in first person or hedged where the
+        record supports a plain statement — not rewritten automatically, flagged so it can be checked.</div>
+        ${rows}`;
+      host.appendChild(c);
+    }
     if(m.intersection_gap){
       const c=el('div','card');
       c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
@@ -2584,10 +2654,17 @@
         <div class="muted" style="font-size:12.5px;margin-top:6px">${fmt(m.intersection_gap.read)} documents read.</div>`;
       host.appendChild(c);
     }
-    if(it.verdict)host.appendChild(el('div','card glow',
-      `<div class="lbl">Verdict</div><p style="margin:10px 0 0;font-size:15.5px">${esc(it.verdict)}</p>`));
+    if(it.verdict){
+      const vc=it.verdict_corroboration;
+      host.appendChild(el('div','card glow',
+        `<div class="row" style="justify-content:space-between;align-items:flex-start">
+           <div class="lbl">Verdict</div>
+           ${vc?`<span class="pill ${vc.confirmed?'pos':'amber'}" title="${esc(vc.outlets.join(', '))}">${esc(vc.label)}</span>`:''}
+         </div>
+         <p style="margin:10px 0 0;font-size:15.5px">${linkifyRefs(esc(it.verdict),it.verdict_citations)}</p>`));
+    }
     if(it.involvement)host.appendChild(el('div','card',
-      `<div class="lbl">Involvement</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${esc(it.involvement)}</p>`));
+      `<div class="lbl">Involvement</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${linkifyRefs(esc(it.involvement),it.involvement_citations)}</p>`));
 
     // What the issue breaks into. An investigation that cannot name the
     // separate fights inside one headline is a map of one thing.
@@ -2614,7 +2691,7 @@
            ${x.question?`<div class="muted" style="font-size:13px;margin-top:4px">What is contested: ${esc(x.question)}</div>`:''}
            ${(x.actors||[]).length?`<div class="row" style="margin-top:6px;flex-wrap:wrap;gap:5px">${
              x.actors.map(a=>'<span class="chip">'+esc(a)+'</span>').join('')}</div>`:''}
-           ${x.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${esc(x.detail)}</div>`:''}`)));
+           ${x.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${linkifyRefs(esc(x.detail),x.detail_citations)}</div>`:''}`)));
       };
       paintSubs(null);onGraphSelect(paintSubs);
       host.appendChild(c);
@@ -2638,7 +2715,7 @@
         (shown.length?shown:narr).forEach(n=>nbody.appendChild(el('div','mentr',
           `<b style="font-size:15px">${esc(n.narrative)}</b>
            <div class="muted" style="font-size:13px;margin-top:4px">${esc(n.framing||'')}${n.pushed_by?' · <span style="color:var(--sky2)">pushed by '+esc(n.pushed_by)+'</span>':''}</div>
-           ${n.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${esc(n.detail)}</div>`:''}`)));
+           ${n.detail?`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${linkifyRefs(esc(n.detail),n.detail_citations)}</div>`:''}`)));
       };
       paintNarr(null);onGraphSelect(paintNarr);
       host.appendChild(c);
@@ -2707,11 +2784,13 @@
         head.innerHTML=`<div class="lbl">Timeline</div>
           <div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
         body.innerHTML='';
-        (shown.length?shown:tl).forEach(t=>body.appendChild(el('div','mentr',
-          `<div class="row" style="gap:10px;align-items:center">
-             <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
-             ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
-           <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`)));
+        (shown.length?shown:tl).forEach(t=>{const tc=t.corroboration;body.appendChild(el('div','mentr',
+          `<div class="row" style="gap:10px;align-items:center;justify-content:space-between">
+             <div class="row" style="gap:10px;align-items:center">
+               <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
+               ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
+             ${tc?`<span class="pill ${tc.confirmed?'pos':'amber'}" style="font-size:11px" title="${esc(tc.outlets.join(', '))}">${esc(tc.label)}</span>`:''}</div>
+           <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`));});
       };
       paint(null);
       onGraphSelect(paint);
@@ -2719,7 +2798,7 @@
     }
 
     if(it.tension_or_risk)host.appendChild(el('div','card',
-      `<div class="lbl" style="color:var(--amber)">Tension / risk</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${esc(it.tension_or_risk)}</p>`));
+      `<div class="lbl" style="color:var(--amber)">Tension / risk</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${linkifyRefs(esc(it.tension_or_risk),it.tension_or_risk_citations)}</p>`));
 
     if(graphCard)host.appendChild(graphCard);
 
@@ -2825,8 +2904,17 @@
         if(cv.mode==='raw_fallback')return '<span class="pill amber">Summarising failed — '
           +'analysts read the documents directly</span>';
         return '<span class="chip">Analysed '+fmt(cv.mentions_analyzed)+' of '+fmt(cv.mentions_total)+'</span>';
-      })()}</div>`;
+      })()}</div>
+      <div class="row" style="margin-top:12px;align-items:center">
+        <button class="btn ghost" id="dlIssuePdf">Download PDF</button>
+        <span class="muted" id="dlIssueMsg" style="font-size:12.5px"></span>
+      </div>`;
     out.appendChild(head);
+    $('#dlIssuePdf',head).onclick=()=>downloadPdf(
+      '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
+        +'&issue='+encodeURIComponent(m.issue||''),
+      ((m.principal||'issue')+'-x-'+(m.issue||'map')).replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.pdf',
+      $('#dlIssuePdf',head), $('#dlIssueMsg',head));
 
     // The framework is the client deliverable; the intersection detail is the
     // analysis it was built from. Both are produced on every run, so both are

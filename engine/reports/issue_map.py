@@ -25,7 +25,7 @@ from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
 from engine.ingestion.gdelt_connector import GdeltConnector
-from engine.reports import decompose, issue_floor, issue_graph, relevance
+from engine.reports import citations, decompose, issue_floor, issue_graph, relevance, style_check, triangulation
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -505,6 +505,20 @@ def build_issue_map(
     # and everything filled this way is marked as derived so the page can say
     # where it came from.
     analysis = issue_floor.fill(analysis, mentions, principal, issue)
+    # The model cites its sources inline as `[ref=fresh-0]` — imitating the
+    # digest's own tagging format, because these are free-prose fields with
+    # no separate quotes array to carry a citation in. Left alone that string
+    # reaches the page verbatim. Resolve it to a real, numbered, clickable
+    # citation instead.
+    analysis = citations.linkify_analysis(analysis, mentions)
+    # Triangulation: how many INDEPENDENT outlets actually back the verdict
+    # and each timeline event, not just how many mentions repeat it.
+    analysis = triangulation.annotate(analysis)
+    # A prompt instruction is not a guarantee. Flag (never silently rewrite)
+    # any first-person or hedging language that got through anyway, so a
+    # reader can see exactly where house style was violated rather than
+    # trusting the instruction worked.
+    analysis = style_check.annotate(analysis)
     publish("intersection", analysis)
 
     sample = [

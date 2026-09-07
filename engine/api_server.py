@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from engine import llm as _llm
@@ -655,6 +655,58 @@ def get_progress(name: str, kind: str = "report", issue: str | None = None,
     if progress is None:
         raise HTTPException(status_code=404, detail="no run recorded for that subject")
     return {"ok": True, **progress}
+
+
+def _slug(text: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "-", (text or "subject").lower()).strip("-") or "subject"
+
+
+@app.get("/api/report/download")
+def download_report_pdf(name: str, x_api_key: str | None = Header(default=None)):
+    """A downloadable PDF of the stored report — no link, no login, a file
+    that can be emailed or sent straight to someone outside this app.
+
+    Renders through the exact same code the browser uses (window.ZENITH.
+    renderReport), so a PDF can never show something the live page wouldn't.
+    """
+    _require_api_key(x_api_key)
+    from engine.reports import pdf_export
+
+    if not pdf_export.chromium_available():
+        raise HTTPException(status_code=503,
+                            detail="PDF export is not available in this environment")
+    progress = _read_progress(_subject_key(name), "report")
+    if not progress or not progress.get("payload"):
+        raise HTTPException(status_code=404, detail="no stored report for that subject")
+
+    pdf_bytes = pdf_export.render_payload_to_pdf(
+        render_frontend_document(), "report", progress["payload"])
+    filename = f"{_slug(name)}-report.pdf"
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/issue-map/download")
+def download_issue_map_pdf(principal: str, issue: str,
+                           x_api_key: str | None = Header(default=None)):
+    """Same as /api/report/download, for a stored issue map."""
+    _require_api_key(x_api_key)
+    from engine.reports import pdf_export
+
+    if not pdf_export.chromium_available():
+        raise HTTPException(status_code=503,
+                            detail="PDF export is not available in this environment")
+    progress = _read_progress(_subject_key(principal, issue), "issue_map")
+    if not progress or not progress.get("payload"):
+        raise HTTPException(status_code=404, detail="no stored issue map for that pair")
+
+    pdf_bytes = pdf_export.render_payload_to_pdf(
+        render_frontend_document(), "issue_map", progress["payload"])
+    filename = f"{_slug(principal)}-x-{_slug(issue)}-issue-map.pdf"
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 class _PartialReport:

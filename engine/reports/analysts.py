@@ -26,7 +26,26 @@ GROUNDING_RULES = """CRITICAL GROUNDING RULES:
   membership), or events from your own knowledge — it may be out of date.
 - Every quote you output must be copied VERBATIM from a source item and must
   include that item's ref id.
-- If the sources don't support a claim, leave it out."""
+- If the sources don't support a claim, leave it out.
+
+HOUSE STYLE (The Economist's, as it actually is — not a vague instruction to
+"sound confident"). This is a due-diligence file read by executives who make a
+decision from it in minutes, not a blog post:
+- NEVER write in the first person. No "I believe", "I think", "in my view",
+  "it seems to me". State the finding: "The record shows X," not "I believe X."
+- NEVER hedge with a weak qualifier where the evidence supports a plain
+  statement — no "perhaps", "arguably", "it could be argued", "somewhat". If
+  the evidence is genuinely thin, SAY THAT PLAINLY ("the record does not
+  establish X") rather than smuggling the uncertainty into a soft adjective.
+  Confidence and hedging are not the same axis: state plainly what the record
+  shows, and state plainly when it shows too little to conclude.
+- Short sentences. One claim each. Cut clauses that restate what the sentence
+  already said.
+- No clichés, no jargon, no throat-clearing. Do not open a sentence with
+  "Consider", "Note that", "It is worth noting", "Remember" — that is a
+  textbook's voice, not a briefing's.
+- Do not editorialise or moralise about whether something is good or bad;
+  state what happened and let the facts carry the judgement."""
 
 # How much an analyst may write, and how much corpus it gets to read.
 #

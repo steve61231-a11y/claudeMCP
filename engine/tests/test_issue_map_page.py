@@ -52,8 +52,13 @@ ANALYSIS = {
          "actors": ["National Treasury"], "detail": "d",
          "quotes": [{"text": "withheld", "url": "https://n/6"}]},
     ],
-    "involvement": "The senator is challenging the debt.",
-    "verdict": "contested",
+    "involvement": "The senator is challenging the debt [1].",
+    "verdict": "contested [1].",
+    "involvement_citations": [{"n": 1, "url": "https://n/9", "platform": "nation.africa"}],
+    "verdict_citations": [{"n": 1, "url": "https://n/9", "platform": "nation.africa"}],
+    "verdict_corroboration": {"independent_sources": 1, "outlets": ["nation.africa"],
+                              "confirmed": False,
+                              "label": "Reported by a single source — unconfirmed"},
 }
 
 
@@ -242,3 +247,21 @@ def test_a_graph_too_thin_to_read_is_not_drawn(mapped):
         page.close()
     finally:
         srv.shutdown()
+
+
+def test_raw_ref_markers_never_reach_the_page(mapped):
+    """[ref=fresh-0] is a live defect this test pins: the model's inline
+    citation format leaking verbatim into prose a reader is meant to trust."""
+    body = mapped[0].inner_text("body").lower()
+    assert "[ref=" not in body
+
+
+def test_a_resolved_citation_becomes_a_real_clickable_link(mapped):
+    page = mapped[0]
+    links = page.locator("a.src-link[href='https://n/9']")
+    assert links.count() >= 1
+
+
+def test_a_single_source_verdict_is_labelled_unconfirmed_not_hidden(mapped):
+    body = mapped[0].inner_text("body").lower()
+    assert "reported by a single source" in body
