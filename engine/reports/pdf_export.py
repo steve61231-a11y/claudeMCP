@@ -73,40 +73,61 @@ def chromium_available() -> bool:
 
 def render_payload_to_pdf(html_document: str, kind: str, payload: dict) -> bytes:
     """Render `payload` through the SAME code path the browser uses, and
-    print it to PDF bytes. `kind` is "report" or "issue_map"."""
+    print it to PDF bytes. `kind` is "report" or "issue_map".
+
+    Driven through Chromium's own `--headless --print-to-pdf` rather than
+    Playwright. Playwright is not in the deployed requirements and pulls its
+    own browser download on install; the `chromium` system package is one apt
+    line and about a tenth the size, which is what makes shipping this to a
+    2GB instance reasonable at all.
+
+    The page renders ITSELF: the payload is embedded in the document and the
+    app's own `window.ZENITH.*` function is called on load, so the PDF cannot
+    show anything the live page would not.
+    """
     if kind not in RENDER_CALL:
         raise ValueError(f"no PDF renderer for kind={kind!r}")
-    if not chromium_available():
+    chrome = chrome_path()
+    if chrome is None:
         raise RuntimeError("Chromium is not available in this environment; PDF export needs it.")
 
-    from playwright.sync_api import sync_playwright
+    import subprocess
+    import tempfile
 
     render_call = RENDER_CALL[kind]
-    payload_json = json.dumps(payload, default=str)
+    # Embedded as JSON inside a <script type="application/json">, so no amount
+    # of quoting in the payload can break out into executable code.
+    payload_json = json.dumps(payload, default=str).replace("</", "<\\/")
+    boot = (
+        '<script type="application/json" id="pdf-payload">' + payload_json + "</script>"
+        "<script>window.addEventListener('load', function(){"
+        "  var nav = document.querySelector('nav.nav'); if (nav) nav.style.display='none';"
+        "  var data = JSON.parse(document.getElementById('pdf-payload').textContent);"
+        f"  window.ZENITH.{render_call}(document.getElementById('view'), data, {{}});"
+        "  document.documentElement.setAttribute('data-pdf-ready','1');"
+        "});</script>"
+    )
+    document = html_document.replace("</body>", boot + "</body>", 1) \
+        if "</body>" in html_document else html_document + boot
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=str(chrome_path()), args=["--no-sandbox"])
-        try:
-            page = browser.new_page()
-            page.set_content(html_document, wait_until="load")
-            # The nav bar (Search / Issue Map / Network / Settings tabs) means
-            # nothing on a static file someone is reading in an email — hide
-            # it, then render straight into the same #view the live app uses,
-            # through the app's own render function so a PDF can never show
-            # something the live page wouldn't.
-            page.evaluate(
-                "(payload) => {"
-                "  const nav = document.querySelector('nav.nav'); if (nav) nav.style.display = 'none';"
-                "  const view = document.getElementById('view');"
-                f"  window.ZENITH.{render_call}(view, payload, {{}});"
-                "}",
-                json.loads(payload_json),
-            )
-            # Let the SVG graph and any canvas finish painting before printing.
-            page.wait_for_timeout(500)
-            return page.pdf(
-                format="A4", print_background=True,
-                margin={"top": "14mm", "bottom": "14mm", "left": "10mm", "right": "10mm"},
-            )
-        finally:
-            browser.close()
+    with tempfile.TemporaryDirectory() as work:
+        source = Path(work) / "report.html"
+        target = Path(work) / "report.pdf"
+        source.write_text(document, encoding="utf-8")
+        result = subprocess.run(
+            [str(chrome), "--headless=new", "--disable-gpu", "--no-sandbox",
+             "--disable-dev-shm-usage", "--no-first-run", "--hide-scrollbars",
+             # Lets the render function and any SVG painting finish before the
+             # print is taken, without a fixed sleep that is either too short
+             # on a big report or wasted on a small one.
+             "--virtual-time-budget=8000",
+             "--run-all-compositor-stages-before-draw",
+             f"--print-to-pdf={target}", "--no-pdf-header-footer",
+             source.as_uri()],
+            capture_output=True, timeout=120,
+        )
+        if not target.exists() or target.stat().st_size == 0:
+            raise RuntimeError(
+                "Chromium produced no PDF "
+                f"(exit {result.returncode}): {result.stderr.decode('utf-8', 'replace')[:400]}")
+        return target.read_bytes()

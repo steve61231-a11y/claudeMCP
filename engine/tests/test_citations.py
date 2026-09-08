@@ -145,3 +145,47 @@ def test_no_prose_field_is_left_behind():
         mentions)
     import json as _json
     assert "[ref=" not in _json.dumps(out), "a prose field still leaks the raw format"
+
+
+# --- the Search report leaks the same way the issue map did -------------------
+
+def test_the_search_reports_prose_is_linkified():
+    """This was fixed for the issue map and not the report, because the leak
+    had only been SEEN on a map. Both run the same analysts under the same
+    GROUNDING_RULES, which tell the model to "include that item's ref id", and
+    the report's prose fields have no quotes array to carry them either."""
+    mentions = [{"id": "fresh-12ab", "platform": "nation.africa",
+                 "raw_payload": {"url": "https://n/12"}}]
+    out = citations.linkify_report(
+        {"executive_brief": "Opposition is narrow [ref=fresh-12].",
+         "executive_summary": "Net-negative sentiment [ref=fresh-12].",
+         "deep_insights": {
+             "the_one_thing": "A handful of accounts drive it [ref=fresh-12].",
+             "insights": [{"headline": "Narrow, not wide [ref=fresh-12].",
+                           "reasoning": "Volume concentrates [ref=fresh-12].",
+                           "implication": "Engage the few [ref=fresh-12]."}]},
+         "narrative_deep_dives": [{"deep_dive": "The SHA story [ref=fresh-12]."}]},
+        mentions)
+
+    import json as _json
+    assert "[ref=" not in _json.dumps(out), "the report still leaks the raw format"
+    assert out["executive_brief_citations"][0]["url"] == "https://n/12"
+    assert out["deep_insights"]["the_one_thing_citations"][0]["url"] == "https://n/12"
+    assert out["deep_insights"]["insights"][0]["headline_citations"]
+    assert out["narrative_deep_dives"][0]["deep_dive_citations"]
+
+
+def test_linkify_report_does_not_mutate_its_input():
+    payload = {"executive_brief": "text [ref=abcd1234]."}
+    before = dict(payload)
+    citations.linkify_report(payload, [{"id": "abcd1234", "platform": "p",
+                                        "raw_payload": {"url": "https://x/1"}}])
+    assert payload == before
+
+
+def test_a_report_with_no_refs_is_returned_unharmed():
+    payload = {"executive_brief": "Plain prose, no citations.",
+               "deep_insights": {"insights": [], "the_one_thing": ""}}
+    out = citations.linkify_report(payload, [])
+    assert out["executive_brief"] == payload["executive_brief"]
+    assert "executive_brief_citations" not in out

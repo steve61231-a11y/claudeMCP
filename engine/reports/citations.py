@@ -127,3 +127,68 @@ def linkify_analysis(analysis: dict, mentions: list[dict]) -> dict:
         out["timeline"] = _linkify_list(out["timeline"], ("event",))
 
     return out
+
+
+#: The Search report's free-prose fields — the ones with no `quotes` array of
+#: their own, which is exactly the condition that leaks raw refs.
+#:
+#: This was fixed for the issue map and not for the report, because the leak
+#: was only ever SEEN on an issue map. Both run the same analysts under the
+#: same GROUNDING_RULES, which instruct the model to "include that item's ref
+#: id", so both were always going to do it.
+_REPORT_PROSE_FIELDS = ("executive_brief", "executive_summary")
+
+
+def linkify_report(payload: dict, mentions: list[dict]) -> dict:
+    """Resolve inline refs across a Search report's prose. Returns a new dict;
+    the input is not mutated."""
+    if not payload:
+        return payload
+    ref_index = build_ref_index(mentions)
+    out = dict(payload)
+
+    for field in _REPORT_PROSE_FIELDS:
+        if isinstance(out.get(field), str) and out[field]:
+            text, cites = linkify(out[field], ref_index)
+            out[field] = text
+            if cites:
+                out[f"{field}_citations"] = cites
+
+    # "Beneath the surface": headline / reasoning / implication are prose, and
+    # `the_one_thing` is the single line a decision-maker is meant to remember
+    # — the worst possible place for "[ref=fresh-12]".
+    insights = out.get("deep_insights")
+    if isinstance(insights, dict):
+        insights = dict(insights)
+        if isinstance(insights.get("the_one_thing"), str) and insights["the_one_thing"]:
+            text, cites = linkify(insights["the_one_thing"], ref_index)
+            insights["the_one_thing"] = text
+            if cites:
+                insights["the_one_thing_citations"] = cites
+        rows = []
+        for item in insights.get("insights") or []:
+            if not isinstance(item, dict):
+                rows.append(item)
+                continue
+            item = dict(item)
+            for key in ("headline", "reasoning", "implication"):
+                if isinstance(item.get(key), str) and item[key]:
+                    text, cites = linkify(item[key], ref_index)
+                    item[key] = text
+                    if cites:
+                        item[f"{key}_citations"] = cites
+            rows.append(item)
+        insights["insights"] = rows
+        out["deep_insights"] = insights
+
+    dives = out.get("narrative_deep_dives")
+    if isinstance(dives, list):
+        out["narrative_deep_dives"] = [
+            (dict(d, **dict(zip(("deep_dive", "deep_dive_citations"),
+                                linkify(d["deep_dive"], ref_index))))
+             if isinstance(d, dict) and isinstance(d.get("deep_dive"), str) and d["deep_dive"]
+             else d)
+            for d in dives
+        ]
+
+    return out

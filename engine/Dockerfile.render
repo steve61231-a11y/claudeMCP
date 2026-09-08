@@ -2,6 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Chromium, for the PDF export. The report is a rendered web page, so the
+# only way a PDF can be guaranteed to match it is to print the page itself —
+# any second, PDF-shaped template drifts from the live one the first time a
+# section changes. This is the system package driven via
+# `--headless --print-to-pdf`, roughly a tenth the size of Playwright plus its
+# own browser download, and it is invoked per download rather than resident.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY engine/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
     && python -m spacy download en_core_web_sm

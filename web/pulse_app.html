@@ -286,57 +286,64 @@
       the browser's own download flow — createObjectURL + a synthetic click,
       the standard pattern, not the sandboxed-Artifact one; this is a real
       deployed page and downloads work normally here. */
-  /** Download the report as a real file, straight to disk.
+  /** Download the report as a real PDF, straight to disk.
    *
-   *  Two earlier attempts were wrong. A server-rendered PDF needed a headless
-   *  Chromium the deployed image does not have, so it answered 503. Then
-   *  window.print() opened a print dialog — which is not a download: the
-   *  reader asked for a file to send to someone, and got a printer prompt.
+   *  Three earlier attempts were wrong, each in its own way. A server render
+   *  against a Chromium path hard-coded to the developer's container answered
+   *  503 everywhere else. window.print() opened a printer prompt, which is not
+   *  a download. A self-contained .html file downloaded cleanly but was not
+   *  the PDF that was asked for, twice.
    *
-   *  This writes a self-contained .html file: the report's own markup plus the
-   *  app's stylesheet inlined, as a Blob, saved by a synthetic <a download>.
-   *  It lands in the Downloads folder with no dialog and no server round-trip.
-   *
-   *  HTML rather than PDF on purpose. It is the same document the reader is
-   *  looking at, so nothing can drift; it opens in any browser on any device;
-   *  links stay clickable and text stays selectable and searchable, which an
-   *  image-based client-side PDF would destroy; and the recipient can still
-   *  Save-as-PDF from it, because the print stylesheet travels inside the file.
+   *  The server now has Chromium and prints the app's own rendered page, so
+   *  the PDF cannot show anything the live page would not. If that is somehow
+   *  unavailable, fall back to saving the page as HTML rather than failing —
+   *  a file in hand beats an error message.
    */
-  function downloadReportFile(filename, btn, msg){
+  async function downloadReportFile(path, filename, btn, msg){
     if(btn)btn.disabled=true;
+    if(msg)msg.textContent='Building your PDF…';
     try{
-      const view=document.getElementById('view');
-      if(!view||!view.innerHTML.trim())throw new Error('there is no report on screen yet');
-      // Every <style> the app defines, so the file looks like the page offline.
-      const styles=Array.from(document.querySelectorAll('style'))
-        .map(s=>s.textContent).join('\n');
-      const title=filename.replace(/-/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-      const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
-      const doc='<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-        +'<meta name="viewport" content="width=device-width,initial-scale=1">'
-        +'<title>'+esc(title)+'</title><style>'+styles+'</style></head>'
-        +'<body><div id="zenith"><main class="wrap">'
-        +'<div class="muted" style="font-size:12px;margin:0 0 14px">'
-        +'M\u0169\u0169g\u0129 \u00b7 saved '+esc(stamp)+' \u00b7 '
-        +'a snapshot of this report, not a live page</div>'
-        +view.innerHTML
-        +'</main></div></body></html>';
-      const blob=new Blob([doc],{type:'text/html;charset=utf-8'});
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url;a.download=filename+'.html';
-      document.body.appendChild(a);a.click();a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),4000);
-      if(msg){
-        msg.textContent='Saved '+filename+'.html to your Downloads.';
-        setTimeout(()=>{msg.textContent='';},8000);
-      }
+      const h={};if(CFG.key)h['x-api-key']=CFG.key;
+      const res=await fetch(CFG.base.replace(/\/$/,'')+path,{headers:h});
+      if(!res.ok)throw new Error('HTTP '+res.status);
+      const blob=await res.blob();
+      saveBlob(blob, filename+'.pdf');
+      if(msg){msg.textContent='Saved '+filename+'.pdf to your Downloads.';
+              setTimeout(()=>{msg.textContent='';},8000);}
     }catch(e){
-      if(msg)msg.textContent='Download failed: '+e.message;
+      try{
+        saveSelfContainedHtml(filename);
+        if(msg)msg.textContent='PDF unavailable ('+e.message+') — saved '+filename+'.html instead.';
+      }catch(inner){
+        if(msg)msg.textContent='Download failed: '+inner.message;
+      }
     }finally{
       if(btn)btn.disabled=false;
     }
+  }
+
+  function saveBlob(blob, filename){
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=filename;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }
+
+  /** The fallback: this page, standalone, with its styles inlined. */
+  function saveSelfContainedHtml(filename){
+    const view=document.getElementById('view');
+    if(!view||!view.innerHTML.trim())throw new Error('there is no report on screen yet');
+    const styles=Array.from(document.querySelectorAll('style')).map(s=>s.textContent).join('\n');
+    const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
+    const doc='<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+      +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+      +'<title>'+esc(filename)+'</title><style>'+styles+'</style></head>'
+      +'<body><div id="zenith"><main class="wrap">'
+      +'<div class="muted" style="font-size:12px;margin:0 0 14px">'
+      +'M\u0169\u0169g\u0129 \u00b7 saved '+esc(stamp)+'</div>'
+      +view.innerHTML+'</main></div></body></html>';
+    saveBlob(new Blob([doc],{type:'text/html;charset=utf-8'}), filename+'.html');
   }
 
   async function api(path, opts){
@@ -1167,7 +1174,7 @@
       // The single read the whole report exists to produce. It was generated,
       // rendered on the Overview tab, and absent from the deliverable.
       if(si.the_one_thing)s6.appendChild(el('div','',
-        `<div class="qt" style="border-left-color:var(--sky2);font-style:normal;font-size:15px">${esc(si.the_one_thing)}</div>`));
+        `<div class="qt" style="border-left-color:var(--sky2);font-style:normal;font-size:15px">${linkifyRefs(esc(si.the_one_thing),si.the_one_thing_citations)}</div>`));
       const traj=si.trajectory;
       s6.appendChild(el('div','row',`<span class="pill ${traj==='escalating'?'neg':traj==='receding'?'pos':''}">${esc(traj||'')}</span>
         <span class="chip">${esc(si.status||'')}</span>`));
@@ -2197,13 +2204,14 @@
         <span class="chip">Updated ${esc((r.generatedAt||'').slice(0,16).replace('T',' '))||'—'}</span>
         <span class="chip">${fmt(fresh.mentionsLast24h)} new · 24h</span>
         <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
-        <button class="btn ghost" id="dlPdf" style="margin-left:auto">Download report</button>
+        <button class="btn ghost" id="dlPdf" style="margin-left:auto">Download PDF</button>
         <span class="muted" id="dlMsg" style="font-size:12.5px"></span>
       </div>`;
     wrap.appendChild(head);
     // A file to hand to someone outside this app — no link, no login, just a
     // PDF of exactly what this page shows right now.
     $('#dlPdf',head).onclick=()=>downloadReportFile(
+      '/api/report/download?name='+encodeURIComponent(r.name||''),
       (r.name||'report').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'-report',
       $('#dlPdf',head), $('#dlMsg',head));
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
@@ -2294,12 +2302,12 @@
     const di=r.deepInsights||{};
     if(di.the_one_thing){
       const one=el('div','card glow');
-      one.innerHTML=`<div class="eyebrow">The one thing</div><div class="hero-one" style="margin-top:10px">“${esc(di.the_one_thing)}”</div>`;
+      one.innerHTML=`<div class="eyebrow">The one thing</div><div class="hero-one" style="margin-top:10px">“${linkifyRefs(esc(di.the_one_thing),di.the_one_thing_citations)}”</div>`;
       wrap.appendChild(one);
     }
     // exec brief
     if(r.executiveBrief||r.summary){
-      const b=el('div','card');b.innerHTML=`<div class="lbl">Executive brief</div><p style="margin:10px 0 0;font-size:15.5px">${esc(r.executiveBrief||r.summary)}</p>`;wrap.appendChild(b);
+      const b=el('div','card');b.innerHTML=`<div class="lbl">Executive brief</div><p style="margin:10px 0 0;font-size:15.5px">${linkifyRefs(esc(r.executiveBrief||r.summary),r.executiveBrief?r.executiveBriefCitations:r.summaryCitations)}</p>`;wrap.appendChild(b);
     }
     // KPI row
     const s=r.sentiment||{},v=r.volume||{},cov=r.coverage||{};
@@ -3069,11 +3077,13 @@
         return '<span class="chip">Analysed '+fmt(cv.mentions_analyzed)+' of '+fmt(cv.mentions_total)+'</span>';
       })()}</div>
       <div class="row" style="margin-top:12px;align-items:center">
-        <button class="btn ghost" id="dlIssuePdf">Download report</button>
+        <button class="btn ghost" id="dlIssuePdf">Download PDF</button>
         <span class="muted" id="dlIssueMsg" style="font-size:12.5px"></span>
       </div>`;
     out.appendChild(head);
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
+      '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
+        +'&issue='+encodeURIComponent(m.issue||''),
       ((m.principal||'issue')+'-x-'+(m.issue||'map')).replace(/[^a-z0-9]+/gi,'-').toLowerCase(),
       $('#dlIssuePdf',head), $('#dlIssueMsg',head));
 

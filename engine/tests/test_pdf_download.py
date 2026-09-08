@@ -93,21 +93,28 @@ def test_the_pdf_is_not_trivially_empty(client, monkeypatch):
 
 # --- the button must not need a browser on the SERVER -------------------------
 
-def test_the_button_saves_a_file_rather_than_opening_a_print_dialog():
-    """window.print() is not a download. The reader asked for a file to send
-    to someone and got a printer prompt — the second wrong answer here, after
-    a server-side PDF that needed a browser the server does not have."""
+def test_the_button_saves_a_pdf_file_with_no_dialog():
+    """Three wrong answers preceded this one: a 503 from a hard-coded browser
+    path, a printer prompt, and an .html file that was not the PDF asked for.
+    It must fetch the real PDF and save it."""
     from engine.api_server import render_frontend_document
 
     page = render_frontend_document()
-    # The call, not the word: the comment above the function explains why
-    # printing was wrong, and must not itself fail this test.
-    calls_print = re.search(r"^\s*window\.print\(\)", page, re.M)
-    assert not calls_print, "still opening a print dialog"
-    assert "URL.createObjectURL" in page and "a.download" in page, \
+    # The CALL, not the word: the comment explaining why printing was wrong
+    # must not itself fail this test.
+    assert not re.search(r"^\s*window\.print\(\)", page, re.M), \
+        "still opening a print dialog"
+    assert "/api/report/download" in page, "the button does not fetch a PDF"
+    assert "a.download" in page and "URL.createObjectURL" in page, \
         "the button does not save a file"
-    assert "/api/report/download" not in page, \
-        "the button still depends on a server-side browser"
+    assert "'.pdf'" in page or '".pdf"' in page, "not saving with a .pdf name"
+
+
+def test_a_missing_browser_still_hands_the_reader_a_file():
+    """A file in hand beats an error message."""
+    from engine.api_server import render_frontend_document
+
+    assert "saveSelfContainedHtml" in render_frontend_document()
 
 
 def test_the_printed_page_is_recoloured_for_paper():

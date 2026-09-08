@@ -11,7 +11,7 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports import analysts
+from engine.reports import analysts, citations
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -322,6 +322,20 @@ def enrich_report_payload(
         }
         cleaned = analysts.verify_grounding(prose, source_quotes)
         payload.update(cleaned)
+
+        # Resolve the analysts' inline [ref=xxxx] markers into numbered links.
+        # GROUNDING_RULES tells every analyst to "include that item's ref id",
+        # and the report's prose fields — the executive brief, the summary,
+        # "beneath the surface" and the narrative deep-dives — have no quotes
+        # array of their own to carry them, so the raw tag reached the page
+        # exactly as it did on the issue map. That was fixed there and not
+        # here only because it had been SEEN there.
+        linked = citations.linkify_report(payload, mentions or [])
+        for key, value in linked.items():
+            if payload.get(key) is not value:
+                payload[key] = value
+                publish(key, value)
+
         for key in cleaned:
             publish(key, payload[key])
 
