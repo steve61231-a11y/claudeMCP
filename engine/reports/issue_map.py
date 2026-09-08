@@ -996,6 +996,9 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
                 "occurred_at": moment.get("date") or None,
                 "event_type": "intersection",
                 "independent_domains": corroboration.get("independent_sources"),
+                # Carry the resolved citations with the prose, or the page
+                # renders "[1]" with nothing behind it.
+                "event_citations": moment.get("event_citations") or [],
             })
 
         relationships = _actor_relationships(analysis, {s["name"] for s in stakeholders})
@@ -1007,6 +1010,8 @@ def _issue_framework(principal: str, issue: str, payload: dict, analysis: dict,
         # rendered empty on every map regardless of how much was collected.
         framework_payload["international_context"] = analysis.get("international") or ""
         framework_payload["national_context"] = analysis.get("national") or ""
+        framework_payload["international_citations"] = analysis.get("international_citations") or []
+        framework_payload["national_citations"] = analysis.get("national_citations") or []
         framework = ifw.build(
             issue=issue, principal=principal, payload=framework_payload,
             stakeholders=stakeholders, relationships=relationships, events=events,

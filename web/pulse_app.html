@@ -738,7 +738,7 @@
       const row=el('div','tl-item');
       row.innerHTML=`<div class="tl-dot"></div>
         <div class="tl-body"><div class="tl-date">${esc(item.date||'')}</div>
-        <div class="tl-event">${esc(item.event||item.title||'')}</div>
+        <div class="tl-event">${linkifyRefs(esc(item.event||item.title||''),item.event_citations)}</div>
         ${item.type?`<span class="chip">${esc(item.type)}</span>`:''}
         ${item.sources?`<span class="chip">${item.sources} source(s)</span>`:''}</div>`;
       row.style.opacity='0';row.style.transform='translateX(-10px)';
@@ -1215,12 +1215,16 @@
     const s1=el('div','card');
     s1.appendChild(fwSection('1','Background and context',
       `Outline, international and national approaches, timeline (${bg.controls?bg.controls.year_cutoff:10}-year cut-off)`));
-    [['Outline',bg.outline],['International approach',bg.international],['National approach',bg.national]]
-      .forEach(([label,text])=>{
+    // Each section carries its own resolved citations, so "[1]" becomes the
+    // article it came from rather than a footnote pointing at nothing.
+    [['Outline',bg.outline,bg.outline_citations],
+     ['International approach',bg.international,bg.international_citations],
+     ['National approach',bg.national,bg.national_citations]]
+      .forEach(([label,text,cites])=>{
         s1.appendChild(el('div','lbl',label));
         // "not yet established from the evidence" blamed the corpus for a
         // section the model never wrote. Those are opposite findings.
-        s1.appendChild(text?el('div','muted',`<div style="margin:6px 0 14px;white-space:pre-wrap">${esc(text)}</div>`)
+        s1.appendChild(text?el('div','muted',`<div style="margin:6px 0 14px;white-space:pre-wrap">${linkifyRefs(esc(text),cites)}</div>`)
                            :fwEmpty(bg.unavailable||'not yet established from the evidence'));
       });
     s1.appendChild(el('div','lbl','Timeline of major developments'));

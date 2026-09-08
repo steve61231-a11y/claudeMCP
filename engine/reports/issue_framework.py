@@ -133,12 +133,19 @@ def build_background(payload: dict, events: list[dict], now: datetime | None = N
                                    SECTION_WORD_LIMIT),
         "international": _truncate_words(payload.get("international_context") or "", SECTION_WORD_LIMIT),
         "national": _truncate_words(payload.get("national_context") or "", SECTION_WORD_LIMIT),
+        # The resolved citations travel WITH the prose they belong to. Without
+        # them the page has a "[1]" it cannot turn back into a link, which is
+        # a footnote marker pointing at nothing — worse than the raw ref it
+        # replaced, because it looks finished.
+        "international_citations": payload.get("international_citations") or [],
+        "national_citations": payload.get("national_citations") or [],
         "timeline_of_major_developments": [
             {
                 "date": e["_when"].date().isoformat(),
                 "event": e.get("title"),
                 "type": e.get("event_type"),
                 "sources": e.get("independent_domains"),
+                "event_citations": e.get("event_citations") or [],
             }
             for e in timeline
         ][:25],

@@ -1636,8 +1636,19 @@ def _admin_metrics() -> dict:
                 func.coalesce(func.sum(LlmUsage.calls), 0),
             ).filter(LlmUsage.day >= cutoff).one()
             in_tok, out_tok, calls = int(rows[0]), int(rows[1]), int(rows[2])
-            cost = (in_tok / 1e6) * settings.anthropic_price_in + (out_tok / 1e6) * settings.anthropic_price_out
-            return {"input_tokens": in_tok, "output_tokens": out_tok, "calls": calls, "usd": round(cost, 2)}
+            # Price at the rates of the backend that actually served the calls.
+            # Reporting an OpenRouter run at Anthropic's rates overstated it by
+            # several times, which is worse than showing nothing to someone
+            # working out whether they can afford another run.
+            from engine import llm as _llm
+
+            if _llm.provider() == "anthropic":
+                price_in, price_out = settings.anthropic_price_in, settings.anthropic_price_out
+            else:
+                price_in, price_out = settings.llm_price_in, settings.llm_price_out
+            cost = (in_tok / 1e6) * price_in + (out_tok / 1e6) * price_out
+            return {"input_tokens": in_tok, "output_tokens": out_tok, "calls": calls,
+                    "usd": round(cost, 4), "priced_at": {"in": price_in, "out": price_out}}
 
         credits = {
             "socialcrawl_balance": socialcrawl_balance,

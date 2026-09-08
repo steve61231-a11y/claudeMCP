@@ -251,6 +251,14 @@ class Settings(BaseSettings):
     # turn real token counts into a real spend figure on the admin dashboard.
     anthropic_price_in: float = 3.0
     anthropic_price_out: float = 15.0
+    # Same, for whatever model LLM_PROVIDER=openai_compatible is pointed at.
+    # The dashboard priced every run at Anthropic's rates regardless of which
+    # backend actually served it, so a run on OpenRouter was reported at 4-20x
+    # its real cost — useless to anyone deciding whether they can afford the
+    # next one. Defaults are Gemini 3.8 Flash's list price; set LLM_PRICE_IN /
+    # LLM_PRICE_OUT when pointing LLM_MODEL somewhere else.
+    llm_price_in: float = 0.75
+    llm_price_out: float = 3.75
 
     class Config:
         env_file = ".env"

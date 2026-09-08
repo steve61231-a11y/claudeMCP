@@ -69,7 +69,18 @@ def linkify(text: str, ref_index: dict[str, dict]) -> tuple[str, list[dict]]:
 
 #: Prose fields on the issue-map analysis that carry inline [ref=...] markers
 #: and have no dedicated quotes array of their own.
-_PROSE_FIELDS = ("involvement", "tension_or_risk", "verdict")
+#: Every free-prose field an analyst writes refs into.
+#:
+#: This listed three fields and missed the rest, so a live map rendered a clean
+#: "[1]" verdict at the top and then, four sections down, paragraphs reading
+#: "operates globally alongside the World Bank [ref=2ddf5220]" — the model's
+#: internal citation format, verbatim, in the body of a client deliverable.
+#: `international` and `national` are written by the background analyst and
+#: were never added here when that analyst was; the timeline's mini-briefings
+#: are prose for the same reason and leaked the same way, three times over,
+#: since the sequencing section reprints them.
+_PROSE_FIELDS = ("involvement", "tension_or_risk", "verdict",
+                 "international", "national")
 
 
 def linkify_analysis(analysis: dict, mentions: list[dict]) -> dict:
@@ -109,5 +120,10 @@ def linkify_analysis(analysis: dict, mentions: list[dict]) -> dict:
                                                    ("summary", "detail"))
     if out.get("sub_issues"):
         out["sub_issues"] = _linkify_list(out["sub_issues"], ("detail",))
+    # The timeline's `event` is an 80-200 word mini-briefing, not a label, and
+    # the sequencing section reprints it — so a raw ref here surfaced three
+    # times in one report.
+    if out.get("timeline"):
+        out["timeline"] = _linkify_list(out["timeline"], ("event",))
 
     return out

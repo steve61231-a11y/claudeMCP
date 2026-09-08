@@ -1041,6 +1041,11 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 )
             response.raise_for_status()
             payload = response.json()
+            # Spend was recorded on the Anthropic path only, so every run on a
+            # paid OpenRouter model reported nothing at all — the operator was
+            # left estimating what a report cost from the outside while being
+            # rate-limited by a balance they could not see draining.
+            _record_openai_usage(payload)
             finish = (payload.get("choices") or [{}])[0].get("finish_reason")
             if finish == "length":
                 # Check the finish reason BEFORE extracting the text. When a
@@ -1118,15 +1123,27 @@ def _stub_json(prompt: str) -> dict:
     return {}
 
 
-def _record_usage(response) -> None:
-    """Best-effort daily rollup of token usage for the admin dashboard's
-    real Anthropic-spend figure. Never breaks an LLM call."""
+def _record_openai_usage(payload: dict) -> None:
+    """Same daily rollup, for the OpenAI-compatible path.
+
+    OpenAI-protocol providers report usage as a dict of prompt_tokens /
+    completion_tokens rather than an object of input_tokens / output_tokens.
+    Nothing read it, so a paid OpenRouter run recorded zero spend and the
+    dashboard showed an empty bill for a balance that was visibly draining.
+    """
     try:
-        usage = getattr(response, "usage", None)
-        if usage is None:
-            return
-        in_tok = int(getattr(usage, "input_tokens", 0) or 0)
-        out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+        usage = (payload or {}).get("usage") or {}
+        _persist_usage(int(usage.get("prompt_tokens") or 0),
+                       int(usage.get("completion_tokens") or 0))
+    except Exception:  # noqa: BLE001 — accounting must never fail a call
+        pass
+
+
+def _persist_usage(in_tok: int, out_tok: int) -> None:
+    """The daily rollup both provider paths write to. Never breaks a call."""
+    if not in_tok and not out_tok:
+        return
+    try:
         from datetime import date
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -1151,7 +1168,20 @@ def _record_usage(response) -> None:
             db.commit()
         finally:
             db.close()
-    except Exception:
+    except Exception:  # noqa: BLE001 — accounting must never fail a call
+        pass
+
+
+def _record_usage(response) -> None:
+    """Best-effort daily rollup of token usage for the admin dashboard's
+    real Anthropic-spend figure. Never breaks an LLM call."""
+    try:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        _persist_usage(int(getattr(usage, "input_tokens", 0) or 0),
+                       int(getattr(usage, "output_tokens", 0) or 0))
+    except Exception:  # noqa: BLE001
         pass
 
 

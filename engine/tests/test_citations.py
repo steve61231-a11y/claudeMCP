@@ -92,3 +92,56 @@ def test_a_field_with_nothing_to_link_gets_no_citations_key():
 def test_empty_analysis_does_not_raise():
     assert citations.linkify_analysis({}, MENTIONS) == {}
     assert citations.linkify_analysis(None, MENTIONS) is None
+
+
+# --- every prose field, not just the three that were remembered --------------
+
+def test_the_background_analysts_prose_is_linkified_too():
+    """A live map rendered a clean "[1]" verdict at the top and, four sections
+    down, "operates globally alongside the World Bank [ref=2ddf5220]" — the
+    model's internal citation format in the body of a client deliverable.
+    `international` and `national` were never added to the field list when the
+    background analyst was added.
+    """
+    mentions = [{"id": "2ddf5220aaaa", "platform": "worldbank.org",
+                 "raw_payload": {"url": "https://wb/1"}}]
+    out = citations.linkify_analysis(
+        {"international": "It operates alongside the World Bank [ref=2ddf5220].",
+         "national": "Kenya's debt worries the fund [ref=2ddf5220]."},
+        mentions)
+    assert "[ref=" not in out["international"]
+    assert "[ref=" not in out["national"]
+    assert out["international_citations"][0]["url"] == "https://wb/1"
+    assert out["national_citations"][0]["url"] == "https://wb/1"
+
+
+def test_timeline_mini_briefings_are_linkified():
+    """`event` is an 80-200 word briefing, not a label — and the sequencing
+    section reprints it, so one raw ref surfaced three times in one report."""
+    mentions = [{"id": "fresh-0abc", "platform": "standardmedia.co.ke",
+                 "raw_payload": {"url": "https://sm/1"}}]
+    out = citations.linkify_analysis(
+        {"timeline": [{"date": "2026-06-25",
+                       "event": "The IMF was struck out [ref=fresh-0a]."}]},
+        mentions)
+    event = out["timeline"][0]
+    assert "[ref=" not in event["event"]
+    assert event["event_citations"][0]["url"] == "https://sm/1"
+
+
+def test_no_prose_field_is_left_behind():
+    """The list was written once and never revisited as analysts were added.
+    Feed a ref into every free-text field the issue-map analysts produce and
+    assert none of them reaches the page raw."""
+    mentions = [{"id": "abcd1234", "platform": "nation.africa",
+                 "raw_payload": {"url": "https://n/1"}}]
+    raw = "text [ref=abcd1234]."
+    out = citations.linkify_analysis(
+        {"involvement": raw, "verdict": raw, "tension_or_risk": raw,
+         "international": raw, "national": raw,
+         "timeline": [{"event": raw}],
+         "sub_issues": [{"detail": raw}],
+         "linking_narratives": [{"summary": raw, "detail": raw}]},
+        mentions)
+    import json as _json
+    assert "[ref=" not in _json.dumps(out), "a prose field still leaks the raw format"
