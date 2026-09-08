@@ -103,12 +103,24 @@ def rendered():
             page.wait_for_timeout(500)
             after_return = page.evaluate("() => document.body.innerText")
             lookback = page.evaluate("() => !!document.querySelector('#qd')")
+            # The run publishes more keys than the checklist lists; the counter
+            # must only count the ones it actually shows.
+            section_count = page.evaluate("""() => {
+              const noise = ['run_health','coverage','evidence_gate','source_credibility',
+                             'acquisition','verification','open_questions','subject','meta',
+                             'narrative_metrics'];
+              const real = ['sentiment_breakdown','narrative_breakdown','executive_summary'];
+              const card = window.ZENITH.progressCard([...noise, ...real], 'working');
+              const chip = card.querySelector('.chip').textContent.trim();
+              const [done, total] = chip.split(' ')[0].split('/').map(Number);
+              return {done, total};
+            }""")
             browser.close()
     finally:
         server.shutdown()
     return {"errors": errors, "text": text, "cards": cards,
             "issue_tab": issue_tab, "after_return": after_return,
-            "lookback": lookback}
+            "lookback": lookback, "section_count": section_count}
 
 
 # --- the page must run at all ------------------------------------------------
@@ -185,3 +197,15 @@ def test_the_search_form_offers_a_look_back(rendered):
     """The window was hard-coded to 210 days, so every report was dominated by
     material half a year old."""
     assert rendered["lookback"], "no look-back selector on the search form"
+
+
+def test_the_section_counter_cannot_exceed_its_own_total(rendered):
+    """A live run showed "25/15 sections" — a progress counter past its own
+    end. The run publishes more keys than this checklist lists (run_health,
+    coverage, evidence_gate and friends), and every one of them was counted
+    against a total of fifteen.
+    """
+    counted = rendered["section_count"]
+    assert counted["done"] <= counted["total"], \
+        f"counter reads {counted['done']}/{counted['total']}"
+    assert counted["done"] == 3, "only the sections this checklist shows should count"

@@ -18,14 +18,57 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CHROME_PATH = Path("/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+#: Where a Chromium might be. This was a single hard-coded path to the
+#: DEVELOPER'S container — /opt/pw-browsers/chromium-1194/… — which existed
+#: nowhere else, so this module reported "not available" on the deployed
+#: service and the download button returned 503 in the only place a user
+#: would ever press it. Look in the usual places, and let an operator say.
+#:
+#: The page no longer depends on any of this: "Download PDF" prints from the
+#: reader's own browser, which has already rendered the report and needs no
+#: browser installed on the server. These endpoints remain for callers that
+#: want the bytes server-side (tests, and any future scheduled export), and
+#: they now degrade honestly wherever no browser is installed.
+import os
+import shutil
+
+_ENV_OVERRIDE = "CHROME_EXECUTABLE_PATH"
+_CANDIDATE_PATHS = (
+    "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+    "/opt/pw-browsers/chromium/chrome-linux/chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+)
 
 #: payload "kind" -> the ZENITH export that turns it into the page.
 RENDER_CALL = {"report": "renderReport", "issue_map": "renderIssue"}
 
 
+def chrome_path() -> Path | None:
+    """The first Chromium this machine actually has, or None."""
+    override = os.environ.get(_ENV_OVERRIDE)
+    if override and Path(override).exists():
+        return Path(override)
+    for candidate in _CANDIDATE_PATHS:
+        if Path(candidate).exists():
+            return Path(candidate)
+    for name in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        found = shutil.which(name)
+        if found:
+            return Path(found)
+    # Playwright's own default location, whatever version it installed.
+    root = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")) if os.environ.get(
+        "PLAYWRIGHT_BROWSERS_PATH") else None
+    if root and root.is_dir():
+        for chrome in sorted(root.glob("chromium-*/chrome-linux/chrome")):
+            if chrome.exists():
+                return chrome
+    return None
+
+
 def chromium_available() -> bool:
-    return CHROME_PATH.exists()
+    return chrome_path() is not None
 
 
 def render_payload_to_pdf(html_document: str, kind: str, payload: dict) -> bytes:
@@ -42,7 +85,7 @@ def render_payload_to_pdf(html_document: str, kind: str, payload: dict) -> bytes
     payload_json = json.dumps(payload, default=str)
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(executable_path=str(CHROME_PATH), args=["--no-sandbox"])
+        browser = pw.chromium.launch(executable_path=str(chrome_path()), args=["--no-sandbox"])
         try:
             page = browser.new_page()
             page.set_content(html_document, wait_until="load")

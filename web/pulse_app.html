@@ -174,6 +174,52 @@
 .drill-body{margin-top:8px;max-height:520px;overflow-y:auto;padding-right:4px}
 .src-link{color:var(--sky2,#7dd3fc);font-size:12.5px;text-decoration:none}
 .src-link:hover{text-decoration:underline}
+
+/* ---------------------------------------------------------------------------
+   Print / Save-as-PDF.
+
+   The screen UI is dark. Printed as-is it is an unreadable slab of ink and a
+   waste of a cartridge, so the document is re-coloured for paper rather than
+   photographed off the screen. This is the whole PDF export now: the browser
+   has already rendered the report, so what it prints IS the report, with no
+   headless Chromium on the server to install, feed and keep alive.
+--------------------------------------------------------------------------- */
+@media print{
+  /* Paper, not screen. */
+  @page{size:A4;margin:14mm 12mm}
+  html,body,#zenith{background:#fff!important;color:#111!important}
+  #zenith{--bg:#fff;--panel:#fff;--panel2:#fff;--line:#ccc;--line2:#ccc;
+          --txt:#111;--mut:#555;--sky2:#0b5f8a;--pos:#1a7f3c;--neg:#b3261e;--amber:#8a6100}
+  #zenith *{color:inherit!important;box-shadow:none!important}
+
+  /* Controls, navigation and anything that only makes sense on a live page. */
+  nav.nav,.btn,button,input,select,textarea,.spinner,.drill{display:none!important}
+
+  /* Cards become plain sections with a hairline rule, and are kept whole
+     across page breaks wherever they will fit. */
+  #zenith .card{background:#fff!important;border:1px solid #ddd!important;
+    border-radius:6px;padding:12px 14px;margin:0 0 10px;
+    break-inside:avoid;page-break-inside:avoid}
+  #zenith .lbl,#zenith .fw-title{color:#111!important}
+  #zenith .muted,#zenith .fw-sub{color:#555!important}
+
+  /* Chips and pills read as boxed labels rather than glowing blobs. */
+  #zenith .chip,#zenith .pill{background:#fff!important;border:1px solid #bbb!important;
+    color:#333!important;padding:1px 6px}
+  #zenith .pill.pos{border-color:#1a7f3c!important;color:#1a7f3c!important}
+  #zenith .pill.neg{border-color:#b3261e!important;color:#b3261e!important}
+  #zenith .pill.amber{border-color:#8a6100!important;color:#8a6100!important}
+
+  /* A citation is worthless on paper unless the address is on the paper. */
+  #zenith a.src-link{color:#0b5f8a!important;text-decoration:underline}
+  #zenith a.src-link[href^="http"]::after{content:" (" attr(href) ")";
+    font-size:9px;color:#666!important;word-break:break-all}
+
+  /* Scroll boxes must not clip their content to one screenful in print. */
+  #zenith .drill-body,#zenith .tl-strip{max-height:none!important;overflow:visible!important}
+
+  h1,h2,h3,b{break-after:avoid;page-break-after:avoid}
+}
 </style>
 
 <div id="zenith">
@@ -240,25 +286,33 @@
       the browser's own download flow — createObjectURL + a synthetic click,
       the standard pattern, not the sandboxed-Artifact one; this is a real
       deployed page and downloads work normally here. */
-  async function downloadPdf(path, filename, btn, msg){
-    if(btn)btn.disabled=true;
-    if(msg)msg.textContent='Building PDF…';
+  /** Print the report the reader is already looking at.
+   *
+   *  This used to fetch a server-rendered PDF, which needed a headless
+   *  Chromium on the server. There is no Chromium in the deployed image, so
+   *  the button returned "503: PDF export is not available in this
+   *  environment" on the only machine that matters — it worked solely on the
+   *  developer's own container, where the browser happened to be installed.
+   *
+   *  Printing client-side removes the dependency entirely: the browser has
+   *  already rendered the page, so what it prints IS the page, which was the
+   *  original requirement. It also costs the server nothing, which matters on
+   *  a 2GB instance whose memory belongs to the analysis.
+   *
+   *  `filename` is what most browsers pre-fill in the save dialog, taken from
+   *  document.title for the duration of the print.
+   */
+  function downloadPdf(filename, btn, msg){
+    const previousTitle=document.title;
     try{
-      const h={};if(CFG.key)h['x-api-key']=CFG.key;
-      const res=await fetch(CFG.base.replace(/\/$/,'')+path,{headers:h});
-      if(!res.ok){
-        const body=await res.text().catch(()=>'');
-        throw new Error('HTTP '+res.status+(body?': '+body.slice(0,200):''));
-      }
-      const blob=await res.blob();
-      const url=URL.createObjectURL(blob);
-      const a=document.createElement('a');
-      a.href=url;a.download=filename;document.body.appendChild(a);a.click();
-      a.remove();URL.revokeObjectURL(url);
-      if(msg)msg.textContent='';
+      if(msg)msg.textContent='Opening your browser’s print dialog — choose "Save as PDF".';
+      document.title=filename;
+      window.print();
+      if(msg)setTimeout(()=>{msg.textContent='';},6000);
     }catch(e){
-      if(msg)msg.textContent='Download failed: '+e.message;
+      if(msg)msg.textContent='Could not open the print dialog: '+e.message;
     }finally{
+      document.title=previousTitle;
       if(btn)btn.disabled=false;
     }
   }
@@ -2062,7 +2116,12 @@
   // waits indefinitely on something that will never arrive.
   let _lastSectionAt=Date.now(), _lastReadyCount=-1;
   function progressCard(ready,stage){
-    const have=new Set(ready||[]);
+    // Count only what this checklist actually lists. The run publishes more
+    // keys than the fifteen shown here — run_health, coverage, evidence_gate
+    // and friends — so counting the raw list read "25/15 sections", a
+    // progress bar past its own end.
+    const _keys=new Set(SECTION_ORDER.map(([k])=>k));
+    const have=new Set((ready||[]).filter(k=>_keys.has(k)));
     if(have.size!==_lastReadyCount){_lastReadyCount=have.size;_lastSectionAt=Date.now();}
     const idleSec=Math.round((Date.now()-_lastSectionAt)/1000);
     const budget=(window.__ZENITH_DEADLINE__||600);
@@ -2119,8 +2178,7 @@
     // A file to hand to someone outside this app — no link, no login, just a
     // PDF of exactly what this page shows right now.
     $('#dlPdf',head).onclick=()=>downloadPdf(
-      '/api/report/download?name='+encodeURIComponent(r.name||''),
-      (r.name||'report').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'-report.pdf',
+      (r.name||'report').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'-report',
       $('#dlPdf',head), $('#dlMsg',head));
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
     // Nothing was collected. Rendering the usual empty sections made this look
@@ -2990,9 +3048,7 @@
       </div>`;
     out.appendChild(head);
     $('#dlIssuePdf',head).onclick=()=>downloadPdf(
-      '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
-        +'&issue='+encodeURIComponent(m.issue||''),
-      ((m.principal||'issue')+'-x-'+(m.issue||'map')).replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'.pdf',
+      ((m.principal||'issue')+'-x-'+(m.issue||'map')).replace(/[^a-z0-9]+/gi,'-').toLowerCase(),
       $('#dlIssuePdf',head), $('#dlIssueMsg',head));
 
     // The framework is the client deliverable; the intersection detail is the

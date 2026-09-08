@@ -88,3 +88,64 @@ def test_the_pdf_is_not_trivially_empty(client, monkeypatch):
 
     res = client.get("/api/report/download?name=Test%20Subject")
     assert len(res.content) > 5000
+
+
+# --- the button must not need a browser on the SERVER -------------------------
+
+def test_the_download_button_prints_from_the_readers_own_browser():
+    """This shipped as a server-side render against a hard-coded path to the
+    developer's own container. Render has no Chromium, so the only machine a
+    user ever presses this on answered:
+
+        503 {"detail":"PDF export is not available in this environment"}
+
+    The reader's browser has already rendered the report, so printing it there
+    needs nothing installed anywhere and cannot drift from what is on screen.
+    """
+    from engine.api_server import render_frontend_document
+
+    page = render_frontend_document()
+    assert "window.print()" in page, "the button no longer prints client-side"
+    assert "/api/report/download" not in page, \
+        "the button still depends on a server-side browser"
+
+
+def test_the_printed_page_is_recoloured_for_paper():
+    """The UI is dark. Printed unchanged it is an unreadable slab of ink."""
+    from engine.api_server import render_frontend_document
+
+    page = render_frontend_document()
+    assert "@media print" in page
+    assert "@page" in page
+
+
+def test_a_citation_carries_its_address_onto_the_paper():
+    """A link is worthless in a printed file unless the URL is printed too —
+    and the whole point of this export is that it leaves the app."""
+    from engine.api_server import render_frontend_document
+
+    assert 'a.src-link[href^="http"]::after' in render_frontend_document()
+
+
+def test_chromium_is_found_rather_than_assumed(tmp_path, monkeypatch):
+    """The path was hard-coded to one container's Playwright install, so this
+    reported "not available" everywhere else. It is now discovered, and an
+    operator can name it outright."""
+    from engine.reports import pdf_export
+
+    fake = tmp_path / "chrome"
+    fake.write_text("#!/bin/sh\n")
+    monkeypatch.setenv(pdf_export._ENV_OVERRIDE, str(fake))
+    assert pdf_export.chrome_path() == fake
+    assert pdf_export.chromium_available()
+
+
+def test_no_browser_anywhere_is_reported_honestly(monkeypatch):
+    from engine.reports import pdf_export
+
+    monkeypatch.delenv(pdf_export._ENV_OVERRIDE, raising=False)
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(pdf_export, "_CANDIDATE_PATHS", ())
+    monkeypatch.setattr(pdf_export.shutil, "which", lambda _name: None)
+    assert pdf_export.chrome_path() is None
+    assert not pdf_export.chromium_available()
