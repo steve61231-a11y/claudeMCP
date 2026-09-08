@@ -7,6 +7,7 @@ the exact stored payload through the app's own rendering code
 PDF — so a PDF can never show something the live page wouldn't.
 """
 
+import re
 import pytest
 from fastapi.testclient import TestClient
 
@@ -92,20 +93,19 @@ def test_the_pdf_is_not_trivially_empty(client, monkeypatch):
 
 # --- the button must not need a browser on the SERVER -------------------------
 
-def test_the_download_button_prints_from_the_readers_own_browser():
-    """This shipped as a server-side render against a hard-coded path to the
-    developer's own container. Render has no Chromium, so the only machine a
-    user ever presses this on answered:
-
-        503 {"detail":"PDF export is not available in this environment"}
-
-    The reader's browser has already rendered the report, so printing it there
-    needs nothing installed anywhere and cannot drift from what is on screen.
-    """
+def test_the_button_saves_a_file_rather_than_opening_a_print_dialog():
+    """window.print() is not a download. The reader asked for a file to send
+    to someone and got a printer prompt — the second wrong answer here, after
+    a server-side PDF that needed a browser the server does not have."""
     from engine.api_server import render_frontend_document
 
     page = render_frontend_document()
-    assert "window.print()" in page, "the button no longer prints client-side"
+    # The call, not the word: the comment above the function explains why
+    # printing was wrong, and must not itself fail this test.
+    calls_print = re.search(r"^\s*window\.print\(\)", page, re.M)
+    assert not calls_print, "still opening a print dialog"
+    assert "URL.createObjectURL" in page and "a.download" in page, \
+        "the button does not save a file"
     assert "/api/report/download" not in page, \
         "the button still depends on a server-side browser"
 

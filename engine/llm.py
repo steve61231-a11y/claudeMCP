@@ -251,6 +251,18 @@ def call_json(prompt: str, max_tokens: int | None = None, model: str | None = No
     # budget on every remaining call. Past the threshold, fail here — before a
     # request is sent — so the run reaches whatever it can produce without a
     # model in minutes rather than in an hour.
+    # Money is checked before liveness: a provider that is up but unpaid fails
+    # every call, and each one paying its own retry ladder is how a run that
+    # should end in seconds ends in a quarter of an hour instead.
+    if out_of_credit():
+        exc = OutOfCredits(
+            f"{settings.llm_provider} refused {_CREDIT_PRESSURE} calls for lack of credit, "
+            "so the rest of this run was not attempted. Top up the account "
+            "(for OpenRouter: openrouter.ai/credits) and run it again — nothing here "
+            "failed for any other reason.")
+        tracker.record_failure(exc)
+        raise exc
+
     if _breaker_blocks():
         exc = ProviderUnavailable(
             f"provider has failed {_CONSECUTIVE_FAILURES} calls in a row; not retrying "
@@ -503,6 +515,9 @@ def reset_adaptive_gap() -> None:
     global _ADAPTIVE_GAP
     _ADAPTIVE_GAP = 0.0
     reset_breaker()
+    # A run that failed for lack of credit must not condemn the next one: the
+    # operator's whole remedy is to top up and press go again.
+    reset_credit_pressure()
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +796,40 @@ _IN_FLIGHT_CREDIT_HINTS = ("in-flight", "in flight", "concurrent",
                            "retry after", "settle")
 
 
+#: How hard one call tries to get past a credit rejection. Small on purpose:
+#: in-flight contention clears in seconds, and a low balance never clears.
+CREDIT_PRESSURE_RETRIES = 2
+CREDIT_PRESSURE_MAX_SLEEP = 8.0
+
+#: How many calls may hit 402 before the run stops asking. Without this, every
+#: call rediscovers the empty balance on its own — 140 calls each paying their
+#: own retry ladder, turning a two-second diagnosis into a run that never ends.
+CREDIT_BREAKER_THRESHOLD = 3
+_CREDIT_PRESSURE = 0
+
+
+def _record_credit_pressure() -> None:
+    global _CREDIT_PRESSURE
+    with _BREAKER_LOCK:
+        _CREDIT_PRESSURE += 1
+
+
+def reset_credit_pressure() -> None:
+    global _CREDIT_PRESSURE
+    with _BREAKER_LOCK:
+        _CREDIT_PRESSURE = 0
+
+
+def out_of_credit() -> bool:
+    """Has this run established that the account cannot pay for it?
+
+    Distinct from the failure breaker: that one asks "is the provider up".
+    This asks "can we afford it", which no retry can change and which the
+    operator fixes in thirty seconds if we tell them plainly.
+    """
+    return _CREDIT_PRESSURE >= CREDIT_BREAKER_THRESHOLD
+
+
 def _is_in_flight_credit_pressure(error_text: str) -> bool:
     """Is this 402 'too much reserved at once' rather than 'balance empty'?"""
     lowered = (error_text or "").lower()
@@ -858,6 +907,7 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
     attempt = 0
     rate_limited = 0
     requests_made = 0
+    credit_pressure = 0
     started = time.monotonic()
     while attempt < OPENAI_COMPATIBLE_RETRIES:
         waited = time.monotonic() - started
@@ -930,17 +980,29 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
             # every remaining section of the run was refused without being
             # sent. One low balance thereby produced "139 of 140 calls failed".
             if response.status_code == 402:
-                if _is_in_flight_credit_pressure(response.text):
-                    rate_limited += 1
-                    if rate_limited <= OPENAI_COMPATIBLE_RATE_LIMIT_RETRIES:
-                        # Fewer and smaller requests in flight: both halve what
-                        # is reserved at once, which is the thing the provider
-                        # is objecting to.
-                        _widen_spacing()
-                        _shrink_in_flight_reservation(body)
-                        time.sleep(_retry_after(response) or
-                                   min(10 * rate_limited, OPENAI_COMPATIBLE_MAX_BACKOFF))
-                        continue
+                credit_pressure += 1
+                _record_credit_pressure()
+                # In-flight contention clears in SECONDS — the other requests
+                # finish and release their reservations. A balance too low to
+                # run the report does not clear at all, and no amount of
+                # sleeping creates credit.
+                #
+                # So this retry ladder is deliberately short. The first version
+                # of it borrowed the rate-limit ladder — six retries sleeping
+                # up to 75s each — which meant a low balance made every one of
+                # ~140 calls sit for up to 210s before failing. The run stopped
+                # failing and started hanging, which is worse: the reader waits
+                # a quarter of an hour to be told something the second call
+                # already knew.
+                if (_is_in_flight_credit_pressure(response.text)
+                        and credit_pressure <= CREDIT_PRESSURE_RETRIES):
+                    # Fewer and smaller requests in flight: both reduce what is
+                    # reserved at once, which is the thing being objected to.
+                    _widen_spacing()
+                    _shrink_in_flight_reservation(body)
+                    time.sleep(min(_retry_after(response) or 4.0 * credit_pressure,
+                                   CREDIT_PRESSURE_MAX_SLEEP))
+                    continue
                 raise OutOfCredits(
                     f"{settings.llm_provider} is out of credit for model {model!r}. "
                     f"Top up the account (for OpenRouter: openrouter.ai/credits) — "

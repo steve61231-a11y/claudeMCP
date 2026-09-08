@@ -286,33 +286,55 @@
       the browser's own download flow — createObjectURL + a synthetic click,
       the standard pattern, not the sandboxed-Artifact one; this is a real
       deployed page and downloads work normally here. */
-  /** Print the report the reader is already looking at.
+  /** Download the report as a real file, straight to disk.
    *
-   *  This used to fetch a server-rendered PDF, which needed a headless
-   *  Chromium on the server. There is no Chromium in the deployed image, so
-   *  the button returned "503: PDF export is not available in this
-   *  environment" on the only machine that matters — it worked solely on the
-   *  developer's own container, where the browser happened to be installed.
+   *  Two earlier attempts were wrong. A server-rendered PDF needed a headless
+   *  Chromium the deployed image does not have, so it answered 503. Then
+   *  window.print() opened a print dialog — which is not a download: the
+   *  reader asked for a file to send to someone, and got a printer prompt.
    *
-   *  Printing client-side removes the dependency entirely: the browser has
-   *  already rendered the page, so what it prints IS the page, which was the
-   *  original requirement. It also costs the server nothing, which matters on
-   *  a 2GB instance whose memory belongs to the analysis.
+   *  This writes a self-contained .html file: the report's own markup plus the
+   *  app's stylesheet inlined, as a Blob, saved by a synthetic <a download>.
+   *  It lands in the Downloads folder with no dialog and no server round-trip.
    *
-   *  `filename` is what most browsers pre-fill in the save dialog, taken from
-   *  document.title for the duration of the print.
+   *  HTML rather than PDF on purpose. It is the same document the reader is
+   *  looking at, so nothing can drift; it opens in any browser on any device;
+   *  links stay clickable and text stays selectable and searchable, which an
+   *  image-based client-side PDF would destroy; and the recipient can still
+   *  Save-as-PDF from it, because the print stylesheet travels inside the file.
    */
-  function downloadPdf(filename, btn, msg){
-    const previousTitle=document.title;
+  function downloadReportFile(filename, btn, msg){
+    if(btn)btn.disabled=true;
     try{
-      if(msg)msg.textContent='Opening your browser’s print dialog — choose "Save as PDF".';
-      document.title=filename;
-      window.print();
-      if(msg)setTimeout(()=>{msg.textContent='';},6000);
+      const view=document.getElementById('view');
+      if(!view||!view.innerHTML.trim())throw new Error('there is no report on screen yet');
+      // Every <style> the app defines, so the file looks like the page offline.
+      const styles=Array.from(document.querySelectorAll('style'))
+        .map(s=>s.textContent).join('\n');
+      const title=filename.replace(/-/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+      const stamp=new Date().toISOString().slice(0,16).replace('T',' ');
+      const doc='<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+        +'<meta name="viewport" content="width=device-width,initial-scale=1">'
+        +'<title>'+esc(title)+'</title><style>'+styles+'</style></head>'
+        +'<body><div id="zenith"><main class="wrap">'
+        +'<div class="muted" style="font-size:12px;margin:0 0 14px">'
+        +'M\u0169\u0169g\u0129 \u00b7 saved '+esc(stamp)+' \u00b7 '
+        +'a snapshot of this report, not a live page</div>'
+        +view.innerHTML
+        +'</main></div></body></html>';
+      const blob=new Blob([doc],{type:'text/html;charset=utf-8'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      a.href=url;a.download=filename+'.html';
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),4000);
+      if(msg){
+        msg.textContent='Saved '+filename+'.html to your Downloads.';
+        setTimeout(()=>{msg.textContent='';},8000);
+      }
     }catch(e){
-      if(msg)msg.textContent='Could not open the print dialog: '+e.message;
+      if(msg)msg.textContent='Download failed: '+e.message;
     }finally{
-      document.title=previousTitle;
       if(btn)btn.disabled=false;
     }
   }
@@ -2171,13 +2193,13 @@
         <span class="chip">Updated ${esc((r.generatedAt||'').slice(0,16).replace('T',' '))||'—'}</span>
         <span class="chip">${fmt(fresh.mentionsLast24h)} new · 24h</span>
         <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
-        <button class="btn ghost" id="dlPdf" style="margin-left:auto">Download PDF</button>
+        <button class="btn ghost" id="dlPdf" style="margin-left:auto">Download report</button>
         <span class="muted" id="dlMsg" style="font-size:12.5px"></span>
       </div>`;
     wrap.appendChild(head);
     // A file to hand to someone outside this app — no link, no login, just a
     // PDF of exactly what this page shows right now.
-    $('#dlPdf',head).onclick=()=>downloadPdf(
+    $('#dlPdf',head).onclick=()=>downloadReportFile(
       (r.name||'report').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'-report',
       $('#dlPdf',head), $('#dlMsg',head));
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
@@ -3043,11 +3065,11 @@
         return '<span class="chip">Analysed '+fmt(cv.mentions_analyzed)+' of '+fmt(cv.mentions_total)+'</span>';
       })()}</div>
       <div class="row" style="margin-top:12px;align-items:center">
-        <button class="btn ghost" id="dlIssuePdf">Download PDF</button>
+        <button class="btn ghost" id="dlIssuePdf">Download report</button>
         <span class="muted" id="dlIssueMsg" style="font-size:12.5px"></span>
       </div>`;
     out.appendChild(head);
-    $('#dlIssuePdf',head).onclick=()=>downloadPdf(
+    $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       ((m.principal||'issue')+'-x-'+(m.issue||'map')).replace(/[^a-z0-9]+/gi,'-').toLowerCase(),
       $('#dlIssuePdf',head), $('#dlIssueMsg',head));
 

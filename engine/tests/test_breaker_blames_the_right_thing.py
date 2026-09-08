@@ -185,3 +185,44 @@ def test_the_ceiling_does_not_reserve_more_credit_than_it_has_to():
     in-flight request. Raising it to 32000 quadrupled that hold and produced
     402s on 139 of 140 calls."""
     assert llm.OPENAI_COMPATIBLE_MAX_TOKENS <= 16000
+
+
+# --- a low balance must END the run, not slow it to a crawl -------------------
+
+@pytest.fixture(autouse=True)
+def _clean_credit():
+    llm.reset_credit_pressure()
+    yield
+    llm.reset_credit_pressure()
+
+
+def test_the_run_stops_asking_once_the_account_cannot_pay():
+    """Every call rediscovering the empty balance on its own is how a
+    two-second diagnosis became a run that never ended: ~140 calls each
+    paying their own retry ladder."""
+    assert not llm.out_of_credit()
+    for _ in range(llm.CREDIT_BREAKER_THRESHOLD):
+        llm._record_credit_pressure()
+    assert llm.out_of_credit()
+
+
+def test_topping_up_and_running_again_is_not_punished():
+    """The operator's entire remedy is to add credit and press go. A run that
+    failed for money must not condemn the next one."""
+    for _ in range(llm.CREDIT_BREAKER_THRESHOLD * 2):
+        llm._record_credit_pressure()
+    assert llm.out_of_credit()
+    llm.reset_adaptive_gap()          # what a new run calls
+    assert not llm.out_of_credit()
+
+
+def test_waiting_on_credit_is_seconds_not_minutes():
+    """In-flight contention clears in seconds; a low balance never clears, and
+    sleeping does not create credit. Borrowing the rate-limit ladder here made
+    every call sit for up to 210s before failing."""
+    worst_per_call = sum(
+        min(4.0 * attempt, llm.CREDIT_PRESSURE_MAX_SLEEP)
+        for attempt in range(1, llm.CREDIT_PRESSURE_RETRIES + 1))
+    assert worst_per_call <= 30, f"{worst_per_call}s of sleeping per call"
+    whole_run = worst_per_call * llm.CREDIT_BREAKER_THRESHOLD
+    assert whole_run <= 120, f"a broke run still takes {whole_run}s to say so"
