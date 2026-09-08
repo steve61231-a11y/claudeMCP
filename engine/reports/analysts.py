@@ -870,7 +870,14 @@ def analyze_issue_intersection(
             reply = llm.call_json(
                 prompt.format(principal=principal, issue=issue,
                               grounding=GROUNDING_RULES, digest=digest),
-                max_tokens=llm.max_output_tokens(),
+                # Sized to the section, not to the provider ceiling. These six
+                # run in ONE parallel pool, and a provider reserves max_tokens
+                # worth of credit per in-flight request — so asking each of the
+                # six for the whole ceiling reserved six ceilings at once, and
+                # OpenRouter answered HTTP 402 "would exceed your available
+                # credits given your current in-flight requests". The budget
+                # helper adds the thinking room on top.
+                max_tokens=llm.budget_for(ANALYST_MAX_TOKENS),
             )
         except Exception as exc:  # noqa: BLE001
             stages.current().failed(f"issue_analyst:{name}", exc)

@@ -136,3 +136,52 @@ def test_a_400_about_something_else_is_left_alone():
 def test_an_already_small_budget_is_not_blamed_for_the_rejection():
     body = {"max_tokens": 512}
     assert llm._clamp_max_tokens(body, "max_tokens invalid") is None
+
+
+# --- HTTP 402: money, and two very different kinds of it ----------------------
+
+def test_in_flight_credit_pressure_is_told_apart_from_an_empty_balance():
+    """OpenRouter's "would exceed your available credits given your current
+    in-flight requests. Retry after in-flight requests settle" is backpressure
+    — the balance can pay for these calls, just not all at once. An empty
+    balance is not."""
+    assert llm._is_in_flight_credit_pressure(
+        "This request would exceed your available credits given your current "
+        "in-flight requests. Retry after in-flight requests settle, or add more credits.")
+    assert not llm._is_in_flight_credit_pressure(
+        "Insufficient credits. Add more at openrouter.ai/credits.")
+
+
+def test_backpressure_shrinks_what_each_call_reserves():
+    """A provider holds max_tokens worth of credit for the life of a request,
+    so the fan-out's reservation is the thing to reduce."""
+    body = {"max_tokens": llm.OPENAI_COMPATIBLE_MAX_TOKENS}
+    first = llm._shrink_in_flight_reservation(body)
+    assert first < llm.OPENAI_COMPATIBLE_MAX_TOKENS
+    assert body["max_tokens"] == first
+
+
+def test_shrinking_never_goes_below_the_reasoning_floor():
+    """Shrinking past the floor trades a credit error for an empty reply,
+    which is the failure this whole module exists to stop."""
+    body = {"max_tokens": llm.REASONING_FLOOR}
+    for _ in range(10):
+        llm._shrink_in_flight_reservation(body)
+    assert body["max_tokens"] >= llm.REASONING_FLOOR
+
+
+def test_running_out_of_credit_says_so_in_those_words():
+    """"The model did not answer" sent an operator hunting a pipeline bug
+    while the pipeline was fine and the balance was empty."""
+    message = str(llm.OutOfCredits(
+        "openai_compatible is out of credit for model 'x'. Top up the account "
+        "(for OpenRouter: openrouter.ai/credits)"))
+    assert "out of credit" in message.lower()
+    assert "top up" in message.lower()
+
+
+def test_the_ceiling_does_not_reserve_more_credit_than_it_has_to():
+    """This number is the size of the hold placed on the balance for every
+    in-flight request. Raising it to 32000 quadrupled that hold and produced
+    402s on 139 of 140 calls."""
+    assert llm.OPENAI_COMPATIBLE_MAX_TOKENS <= 16000

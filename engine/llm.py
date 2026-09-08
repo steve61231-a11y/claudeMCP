@@ -145,7 +145,12 @@ ANTHROPIC_MAX_OUTPUT_TOKENS = 64000
 #: which a call reliably produced NOTHING and then had to be retried — paying
 #: twice for the answer and, until the breaker fix above, counting the first
 #: attempt as evidence the provider was down.
-REASONING_FLOOR = 12000
+#:
+#: 8000 rather than 12000: this is added to every request, and every request
+#: reserves that much credit while it is in flight (see
+#: OPENAI_COMPATIBLE_MAX_TOKENS). 8000 is still twice the reasoning room that
+#: was failing, at two-thirds of the hold on the balance.
+REASONING_FLOOR = 8000
 
 
 #: When set, overrides OPENAI_COMPATIBLE_TOTAL_BUDGET for calls made inside a
@@ -438,10 +443,15 @@ def _extract_json(text: str):
 # for every section, on a paid model that was answering fine — it was never
 # given room to finish a sentence.
 #
-# 32000 is comfortably inside what every current model on OpenRouter accepts
-# and leaves thinking room on top of the largest answer any stage asks for.
-# LLM_MAX_OUTPUT_TOKENS still overrides it for a provider with a lower cap.
-OPENAI_COMPATIBLE_MAX_TOKENS = 32000
+# 16000, not 32000. Providers reserve `max_tokens` worth of credit for the
+# whole time a request is in flight, so this number is not just a ceiling on
+# the answer — it is the size of the hold placed on the balance, multiplied by
+# however many calls run in parallel. Raising it from 8000 to 32000 quadrupled
+# that hold and turned a working account into HTTP 402 "this request would
+# exceed your available credits given your current in-flight requests" on 139
+# of 140 calls. 16000 keeps real thinking room over the old 8000 while halving
+# what a fan-out ties up. LLM_MAX_OUTPUT_TOKENS still overrides it.
+OPENAI_COMPATIBLE_MAX_TOKENS = 16000
 OPENAI_COMPATIBLE_RETRIES = 4
 # Per-ATTEMPT timeout. Was 90s, on the reasoning that "a model that has not
 # started answering in 90 seconds is not about to". That is not true of a
@@ -754,6 +764,42 @@ class TruncatedReply(RuntimeError):
     """
 
 
+class OutOfCredits(RuntimeError):
+    """The account cannot pay for this call.
+
+    Kept distinct from every other failure because the remedy is distinct and
+    trivial — add credit — and because a run that fails for this reason must
+    say so in those words. "The model did not answer" sent an operator looking
+    for a bug in the pipeline when the pipeline was working and the balance
+    was empty.
+    """
+
+
+#: Wording providers use when the balance is fine but too much is reserved at
+#: once. OpenRouter phrases it as in-flight requests; others say concurrent.
+_IN_FLIGHT_CREDIT_HINTS = ("in-flight", "in flight", "concurrent",
+                           "retry after", "settle")
+
+
+def _is_in_flight_credit_pressure(error_text: str) -> bool:
+    """Is this 402 'too much reserved at once' rather than 'balance empty'?"""
+    lowered = (error_text or "").lower()
+    return any(hint in lowered for hint in _IN_FLIGHT_CREDIT_HINTS)
+
+
+def _shrink_in_flight_reservation(body: dict) -> int:
+    """Ask for a smaller completion, so less credit is held while it runs.
+
+    Providers reserve `max_tokens` worth of credit for the duration of a
+    request. Halving it halves what a parallel fan-out ties up, which is the
+    quantity a 402-about-in-flight-requests is actually complaining about.
+    """
+    current = int(body.get("max_tokens") or 0)
+    if current > REASONING_FLOOR:
+        body["max_tokens"] = max(REASONING_FLOOR, current // 2)
+    return int(body.get("max_tokens") or 0)
+
+
 class ProviderRejectedRequest(RuntimeError):
     """A 4xx the provider will never accept, however many times it is sent.
 
@@ -866,6 +912,41 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
                 time.sleep(_retry_after(response) or
                            min(15 * rate_limited, OPENAI_COMPATIBLE_MAX_BACKOFF))
                 continue
+            # A 402 is about MONEY, and it comes in two very different kinds.
+            #
+            #   "This request would exceed your available credits given your
+            #    current IN-FLIGHT REQUESTS. Retry after in-flight requests
+            #    settle, or add more credits."
+            #
+            # That is backpressure, not a refusal: the provider reserves credit
+            # up front for every concurrent request, so N parallel calls each
+            # reserving `max_tokens` worth can exceed a balance that would
+            # comfortably pay for them run one at a time. Retrying after the
+            # others settle is exactly what the message asks for, and asking
+            # for a smaller reservation makes each one cheaper to hold.
+            #
+            # Treated as a flat 4xx below, it hard-failed instead — and because
+            # a rejection counts toward the breaker, five of them opened it and
+            # every remaining section of the run was refused without being
+            # sent. One low balance thereby produced "139 of 140 calls failed".
+            if response.status_code == 402:
+                if _is_in_flight_credit_pressure(response.text):
+                    rate_limited += 1
+                    if rate_limited <= OPENAI_COMPATIBLE_RATE_LIMIT_RETRIES:
+                        # Fewer and smaller requests in flight: both halve what
+                        # is reserved at once, which is the thing the provider
+                        # is objecting to.
+                        _widen_spacing()
+                        _shrink_in_flight_reservation(body)
+                        time.sleep(_retry_after(response) or
+                                   min(10 * rate_limited, OPENAI_COMPATIBLE_MAX_BACKOFF))
+                        continue
+                raise OutOfCredits(
+                    f"{settings.llm_provider} is out of credit for model {model!r}. "
+                    f"Top up the account (for OpenRouter: openrouter.ai/credits) — "
+                    f"nothing in this run failed for any other reason. "
+                    f"Provider said: {response.text[:300] or '<empty body>'}"
+                )
             if response.status_code >= 500:
                 raise requests.HTTPError(f"HTTP {response.status_code}: {response.text[:200]}")
             # A 400 is often about a field WE added, not about the caller's

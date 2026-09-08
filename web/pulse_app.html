@@ -1965,6 +1965,17 @@
   function renderEvidenceGate(gate){
     if(!gate||gate.examined==null)return null;
     const c=deepCard('What was read, and what was set aside',gate.error||null);
+    // The gate scores documents the DISCOVERY sweep brought in this run. When
+    // the sweep found nothing new, every number here is legitimately zero —
+    // and rendering four zeros beside a corpus of 109 said "nothing was read",
+    // which is false and reads as a broken report. Say which it is.
+    if(!gate.examined){
+      c.appendChild(el('div','muted',
+        'No newly-discovered documents needed checking this run — nothing here was '
+        + 'set aside. The material analysed came from what was already collected '
+        + 'for this subject, which is counted above, not from this gate.'));
+      return c;
+    }
     const g=el('div','grid');g.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';g.style.marginTop='12px';
     g.appendChild(kpiCard('Examined',fmt(gate.examined),''));
     if(gate.on_topic!=null)g.appendChild(kpiCard('On topic',fmt(gate.on_topic),''));
