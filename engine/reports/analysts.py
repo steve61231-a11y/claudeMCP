@@ -596,7 +596,11 @@ def analyze_narrative_deep_dives(
                 ),
                 _corpus_blob(members, budget_chars=30000),
                 expected_keys={"deep_dive"},
-                max_tokens=4000,
+                # Was a raw 4000, bypassing the budget helper. On a model that
+                # reasons first, 4000 is spent thinking and the reply comes
+                # back empty — which is why EVERY narrative deep-dive failed
+                # on the live run while the provider was working fine.
+                max_tokens=llm.budget_for(4000),
                 max_untrusted_chars=32000,
             )
         except Exception as exc:  # noqa: BLE001

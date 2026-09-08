@@ -181,7 +181,7 @@ def find_contradictions(claim: str, pool: list[EvidenceRecord],
     try:
         reply = llm.call_json(
             CONTRADICT_PROMPT.format(claim=claim[:300], evidence=listing),
-            max_tokens=1200, model=llm.bulk_model())
+            max_tokens=llm.budget_for(1200), model=llm.bulk_model())
     except Exception as exc:  # noqa: BLE001
         # No contradiction search ran. "Nothing contradicts this" and "we never
         # looked" must not read the same on a claim we are about to publish.
@@ -245,7 +245,7 @@ def challenge(finding: Finding) -> dict:
                 platforms=finding.distinct_platforms,
                 statuses=", ".join(sorted({r["status"] for r in finding.supporting})) or "—",
                 contradicting=len(finding.contradicting), supporting=supporting or "—"),
-            max_tokens=900, model=llm.strong_model())
+            max_tokens=llm.budget_for(900), model=llm.strong_model())
     except Exception:  # noqa: BLE001
         return {"verdict": "NOT_REVIEWED",
                 "reason": "the sceptic pass did not complete for this finding"}

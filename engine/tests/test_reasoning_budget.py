@@ -36,8 +36,13 @@ def _response(finish_reason, content=None, reasoning=None, completion_tokens=148
 # --- the budget helper -------------------------------------------------------
 
 def test_a_tiny_output_budget_is_raised_to_the_reasoning_floor():
-    assert llm.budget_for(640) == llm.REASONING_FLOOR
-    assert llm.budget_for(1480) == llm.REASONING_FLOOR
+    # The headroom is ADDED to what the caller asked for, not maxed with it:
+    # thinking and the answer are charged against the same allowance, so a
+    # caller wanting 640 tokens of answer needs 640 PLUS room to think. Taking
+    # the max gave it `floor - 640` of actual thinking room and called that
+    # headroom.
+    assert llm.budget_for(640) == 640 + llm.REASONING_FLOOR
+    assert llm.budget_for(1480) == 1480 + llm.REASONING_FLOOR
 
 
 def test_the_floor_is_big_enough_for_the_budgets_that_failed(monkeypatch):
@@ -53,7 +58,7 @@ def test_the_provider_ceiling_is_still_respected(monkeypatch):
 
 def test_a_large_expected_output_is_not_shrunk(monkeypatch):
     monkeypatch.setattr(llm, "max_output_tokens", lambda: 32000)
-    assert llm.budget_for(12_000) == 12_000
+    assert llm.budget_for(12_000) >= 12_000
 
 
 # --- the empty-and-truncated reply --------------------------------------------
@@ -200,3 +205,35 @@ def test_every_batched_stage_routes_through_the_budget_helper():
         source = (root / relative).read_text()
         assert "budget_for(" in source, (
             f"{relative} sizes a completion budget without reasoning headroom")
+
+
+def test_no_call_site_anywhere_sizes_a_budget_with_a_bare_number():
+    """The check above only asked whether `budget_for(` appeared SOMEWHERE in
+    a hand-listed file. It therefore missed `analysts.py`, which routed eight
+    call sites through the helper and then passed a bare `max_tokens=4000` to
+    the ninth — the narrative deep-dive, which duly failed on every storyline
+    of a live run because a reasoning model spent all 4000 thinking.
+
+    A literal is never right here: the caller cannot know the thinking cost,
+    which is the whole reason the helper exists. Scan every source file rather
+    than a list someone has to remember to extend.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    # Catches a literal (max_tokens=4000) AND a module constant holding one
+    # (max_tokens=MAP_MAX_TOKENS) — the second is how the digest map step,
+    # the highest-volume call in the system, went on bypassing the helper
+    # after every literal in the codebase had been fixed.
+    bare = re.compile(r"max_tokens\s*=\s*(?!llm\.|budget_for)([A-Z_]{3,}|\d+)")
+    offenders = []
+    for path in root.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        for number, line in enumerate(path.read_text().splitlines(), start=1):
+            if bare.search(line):
+                offenders.append(f"{path.relative_to(root)}:{number}: {line.strip()}")
+    assert not offenders, (
+        "completion budgets sized without reasoning headroom, leaving no room "
+        "for a model that thinks before it answers:\n  " + "\n  ".join(offenders))

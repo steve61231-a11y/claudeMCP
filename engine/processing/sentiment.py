@@ -59,7 +59,7 @@ The required JSON shape is:
 def llm_sentiment_and_context(text: str) -> dict:
     """LLM pass for context tagging, and for any mention the local model is unsure about."""
     try:
-        result = llm.call_json_untrusted(CONTEXT_PROMPT, text, expected_keys={"sentiment", "intensity"}, max_tokens=200)
+        result = llm.call_json_untrusted(CONTEXT_PROMPT, text, expected_keys={"sentiment", "intensity"}, max_tokens=llm.budget_for(200))
     except Exception as exc:  # noqa: BLE001
         # A failed call must not become a scored "neutral". Neutral is a
         # reading; an unanswered request is not, and counting one as the other

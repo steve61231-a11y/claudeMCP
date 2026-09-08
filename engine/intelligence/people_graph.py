@@ -316,7 +316,7 @@ def _classify_pairs(subject: str, pair_list: list, person_mentions: dict) -> lis
                 PAIR_PROMPT.format(name=subject, grounding=GROUNDING_RULES),
                 "\n\n".join(blocks),
                 expected_keys={"pairs"},
-                max_tokens=2000,
+                max_tokens=llm.budget_for(2000),
                 max_untrusted_chars=25000,
             )
         except Exception as exc:  # noqa: BLE001
@@ -370,7 +370,7 @@ def _profile_people(subject: str, ranked_people: list, person_mentions: dict) ->
                 PROFILE_PROMPT.format(name=subject, grounding=GROUNDING_RULES),
                 "\n\n".join(blocks),
                 expected_keys={"people"},
-                max_tokens=2500,
+                max_tokens=llm.budget_for(2500),
                 max_untrusted_chars=25000,
             )
         except Exception as exc:  # noqa: BLE001

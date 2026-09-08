@@ -99,7 +99,7 @@ def extract_claims(passage: str, max_claims: int = _MAX_CLAIMS_PER_SECTION) -> l
     try:
         result = llm.call_json(
             EXTRACT_PROMPT.format(passage=passage[:6000]),
-            max_tokens=1500,
+            max_tokens=llm.budget_for(1500),
             model=llm.bulk_model(),
         )
     except Exception as exc:  # noqa: BLE001
@@ -252,7 +252,7 @@ def adjudicate(claim: str, evidence: list[dict]) -> dict:
             ADJUDICATE_PROMPT.format(claim=claim, evidence=rendered),
             rendered,
             expected_keys={"verdict"},
-            max_tokens=400,
+            max_tokens=llm.budget_for(400),
             max_untrusted_chars=len(rendered) + 500,
         )
     except Exception:  # noqa: BLE001

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import threading
 import time
 
@@ -125,10 +126,11 @@ def concurrency(default: int) -> int:
 
 
 # Ceiling on a single response. Depth is the product here: an analyst section
-# capped at 2.5k tokens writes headlines, not intelligence. The
-# OpenAI-compatible path is bound by DeepSeek's 8192 and clamps itself; Claude
-# writes far more, so the paid backend is not held to a stand-in's limit.
-ANTHROPIC_MAX_OUTPUT_TOKENS = 16000
+# capped at 2.5k tokens writes headlines, not intelligence. The paid backend
+# is never held to a stand-in's limit, so this must stay ABOVE the
+# OpenAI-compatible ceiling — raising that one to 32000 for reasoning models
+# briefly inverted the two and capped production below the stand-in.
+ANTHROPIC_MAX_OUTPUT_TOKENS = 64000
 
 
 #: Smallest completion budget worth sending to a model that thinks before it
@@ -136,7 +138,14 @@ ANTHROPIC_MAX_OUTPUT_TOKENS = 16000
 #: limit sized for the JSON alone is spent before a single answer token is
 #: emitted. Every failure in the live run hit its budget exactly — 1480, 3400,
 #: 640, 880, 1000 — because the budgets were computed as output-only.
-REASONING_FLOOR = 4000
+#:
+#: Raised from 4000: that was set when the ceiling was 8000, so a floor any
+#: higher left no room to grow into. A current thinking model can spend 4000
+#: tokens reasoning before writing anything, which made 4000 the budget at
+#: which a call reliably produced NOTHING and then had to be retried — paying
+#: twice for the answer and, until the breaker fix above, counting the first
+#: attempt as evidence the provider was down.
+REASONING_FLOOR = 12000
 
 
 #: When set, overrides OPENAI_COMPATIBLE_TOTAL_BUDGET for calls made inside a
@@ -164,11 +173,25 @@ def _total_budget() -> float:
     # the full budget; the fourth in a row is a provider that is not serving us,
     # and spending four more minutes proving it again is time taken from the
     # reader. The breaker trips shortly after this and stops the calls entirely.
+    #
+    # `_CONSECUTIVE_FAILURES` now counts only failures the PROVIDER is
+    # responsible for (see `_is_provider_fault`). It used to count truncated
+    # and unparseable replies too, which made this shrink on exactly the
+    # failures more time would have fixed: budget down to 45s, next thinking
+    # call cannot finish inside 45s, so it fails, and the run strangles itself
+    # one section at a time.
+    #
+    # The floor is also no longer 45s, and is no longer a magic number. A
+    # budget below one attempt's timeout cannot buy a single complete attempt,
+    # so it stops being a budget and becomes a kill switch — which is what 45s
+    # against a 90s attempt already was. Derive the floors from the timeout so
+    # the two can never drift apart again.
+    one_attempt = float(OPENAI_COMPATIBLE_TIMEOUT)
     failures = _CONSECUTIVE_FAILURES
     if failures >= 3:
-        return min(base, 45.0)
+        return min(base, one_attempt)
     if failures >= 1:
-        return min(base, 120.0)
+        return min(base, one_attempt * 1.5)
     return base
 
 
@@ -177,8 +200,17 @@ def budget_for(expected_output_tokens: int) -> int:
 
     Callers know how much ANSWER they expect; none of them can know how much
     the model will spend reasoning first. This adds that headroom in one place
-    rather than leaving every stage to guess, and keeps the provider ceiling."""
-    return min(max_output_tokens(), max(int(expected_output_tokens), REASONING_FLOOR))
+    rather than leaving every stage to guess, and keeps the provider ceiling.
+
+    Thinking and the answer are charged against the SAME allowance, so the
+    headroom has to be ADDED to what the caller asked for, not maxed with it.
+    Taking the max meant an analyst that wanted 8000 tokens of answer was given
+    12000 total — 12000 minus however much the model spent reasoning, which on
+    a thinking model is routinely more than the 4000 of slack that leaves. The
+    section then came back truncated or empty and was reported as "the model
+    did not answer", when the model had answered and been cut off.
+    """
+    return min(max_output_tokens(), int(expected_output_tokens) + REASONING_FLOOR)
 
 
 def max_output_tokens() -> int:
@@ -189,8 +221,13 @@ def max_output_tokens() -> int:
     return OPENAI_COMPATIBLE_MAX_TOKENS if provider() == "openai_compatible" else ANTHROPIC_MAX_OUTPUT_TOKENS
 
 
-def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> dict | list:
+def call_json(prompt: str, max_tokens: int | None = None, model: str | None = None) -> dict | list:
     """See `_call_json`. This wrapper only does health accounting.
+
+    `max_tokens` defaults to a reasoning-safe budget rather than to a bare
+    1024. A caller that omits it was previously given an output-only figure
+    with no room for a model that thinks first, so the default was itself an
+    instance of the bug every call site above had to be fixed for.
 
     Every stage catches its own exceptions so a failed section cannot break a
     run — around 120 handlers do this, each one reasonable on its own. The
@@ -199,6 +236,9 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     all pass through, is what lets the run say which of the two happened.
     """
     from engine import health  # local import: health imports llm
+
+    if max_tokens is None:
+        max_tokens = budget_for(1024)
 
     tracker = health.current()
 
@@ -216,7 +256,7 @@ def call_json(prompt: str, max_tokens: int = 1024, model: str | None = None) -> 
     try:
         result = _call_json(prompt, max_tokens=max_tokens, model=model)
     except BaseException as exc:
-        _record_failure()
+        _record_failure(exc)
         tracker.record_failure(exc)
         raise
     _record_success()
@@ -388,20 +428,40 @@ def _extract_json(text: str):
     return json.loads(body[start : end + 1])
 
 
-# Limits for the OpenAI-compatible path. DeepSeek's ceiling is the binding one
-# (8192 output tokens); it also throttles free tiers, and the map step fires
-# several requests at once, so transient failures are retried rather than
-# costing us a chunk of the corpus.
-OPENAI_COMPATIBLE_MAX_TOKENS = 8000
+# Limits for the OpenAI-compatible path.
+#
+# This was 8000, sized to DeepSeek's 8192 output ceiling. That number is a
+# 2024 assumption and it is actively harmful on a current reasoning model:
+# thinking tokens are charged against the SAME allowance as the answer, so a
+# Gemini/GPT-5/Claude-class model can spend the entire 8000 reasoning and
+# return an empty `content`. The run then reports "the model did not answer"
+# for every section, on a paid model that was answering fine — it was never
+# given room to finish a sentence.
+#
+# 32000 is comfortably inside what every current model on OpenRouter accepts
+# and leaves thinking room on top of the largest answer any stage asks for.
+# LLM_MAX_OUTPUT_TOKENS still overrides it for a provider with a lower cap.
+OPENAI_COMPATIBLE_MAX_TOKENS = 32000
 OPENAI_COMPATIBLE_RETRIES = 4
-# Per-ATTEMPT timeout. At 180s and four attempts a single call could occupy
-# twelve minutes before failing, and an analyst fan-out of eight such calls
-# outlived any patience a reader has. A model that has not started answering in
-# 90 seconds is not about to.
-OPENAI_COMPATIBLE_TIMEOUT = 90
+# Per-ATTEMPT timeout. Was 90s, on the reasoning that "a model that has not
+# started answering in 90 seconds is not about to". That is not true of a
+# thinking model on a full digest chunk, which routinely thinks for longer
+# than that before emitting its first token — so the timeout fired on calls
+# that were working, and each one counted against the budget and the breaker.
+OPENAI_COMPATIBLE_TIMEOUT = 180
 #: Whole-call ceiling across all attempts, so retries cannot compound into a
 #: wait longer than the analyst deadline that contains them.
-OPENAI_COMPATIBLE_TOTAL_BUDGET = 240
+#:
+#: Raised with the per-attempt timeout: at 240s total against a 180s attempt
+#: there was no room for a second attempt at all, so the retry ladder above
+#: was decorative — the first slow call consumed the budget and the "retry"
+#: was refused before it was sent.
+#:
+#: Kept meaningfully BELOW `analyst_deadline_seconds` (900), which is a
+#: wall-clock deadline over the whole analyst fan-out: a single call allowed
+#: to run as long as that deadline would spend it alone and every other
+#: analyst would be abandoned having never been given a chance.
+OPENAI_COMPATIBLE_TOTAL_BUDGET = 420
 # 429s get their own, much longer budget: a rate limit is a minute-long window,
 # not a blip, so seconds of backoff spend every attempt inside the same blocked
 # window and the call fails having never really retried.
@@ -482,8 +542,36 @@ def _record_success() -> None:
         _CALLS_SINCE_TRIP = 0
 
 
-def _record_failure() -> None:
+#: Failures that are NOT evidence the provider is unavailable.
+#:
+#: The breaker exists to stop a run paying the full retry budget against a
+#: backend that is refusing everything. That is a statement about the PROVIDER.
+#: A reply that arrived and was too big for the budget we set, or that we then
+#: failed to parse, is a statement about US — the provider served the request.
+#:
+#: Counting those the same way is what turned one under-budgeted call into a
+#: dead run: a reasoning model spends its allowance thinking, `TruncatedReply`
+#: is raised, three of those shrink `_total_budget()` to 45s, which is less
+#: than the next thinking call needs, so it fails too, and at five the breaker
+#: opens and refuses every remaining section without sending anything. Digest
+#: chunks 1-9, event resolution, the executive brief, grounding verification
+#: and every narrative deep-dive then "fail" against a provider that was
+#: working the whole time.
+#: (named lazily: TruncatedReply is defined further down this module)
+def _not_provider_fault() -> tuple[type[BaseException], ...]:
+    return (TruncatedReply, ValueError, json.JSONDecodeError)
+
+
+def _is_provider_fault(exc: BaseException) -> bool:
+    """Does this failure say the PROVIDER is unavailable, or that our request
+    was wrong for it? Only the former belongs to the breaker."""
+    return not isinstance(exc, _not_provider_fault())
+
+
+def _record_failure(exc: BaseException | None = None) -> None:
     global _CONSECUTIVE_FAILURES
+    if exc is not None and not _is_provider_fault(exc):
+        return
     with _BREAKER_LOCK:
         _CONSECUTIVE_FAILURES += 1
 
@@ -582,6 +670,33 @@ _ADAPTIVE_FIELDS = (
     ("thinking", ("thinking", "reasoning")),
     ("response_format", ("response_format", "json_object", "json mode")),
 )
+
+
+#: Words a provider uses when OUR output ceiling is above ITS cap.
+_MAX_TOKEN_COMPLAINTS = ("max_tokens", "max tokens", "max_completion_tokens",
+                        "maximum output", "output tokens", "too large")
+
+
+def _clamp_max_tokens(body: dict, error_text: str) -> int | None:
+    """Bring `max_tokens` down to a limit the provider named, or halve it.
+
+    Returns the new value, or None if this 400 was not about the budget.
+    Halving rather than failing means one wasted request buys a working one,
+    instead of a hard-coded ceiling being wrong for every provider but the one
+    it was copied from.
+    """
+    lowered = (error_text or "").lower()
+    if not any(word in lowered for word in _MAX_TOKEN_COMPLAINTS):
+        return None
+    current = int(body.get("max_tokens") or 0)
+    if current <= 1024:
+        return None  # already small; the budget is not what it is objecting to
+
+    # Prefer a number the provider itself named, when one is smaller than ours.
+    stated = [int(n) for n in re.findall(r"\b(\d{3,7})\b", lowered)]
+    candidates = [n for n in stated if 256 <= n < current]
+    body["max_tokens"] = max(candidates) if candidates else max(1024, current // 2)
+    return body["max_tokens"]
 
 
 def _drop_rejected_field(body: dict, error_text: str) -> str | None:
@@ -759,6 +874,15 @@ def _openai_compatible_json(prompt: str, max_tokens: int, model: str):
             # field the provider objects to and try again rather than failing a
             # run over our own defaults.
             if response.status_code == 400:
+                # A provider whose output ceiling is lower than ours rejects
+                # the request outright. DeepSeek caps at 8192; our ceiling is
+                # 32000 because a reasoning model needs the room. Rather than
+                # maintain a table of every provider's cap — which is what the
+                # old hard-coded 8000 was, and it was wrong for everyone else —
+                # let the provider state its own limit and come down to it.
+                clamped = _clamp_max_tokens(body, response.text)
+                if clamped:
+                    continue
                 dropped = _drop_rejected_field(body, response.text)
                 if dropped:
                     # Not an attempt: the request was rejected over our own
@@ -907,7 +1031,7 @@ def call_json_untrusted(
     instructions: str,
     untrusted_text: str,
     expected_keys: set[str],
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     max_untrusted_chars: int = UNTRUSTED_TEXT_MAX_CHARS,
     model: str | None = None,
 ) -> dict:

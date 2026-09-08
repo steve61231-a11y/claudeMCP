@@ -40,7 +40,20 @@ from dataclasses import dataclass, field
 FAILURE_THRESHOLD = 0.5
 
 #: How long the pre-run liveness probe may spend before giving its verdict.
-PROBE_BUDGET_SECONDS = 45
+#:
+#: Must be at least one complete attempt, or the probe reports "the model did
+#: not answer" about a provider it never gave time to answer — and the run
+#: starts marked degraded on the strength of it. At 45s against a 180s attempt
+#: timeout that is what it did to any model that thinks before replying.
+#:
+#: Derived rather than written down, so raising the attempt timeout can never
+#: silently turn the probe back into a false negative. The cost is that a
+#: genuinely dead backend takes one attempt to detect instead of 45s; the
+#: probe is cached for ten minutes, so that is paid once per run at most.
+def _probe_budget_seconds() -> float:
+    from engine import llm
+
+    return float(llm.OPENAI_COMPATIBLE_TIMEOUT)
 
 VERDICT_OK = "ok"
 VERDICT_DEGRADED = "degraded"
@@ -251,10 +264,10 @@ def preflight() -> dict:
         # retrying, and spending that here to learn the provider is busy costs
         # a run four minutes before it has collected a single mention — while
         # the run itself could have been discovering the same thing usefully.
-        with llm.short_budget(PROBE_BUDGET_SECONDS):
+        with llm.short_budget(_probe_budget_seconds()):
             reply = llm.call_json(
                 'Reply with ONLY this JSON and nothing else: {"ok": true, "n": 2}',
-                max_tokens=200,
+                max_tokens=llm.budget_for(200),
                 model=model,
             )
     except Exception as exc:  # noqa: BLE001 — classified below

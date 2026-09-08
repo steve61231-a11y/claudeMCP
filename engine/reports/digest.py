@@ -117,7 +117,14 @@ def _digest_chunk(name: str, chunk: list[dict], index: int) -> dict:
     try:
         result = llm.call_json(
             MAP_PROMPT.format(name=name, grounding=GROUNDING_RULES, batch=batch[:chunk_budget() + 4000]),
-            max_tokens=MAP_MAX_TOKENS,
+            # Through the budget helper, not raw: this is the highest-volume
+            # call in the system, and passing MAP_MAX_TOKENS straight through
+            # meant a reasoning model spent the whole allowance thinking and
+            # returned nothing. Every digest chunk then "failed" — which is
+            # the top of the failure list on a live run, and takes every
+            # analyst downstream with it, because they read this digest and
+            # not the mentions.
+            max_tokens=llm.budget_for(MAP_MAX_TOKENS),
             # The map step is the highest-volume call in the system — one per
             # chunk of the whole corpus — and it is mechanical extraction, which
             # is exactly what the bulk tier is for. The reduce step and the

@@ -58,7 +58,7 @@ def detect_indirect_mention(text: str, politician_name: str, aliases: list[str],
     )
     unmatched = {"matched": False, "match_type": "indirect_llm", "confidence": 0.0}
     try:
-        result = llm.call_json_untrusted(instructions, text, expected_keys={"matched"}, max_tokens=256)
+        result = llm.call_json_untrusted(instructions, text, expected_keys={"matched"}, max_tokens=llm.budget_for(256))
     except ValueError:
         # A malformed/injected reply must never link a mention.
         return unmatched

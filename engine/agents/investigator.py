@@ -191,7 +191,7 @@ def build_agenda(db, politician) -> dict:
             ),
             context,
             expected_keys={"agenda"},
-            max_tokens=2000,
+            max_tokens=llm.budget_for(2000),
             max_untrusted_chars=len(context) + 1000,
         )
         for item in (result.get("agenda") or [])[:_MAX_LEADS]:

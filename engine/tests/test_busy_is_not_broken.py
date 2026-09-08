@@ -103,8 +103,15 @@ def test_the_probe_runs_against_a_short_budget(monkeypatch):
 
     monkeypatch.setattr(llm, "call_json", capture)
     health.preflight()
-    assert seen["budget"] == health.PROBE_BUDGET_SECONDS
-    assert health.PROBE_BUDGET_SECONDS < llm.OPENAI_COMPATIBLE_TOTAL_BUDGET
+    assert seen["budget"] == health._probe_budget_seconds()
+    # Short RELATIVE to the full retry budget — the point is that learning the
+    # provider is busy must not cost a run several minutes before it has
+    # collected a mention.
+    assert seen["budget"] < llm.OPENAI_COMPATIBLE_TOTAL_BUDGET
+    # ...but never shorter than one complete attempt, or the probe reports
+    # "the model did not answer" about a provider it never let answer, and the
+    # run starts degraded on the strength of it.
+    assert seen["budget"] >= llm.OPENAI_COMPATIBLE_TIMEOUT
 
 
 def test_the_budget_override_is_restored_afterwards(monkeypatch):

@@ -120,22 +120,22 @@ Respond with ONLY a JSON object: {{"trends": ["...", "...", "...", "...", "...",
 
 
 def generate_executive_summary(context: str) -> str:
-    result = llm.call_json(SUMMARY_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
+    result = llm.call_json(SUMMARY_PROMPT.format(context=context), max_tokens=llm.budget_for(SECTION_MAX_TOKENS))
     return result.get("summary", "")
 
 
 def generate_risks(context: str) -> list[str]:
-    result = llm.call_json(RISKS_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
+    result = llm.call_json(RISKS_PROMPT.format(context=context), max_tokens=llm.budget_for(SECTION_MAX_TOKENS))
     return result.get("risks", [])
 
 
 def generate_opportunities(context: str) -> list[str]:
-    result = llm.call_json(OPPORTUNITIES_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
+    result = llm.call_json(OPPORTUNITIES_PROMPT.format(context=context), max_tokens=llm.budget_for(SECTION_MAX_TOKENS))
     return result.get("opportunities", [])
 
 
 def generate_trends(context: str) -> list[str]:
-    result = llm.call_json(TRENDS_PROMPT.format(context=context), max_tokens=SECTION_MAX_TOKENS)
+    result = llm.call_json(TRENDS_PROMPT.format(context=context), max_tokens=llm.budget_for(SECTION_MAX_TOKENS))
     return result.get("trends", [])
 
 

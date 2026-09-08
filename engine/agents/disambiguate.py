@@ -178,7 +178,7 @@ def _adjudicate_batch(profile: dict, items: list[tuple[int, str, str]]) -> dict[
             ),
             batch,
             expected_keys={"verdicts"},
-            max_tokens=1500,
+            max_tokens=llm.budget_for(1500),
             max_untrusted_chars=len(batch) + 1000,
             model=llm.bulk_model(),
         )

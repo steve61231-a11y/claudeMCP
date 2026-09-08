@@ -197,14 +197,30 @@ class Settings(BaseSettings):
     # The widest look-back a caller may request, so a stray query cannot ask
     # the pipeline to read five years of corpus.
     report_window_max_days: int = 730
-    analyst_deadline_seconds: int = 600
-    # Characters of corpus a single analyst reads. Raised to 160k to fix
-    # sections answering from 1.4% of the corpus, which was real — but 160k is
-    # ~40k tokens, and a free-tier model with a small context window or a hard
-    # rate cap either refuses it or queues it until something upstream gives
-    # up. Tunable so a thin free model and a paid one with room can each be
-    # served without a code change.
-    analyst_corpus_chars: int = 100000
+    # Wall-clock deadline over the WHOLE analyst fan-out. Raised from 600 with
+    # the per-call budget (llm.OPENAI_COMPATIBLE_TOTAL_BUDGET, 420): a thinking
+    # model that legitimately spends five minutes on one call left no room for
+    # the analysts behind it, so they were abandoned unstarted and reported as
+    # sections that "did not finish" — on a provider that was working.
+    #
+    # Two constraints, and it has to satisfy both: comfortably ABOVE the
+    # per-call budget so one slow call cannot consume the fan-out, and still
+    # under a quarter of an hour, because that is a reader waiting.
+    analyst_deadline_seconds: int = 720
+    # Characters of corpus a single analyst reads.
+    #
+    # This was raised to 160k to fix sections answering from 1.4% of the
+    # corpus, then cut back to 100k while a free tier was the backend — 160k
+    # is ~40k tokens, and a free model with a small context window or a hard
+    # rate cap either refused it or queued it until something upstream gave
+    # up. The free tier turned out not to be the only problem (see the budget
+    # and breaker fixes in llm.py), and the cut cost real breadth: it is a
+    # 37% reduction in what every analyst gets to read.
+    #
+    # Restored to 160k. Every current paid model has the context for it, and
+    # breadth of evidence is the product. Tunable via ANALYST_CORPUS_CHARS for
+    # a backend that genuinely cannot take it.
+    analyst_corpus_chars: int = 160000
     enable_scrapling: bool = True
     scrapling_impersonate: str = "chrome"
     # Browser tier (camoufox/patchright) that can sit through a Cloudflare

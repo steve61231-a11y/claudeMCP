@@ -142,4 +142,16 @@ def test_every_analyst_call_carries_reasoning_headroom():
 # --- the deadline is short enough to be a deadline --------------------------
 
 def test_the_analyst_deadline_is_minutes_not_a_quarter_hour():
-    assert Settings().analyst_deadline_seconds <= 600
+    """Both bounds, together, because they pull opposite ways and drifting
+    apart is what broke a live run.
+
+    Too long and it stops being a deadline — that is a reader sitting in front
+    of a spinner. Too short and one legitimately slow call consumes the whole
+    fan-out, so every analyst behind it is abandoned unstarted and reported as
+    a section that "did not finish", against a provider that was working."""
+    from engine import llm
+
+    deadline = Settings().analyst_deadline_seconds
+    assert deadline < 900, "a quarter of an hour is not a deadline"
+    assert deadline > llm.OPENAI_COMPATIBLE_TOTAL_BUDGET, \
+        "one call could consume the entire analyst fan-out"

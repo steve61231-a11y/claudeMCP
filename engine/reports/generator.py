@@ -204,7 +204,7 @@ def _executive_summary(
                 end=window_end.date(),
                 stats=json.dumps(stats, default=str),
             ),
-            max_tokens=512,
+            max_tokens=llm.budget_for(512),
         )
         summary = result.get("summary") if isinstance(result, dict) else None
         return summary.strip() if summary else fallback

@@ -161,12 +161,19 @@ def test_short_social_items_are_read_almost_entirely(monkeypatch):
 
 
 def test_the_default_window_is_not_so_wide_a_small_model_chokes():
-    """160k characters is ~40k tokens. A free-tier model with a small context
-    or a hard rate cap either refuses that or queues it until something
-    upstream gives up waiting — which is how a report hung forever."""
+    """Breadth of evidence is the product, so the window is wide by default.
+
+    This used to cap the default at 120k on the reasoning that "a free-tier
+    model with a small context or a hard rate cap either refuses that or
+    queues it until something upstream gives up waiting". The hang had a
+    different cause — budgets sized with no room for a model that reasons
+    before answering, see test_reasoning_budget.py — and the cut cost every
+    analyst 37% of what it reads. A backend that genuinely cannot take it sets
+    ANALYST_CORPUS_CHARS; the default serves the product.
+    """
     from engine.config import Settings
 
-    assert 40000 <= Settings().analyst_corpus_chars <= 120000
+    assert 40000 <= Settings().analyst_corpus_chars <= 200000
 
 
 def test_a_long_article_is_truncated_but_a_short_post_is_not():

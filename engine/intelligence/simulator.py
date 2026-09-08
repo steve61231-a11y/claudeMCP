@@ -80,7 +80,7 @@ def simulate_message(db: Session, politician: Politician, draft_text: str) -> di
         SIMULATE_PROMPT.format(name=politician.name, grounding=GROUNDING_RULES, draft=draft_text[:2000]),
         _corpus_blob(similar, budget_chars=20000),
         expected_keys={"simulation"},
-        max_tokens=2500,
+        max_tokens=llm.budget_for(2500),
         max_untrusted_chars=22000,
     )
     sim = result["simulation"]
