@@ -13,9 +13,19 @@ services:
     dockerContext: .
     healthCheckPath: /api/health
     envVars:
-      # DATABASE_URL is set in the Render dashboard to the managed Neon Postgres
-      # (serverless, no 90-day expiry). The old pulse-postgres block below is kept
-      # only as a rollback safety net and is no longer wired to the app.
+      # DATABASE_URL points at the `pulse-postgres` database defined at the top
+      # of this file — Render's own managed Postgres, on the FREE plan.
+      #
+      # WARNING: a free Render Postgres is DELETED 90 days after it is created.
+      # The data in it is not backed up by Render on the free plan. See
+      # docs/DISASTER_RECOVERY.md — that database is the single point of
+      # failure for this whole product, and moving it to a paid plan (Render
+      # or elsewhere) is the one change that removes the risk.
+      #
+      # (An earlier version of this comment claimed the app had been moved to
+      # a managed Neon Postgres. It had not. Verified against the live
+      # DATABASE_URL, which is `pulse@dpg-...-a/political_intel` — this file's
+      # own free-tier block.)
       - key: DATABASE_URL
         sync: false
       - key: ANTHROPIC_API_KEY

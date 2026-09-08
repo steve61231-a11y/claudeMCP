@@ -6,8 +6,16 @@ name: db-backup
 # database snapshots anyway; if the Claude Code subscription lapses, this
 # keeps running anyway, because nothing about it depends on either.
 #
-# Requires one repository secret: DATABASE_URL (the same Postgres connection
-# string used in the Render dashboard — currently a Neon connection string).
+# Requires one repository secret: DATABASE_URL.
+#
+# It must be the database's EXTERNAL connection string, NOT the one in the
+# pulse-engine service's environment. The app runs inside Render, so its
+# DATABASE_URL uses an internal hostname (`dpg-xxxxx-a`, no domain suffix)
+# that only resolves inside Render's own network — GitHub cannot reach it.
+# Get the external one from: Render dashboard -> the pulse-postgres database
+# -> Connect -> External Connection. It looks like
+# `dpg-xxxxx-a.<region>-postgres.render.com`.
+#
 # Set it at: Settings -> Secrets and variables -> Actions -> New repository
 # secret. Never paste the connection string into a chat, an issue, or a PR.
 
@@ -27,11 +35,22 @@ jobs:
             exit 1
           fi
 
-      - name: Install a matching Postgres client
+      # pg_dump refuses to dump a server NEWER than itself, and this is exactly
+      # how the first manual backup attempt failed (server 18.6, client 17.11).
+      # Ubuntu's default archive lags, so pull the client from Postgres's own
+      # PGDG repo and take the newest available.
+      - name: Install a Postgres client new enough for the server
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends postgresql-client-16 \
+          sudo apt-get install -y --no-install-recommends curl ca-certificates gnupg
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/pgdg.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-18 \
             || sudo apt-get install -y --no-install-recommends postgresql-client
+          pg_dump --version
 
       - name: Dump the database
         env:

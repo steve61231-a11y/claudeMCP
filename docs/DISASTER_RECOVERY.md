@@ -12,14 +12,27 @@ This document is the plan and the checklist for making that actually true.
   GitHub account, and it stays there regardless of either subscription.
   Anyone (you, another developer, a different AI assistant) can clone it and
   keep working the moment they have git access.
-- **The database** is Neon Postgres (see `render.yaml`'s `DATABASE_URL`
-  comment), **not** Render's own managed Postgres. That means a Render
-  outage or suspension does not touch your data — Neon is a separate
-  account with its own separate billing. **Action for you:** confirm your
-  Neon plan is active and its billing is not itself at risk of lapsing —
-  check https://console.neon.tech and make sure the payment method there is
-  current. This is the one dependency that isn't automatically inherited
-  from "the code is on GitHub."
+- **The database is NOT safe.** It is `pulse-postgres`, defined at the top of
+  `render.yaml` on Render's **free** Postgres plan, and the live
+  `DATABASE_URL` confirms it (`pulse@dpg-...-a/political_intel`). Two
+  compounding risks:
+    1. **Free Render Postgres is deleted 90 days after creation.** This is a
+       hard deadline, not a warning.
+    2. **The free plan has no automated backups.** If the account is
+       suspended for non-payment, or the 90 days elapse, the data is gone
+       with nothing to restore from.
+
+  An earlier version of this document claimed the database had been moved to
+  a managed Neon Postgres, on the strength of a stale comment in
+  `render.yaml`. That was wrong. The database is on Render, on the free
+  plan, and it is the single point of failure for the entire product.
+
+  **The one change that actually removes this risk** is moving the database
+  off the free plan — either to Render's paid Postgres (which adds automated
+  daily backups) or to a separate provider such as Neon or Supabase, whose
+  billing is independent of Render's, so a Render lapse cannot take the data
+  with it. Until that happens, the nightly dump below is the whole safety
+  net.
 - **The deployment recipe** — `render.yaml` at the repo root is a Render
   "Blueprint": one file that describes both services (`pulse-engine`,
   `zenith-searxng`) well enough to recreate the whole deployment from
@@ -40,11 +53,16 @@ This document is the plan and the checklist for making that actually true.
    **One manual step required from you** (I can't do this — it needs a
    real secret, which must never be pasted into chat):
    Go to the repo on GitHub → **Settings → Secrets and variables →
-   Actions → New repository secret** → name it `DATABASE_URL` → paste
-   the same Postgres connection string that's set in the Render
-   dashboard's `DATABASE_URL` env var. Once that's set, the workflow runs
-   nightly on its own; you can also trigger it manually any time from the
-   **Actions** tab → **db-backup** → **Run workflow**.
+   Actions → New repository secret** → name it `DATABASE_URL` → paste the
+   database's **External** connection string. Get it from the Render
+   dashboard → the `pulse-postgres` database → **Connect** → **External
+   Connection**. It must be the external one (hostname ending
+   `.<region>-postgres.render.com`) — the value in the pulse-engine
+   service's environment uses an internal hostname (`dpg-xxxxx-a`) that
+   only resolves inside Render's network, so GitHub cannot reach it.
+   Once that's set, the workflow runs nightly on its own; you can also
+   trigger it manually any time from the **Actions** tab → **db-backup**
+   → **Run workflow**.
 
    To restore from a downloaded `.dump` file later:
    `pg_restore --clean --no-owner --dbname "$DATABASE_URL" db-XXXXXXXX.dump`
@@ -72,16 +90,20 @@ This document is the plan and the checklist for making that actually true.
 3. Fill in the env vars marked `sync: false` in `render.yaml` from your
    password manager (see checklist below). Everything else is either
    hardcoded in `render.yaml` or auto-generated (`SEARXNG_SECRET`).
-4. Set `DATABASE_URL` to your Neon connection string (unchanged — the
-   database survives independently of Render, see above).
+4. Set `DATABASE_URL`. If the original database still exists, use its
+   connection string. If it does not (deleted at 90 days, or lost with a
+   suspended account), create a fresh Postgres — on a **paid** plan this
+   time, or on a provider whose billing is independent of Render — and
+   restore the newest `db-backup` artifact into it (step 6).
 5. Deploy. `engine/Dockerfile.render`'s entrypoint runs
    `alembic upgrade head` before starting the server, so the schema is
    brought up to date automatically against whatever `DATABASE_URL` points
    to — including a freshly restored backup.
-6. If restoring from a `db-backup` artifact instead of the live Neon DB
-   (e.g. Neon itself was lost, not just Render): create a fresh Postgres
-   database anywhere, `pg_restore` the newest `.dump` into it, point
-   `DATABASE_URL` at that instead.
+6. Restoring from a `db-backup` artifact: download the newest one from the
+   repo's **Actions** tab → **db-backup** → most recent run → Artifacts.
+   Create a fresh Postgres database anywhere, then:
+   `pg_restore --clean --no-owner --dbname "$DATABASE_URL" db-XXXXXXXX.dump`
+   Point the service's `DATABASE_URL` at that database.
 
 ### Env var checklist (values live in your password manager, not here)
 
