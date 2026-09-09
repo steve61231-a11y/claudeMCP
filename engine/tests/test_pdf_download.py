@@ -156,3 +156,74 @@ def test_no_browser_anywhere_is_reported_honestly(monkeypatch):
     monkeypatch.setattr(pdf_export.shutil, "which", lambda _name: None)
     assert pdf_export.chrome_path() is None
     assert not pdf_export.chromium_available()
+
+
+# --- the boot block must land in the document, not inside a string -----------
+
+def test_the_boot_block_goes_after_the_LAST_closing_body_tag():
+    """A shipped PDF was eighteen pages of this app's own JavaScript.
+
+    The boot block was spliced with `.replace("</body>", ..., 1)`, and the
+    FIRST </body> in this document is not the closing tag — it is inside a
+    JavaScript string, in the client-side "download as HTML" helper that
+    builds a document by concatenation:
+
+        +view.innerHTML+'</main></div></body></html>';
+
+    So the block landed inside a string literal, mid-script, and its own
+    </script> closed the page's script tag early. Every remaining line of
+    source then rendered as visible body text.
+    """
+    from engine.api_server import render_frontend_document
+    from engine.reports import pdf_export
+
+    doc = render_frontend_document()
+    assert doc.find("</body>") != doc.rfind("</body>"), (
+        "this document no longer has a decoy </body>; the test needs a new one")
+
+    captured = {}
+
+    def _fake_run(cmd, **kwargs):
+        for arg in cmd:
+            if isinstance(arg, str) and arg.startswith("--print-to-pdf="):
+                target = pathlib.Path(arg.split("=", 1)[1])
+                target.write_bytes(b"%PDF-1.4 stub")
+        src = [a for a in cmd if isinstance(a, str) and a.startswith("file://")][0]
+        captured["html"] = pathlib.Path(src[7:]).read_text(encoding="utf-8")
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+
+    import pathlib
+    import types
+
+    import engine.reports.pdf_export as _px
+    original = _px.subprocess.run if hasattr(_px, "subprocess") else None
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(_px, "chrome_path", lambda: pathlib.Path("/bin/true"))
+    monkey.setattr("subprocess.run", _fake_run)
+    try:
+        pdf_export.render_payload_to_pdf(doc, "report", {"name": "X"})
+    finally:
+        monkey.undo()
+
+    html = captured["html"]
+    boot_at = html.find('id="pdf-payload"')
+    assert boot_at > 0, "the boot block never made it into the document"
+    # It must sit after the page's own script has closed, not inside it.
+    assert boot_at > html.rfind("})();"), \
+        "the boot block landed inside the page's script"
+
+
+def test_the_rendered_pdf_is_the_report_not_the_source_code():
+    """The shipped defect in one assertion."""
+    import inspect
+
+    from engine.reports import pdf_export
+
+    source = inspect.getsource(pdf_export.render_payload_to_pdf)
+    assert 'rfind("</body>")' in source
+    # Code only — the comment above the fix quotes the old call deliberately,
+    # and must not fail the test that guards it.
+    code = "\n".join(line for line in source.splitlines()
+                     if not line.lstrip().startswith("#"))
+    assert '.replace("</body>"' not in code, \
+        "back to splicing at the first </body>, which is inside a JS string"

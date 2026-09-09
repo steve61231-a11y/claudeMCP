@@ -20,7 +20,36 @@ from __future__ import annotations
 
 import re
 
-_REF_PATTERN = re.compile(r"\[ref[=:]\s*([\w-]+)\]", re.IGNORECASE)
+#: Every shape a model writes an inline citation in.
+#:
+#: This was `\[ref[=:]\s*([\w-]+)\]` — one exact shape, square brackets, one
+#: id. The models do not commit to that. A live map came back with
+#: "(ref=fresh-0, fresh-1)": round brackets, and TWO ids in one marker. None
+#: of it matched, so the raw text went straight to the page for the third
+#: time, and each earlier fix had only taught the pattern one more spelling.
+#:
+#: So match the family rather than the instance: an optional bracket of either
+#: kind, "ref"/"refs" with = or :, and a comma- or space-separated list of ids.
+#: The `ref=` anchor is what makes this safe — ordinary prose does not contain
+#: it, so widening the brackets cannot start eating real sentences.
+_REF_PATTERN = re.compile(
+    r"""
+    (?:[\[\(]\s*)?          # opening bracket, if the model used one. The
+                            # inner \s* is INSIDE this group on purpose: left
+                            # outside, it swallowed the space before an
+                            # unbracketed "ref=" and ran two words together.
+    refs?\s*[=:]\s*         # ref= / refs: / ref :
+    (                       # -- the ids --
+      [\w-]+                 # first id
+      (?:\s*,\s*[\w-]+)*    # ", second, third" in the same marker
+    )
+    (?:\s*[\]\)])?          # closing bracket, if there was one
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+#: Splits the captured id list. A marker can carry several.
+_REF_SPLIT = re.compile(r"\s*,\s*")
 
 
 def build_ref_index(mentions: list[dict]) -> dict[str, dict]:
@@ -47,21 +76,30 @@ def linkify(text: str, ref_index: dict[str, dict]) -> tuple[str, list[dict]]:
     with `url: None`, so the frontend can render it as plain "[1]" rather
     than a link, honestly showing the source could not be traced.
     """
-    if not text or "[ref" not in text.lower():
+    # Cheap reject before the regex, but it must not assume a bracket shape —
+    # "(ref=" and a bare "ref=" both reach the page otherwise.
+    if not text or "ref" not in text.lower():
         return text or "", []
 
     seen: dict[str, int] = {}
     citations: list[dict] = []
 
     def _replace(match: re.Match) -> str:
-        ref = match.group(1)
-        if ref not in seen:
-            n = len(seen) + 1
-            seen[ref] = n
-            found = ref_index.get(ref) or {}
-            citations.append({"n": n, "ref": ref, "url": found.get("url"),
-                              "platform": found.get("platform")})
-        return f"[{seen[ref]}]"
+        # One marker can carry several ids — "(ref=fresh-0, fresh-1)" — and
+        # each is a separate source that deserves its own number and link.
+        numbers = []
+        for ref in _REF_SPLIT.split(match.group(1)):
+            ref = ref.strip()
+            if not ref:
+                continue
+            if ref not in seen:
+                n = len(seen) + 1
+                seen[ref] = n
+                found = ref_index.get(ref) or {}
+                citations.append({"n": n, "ref": ref, "url": found.get("url"),
+                                  "platform": found.get("platform")})
+            numbers.append(f"[{seen[ref]}]")
+        return "".join(numbers)
 
     rewritten = _REF_PATTERN.sub(_replace, text)
     return rewritten, citations

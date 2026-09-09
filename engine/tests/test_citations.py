@@ -7,6 +7,8 @@ the page exactly as the model wrote it: "[ref=fresh-0]" sitting inside a
 sentence a CEO is meant to read.
 """
 
+import pytest
+
 from engine.reports import citations
 
 MENTIONS = [
@@ -189,3 +191,59 @@ def test_a_report_with_no_refs_is_returned_unharmed():
     out = citations.linkify_report(payload, [])
     assert out["executive_brief"] == payload["executive_brief"]
     assert "executive_brief_citations" not in out
+
+
+# --- the model does not commit to one spelling -------------------------------
+
+@pytest.mark.parametrize("raw", [
+    "fact [ref=fresh-0] here.",       # square brackets — the shape first fixed
+    "fact (ref=fresh-0) here.",       # round brackets — a live map used these
+    "fact [ref: fresh-0] here.",      # colon
+    "fact (ref = fresh-0) here.",     # spaces around the operator
+    "fact ref=fresh-0 here.",         # no brackets at all
+    "fact [REF=fresh-0] here.",       # shouted
+])
+def test_every_spelling_of_a_citation_is_resolved(raw):
+    """The pattern pinned ONE exact shape, so each time a model chose another
+    the raw text went to the page and the fix taught it one more spelling.
+    Three rounds of that is enough: match the family."""
+    out, cites = citations.linkify(raw, {"fresh-0": {"url": "https://n/0"}})
+    assert "ref" not in out.lower(), f"{raw!r} still leaks: {out!r}"
+    assert cites and cites[0]["url"] == "https://n/0"
+
+
+def test_several_refs_in_one_marker_each_get_a_link():
+    """A live map wrote "(ref=fresh-0, fresh-1)" — two sources in one marker.
+    Numbering the group once would credit both facts to one article."""
+    out, cites = citations.linkify(
+        "the core, verifiable fact (ref=fresh-0, fresh-1).",
+        {"fresh-0": {"url": "https://n/0"}, "fresh-1": {"url": "https://n/1"}})
+    assert out == "the core, verifiable fact [1][2]."
+    assert [c["url"] for c in cites] == ["https://n/0", "https://n/1"]
+
+
+def test_the_words_around_a_bare_ref_keep_their_spaces():
+    out, _ = citations.linkify("bare ref=fresh-0 here.", {"fresh-0": {"url": "u"}})
+    assert out == "bare [1] here."
+
+
+def test_ordinary_prose_is_never_mistaken_for_a_citation():
+    """Widening the brackets must not start eating real sentences. The `ref=`
+    anchor is what keeps this safe."""
+    for prose in ("a referendum on the referral of the matter",
+                  "references were checked",
+                  "the ref blew the whistle"):
+        out, cites = citations.linkify(prose, {})
+        assert out == prose and cites == []
+
+
+def test_the_exact_paragraph_from_the_live_report():
+    """Verbatim from a run that shipped this to the page."""
+    raw = ("That is the core, verifiable fact (ref=fresh-0, fresh-1). "
+           "The immunity challenge (ref=fresh-3) is core but does not show "
+           "the outcome.")
+    out, cites = citations.linkify(
+        raw, {"fresh-0": {"url": "https://n/0"}, "fresh-1": {"url": "https://n/1"},
+              "fresh-3": {"url": "https://n/3"}})
+    assert "ref=" not in out
+    assert len(cites) == 3

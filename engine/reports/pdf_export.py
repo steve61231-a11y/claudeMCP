@@ -107,8 +107,25 @@ def render_payload_to_pdf(html_document: str, kind: str, payload: dict) -> bytes
         "  document.documentElement.setAttribute('data-pdf-ready','1');"
         "});</script>"
     )
-    document = html_document.replace("</body>", boot + "</body>", 1) \
-        if "</body>" in html_document else html_document + boot
+    # Splice before the LAST </body>, not the first.
+    #
+    # `.replace("</body>", ..., 1)` hits the first occurrence, and the first
+    # one in this document is not the real closing tag — it is inside a
+    # JavaScript string, in the client-side "download as HTML" helper that
+    # builds a document by concatenation:
+    #
+    #     +view.innerHTML+'</main></div></body></html>';
+    #
+    # The boot block therefore landed inside a string literal, mid-script, and
+    # its own </script> closed the page's script tag early. Every remaining
+    # line of JavaScript then rendered as visible body text: an eighteen-page
+    # PDF of source code where the report should have been.
+    #
+    # rfind targets the document's actual closing tag, which is by definition
+    # the last one.
+    closing = html_document.rfind("</body>")
+    document = (html_document[:closing] + boot + html_document[closing:]
+                if closing != -1 else html_document + boot)
 
     with tempfile.TemporaryDirectory() as work:
         source = Path(work) / "report.html"
