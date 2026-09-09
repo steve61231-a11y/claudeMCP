@@ -207,6 +207,14 @@ class Settings(BaseSettings):
     # per-call budget so one slow call cannot consume the fan-out, and still
     # under a quarter of an hour, because that is a reader waiting.
     analyst_deadline_seconds: int = 720
+    # Wall-clock ceiling on a WHOLE report run. The analyst phase has its own
+    # budget, but the heavy optional blocks after it — entity/event
+    # resolution, the knowledge graph, temporal signals, the sentiment
+    # framework, claim verification — had none, and each makes model calls. A
+    # live run reached "12/15 sections" and stayed there: not failing, just
+    # never coming back. A report that stops early and names what it skipped
+    # beats one that never arrives.
+    report_deadline_seconds: int = 1800
     # Characters of corpus a single analyst reads.
     #
     # This was raised to 160k to fix sections answering from 1.4% of the

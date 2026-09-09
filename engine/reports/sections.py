@@ -5,6 +5,7 @@ doesn't add latency (they don't depend on each other, only on the already-comput
 rule-based payload from `generate_report_payload`).
 """
 
+import time
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
@@ -251,6 +252,18 @@ def enrich_report_payload(
     # section, and a report with a failed section beats a report that never
     # comes.
     deadline = max(60, settings.analyst_deadline_seconds)
+    # ONE budget for this whole phase, not one per stage. Bounding the fan-out
+    # and then handing the two stages after it the same full deadline each
+    # made the worst case 45 minutes rather than 15 — bounded, but so loosely
+    # that a reader still sat on "Still building this report" long past the
+    # point of usefulness. Every stage below takes what is LEFT of it.
+    ends_at = time.monotonic() + deadline
+
+    def remaining() -> float:
+        # Never zero: a stage given no time at all cannot even fail honestly,
+        # it just returns the fallback without having tried.
+        return max(15.0, ends_at - time.monotonic())
+
     pool = ThreadPoolExecutor(max_workers=min(_cap, len(jobs)))
     futures = {pool.submit(run, key): key for key in jobs}
     try:
@@ -258,7 +271,7 @@ def enrich_report_payload(
         # section that finished in 5 seconds waits behind one that takes four
         # minutes. Nothing downstream depends on the order, and a reader
         # watching the report build does.
-        for future in as_completed(futures, timeout=deadline):
+        for future in as_completed(futures, timeout=remaining()):
             key, value = future.result()
             payload[key] = value
             publish(key, value)
@@ -310,7 +323,7 @@ def enrich_report_payload(
                 "sentiment_breakdown",
             )
         }
-        # Under the SAME deadline as the fan-out above, and for the same
+        # Inside the phase budget, like the fan-out above and for the same
         # reason. The comment there says "without one the report never
         # finishes" — and then these last two stages were left outside it,
         # running sequentially with no bound at all. A live run stopped here:
@@ -319,7 +332,7 @@ def enrich_report_payload(
         # pipeline.py builds later) never reached. "Still building this
         # report" for hours, because nothing was going to arrive.
         payload["executive_brief"] = _bounded(
-            "executive_brief", deadline,
+            "executive_brief", remaining(),
             lambda: analysts.synthesize_executive_brief(politician_name, analyst_outputs),
             fallback=payload.get("executive_summary", ""))
 
@@ -328,7 +341,7 @@ def enrich_report_payload(
             "executive_brief": payload.get("executive_brief", ""),
             "executive_summary": payload.get("executive_summary", ""),
         }
-        cleaned = _bounded("grounding_verification", deadline,
+        cleaned = _bounded("grounding_verification", remaining(),
                            lambda: analysts.verify_grounding(prose, source_quotes),
                            fallback=prose) or prose
         payload.update(cleaned)

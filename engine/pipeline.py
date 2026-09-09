@@ -156,6 +156,27 @@ def run_analysis(
     a trade-off. They are not — the sections just have to be published as they
     are made.
     """
+    # A wall-clock ceiling on the WHOLE run. Individual stages have their own
+    # budgets, but the optional heavy blocks after the analysts — entity and
+    # event resolution, the knowledge graph, temporal signals, the sentiment
+    # framework, claim verification — had none, and each makes model calls. A
+    # live run reached twelve of fifteen sections and then stayed there: not
+    # failing, just never coming back. A report that stops early and says so
+    # beats one that never arrives.
+    import time as _time
+
+    run_ends_at = _time.monotonic() + max(300, settings.report_deadline_seconds)
+
+    def out_of_time(stage_name: str) -> bool:
+        """True when the run has spent its budget. Records why, so a skipped
+        stage is never mistaken for one the corpus could not support."""
+        if _time.monotonic() < run_ends_at:
+            return False
+        stages.current().failed(stage_name, TimeoutError(
+            f"skipped: the run passed its {settings.report_deadline_seconds}s ceiling "
+            "before reaching this stage, so the report was delivered with what it had"))
+        return True
+
     def publish(key, value):
         if on_section is None:
             return
@@ -602,7 +623,7 @@ def run_analysis(
     # Resolve the corpus into entities and events: many reports of one happening
     # become ONE event carrying its evidence, so repetition stops masquerading
     # as significance. Runs on the gated corpus and is idempotent across runs.
-    if settings.enable_resolution:
+    if settings.enable_resolution and not out_of_time("entity_event_resolution"):
         try:
             from engine.agents import resolve as resolve_agent
 
@@ -644,28 +665,29 @@ def run_analysis(
     # Client-facing deliverable, shaped to the Sentiment Analysis Framework
     # V1.0 exactly — same parameter numbering, ordering and terminology, so an
     # analyst reads their own structure rather than our interpretation of it.
-    try:
-        from engine.reports import sentiment_framework
+    if not out_of_time("sentiment_framework"):
+        try:
+            from engine.reports import sentiment_framework
 
-        previous_report = (
-            db.query(IntelligenceReport)
-            .filter(IntelligenceReport.politician_id == politician.id)
-            .order_by(IntelligenceReport.generated_at.desc())
-            .first()
-        )
-        payload["sentiment_framework"] = sentiment_framework.build(
-            politician,
-            payload,
-            corpus,
-            previous=(previous_report.payload if previous_report else None),
-            sentiments=sentiments_by_mention,
-        )
-        publish("sentiment_framework", payload["sentiment_framework"])
-    except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
-        # The client deliverable. Silently absent, this tab simply never
-        # appeared and nobody could tell whether it was empty or broken.
-        stages.current().failed("sentiment_framework", exc)
-        traceback.print_exc()
+            previous_report = (
+                db.query(IntelligenceReport)
+                .filter(IntelligenceReport.politician_id == politician.id)
+                .order_by(IntelligenceReport.generated_at.desc())
+                .first()
+            )
+            payload["sentiment_framework"] = sentiment_framework.build(
+                politician,
+                payload,
+                corpus,
+                previous=(previous_report.payload if previous_report else None),
+                sentiments=sentiments_by_mention,
+            )
+            publish("sentiment_framework", payload["sentiment_framework"])
+        except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
+            # The client deliverable. Silently absent, this tab simply never
+            # appeared and nobody could tell whether it was empty or broken.
+            stages.current().failed("sentiment_framework", exc)
+            traceback.print_exc()
 
     # The run's own account of whether the model answered. Stamped onto the
     # payload so a reader is never shown empty sections without being told the
@@ -692,7 +714,7 @@ def run_analysis(
     # what the report actually says, and records a status + citations for every
     # factual claim. A claim the evidence can't support is labelled, not deleted:
     # a thin spot in the file is itself a finding worth seeing.
-    if settings.enable_verification:
+    if settings.enable_verification and not out_of_time("claim_verification"):
         try:
             from engine.agents import verify
 

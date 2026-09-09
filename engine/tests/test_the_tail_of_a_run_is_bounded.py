@@ -51,14 +51,49 @@ def test_a_stage_that_raises_still_falls_back():
     assert sections._bounded("boom", 5.0, boom, fallback="fallback") == "fallback"
 
 
-def test_the_tail_uses_the_same_deadline_as_the_fan_out():
-    """Two different budgets for the same run is a second number to forget to
-    update."""
+# --- one budget for the phase, not one per stage -----------------------------
+
+def test_the_tail_shares_the_phase_budget_rather_than_restarting_it():
+    """The first version of this fix bounded the fan-out and then handed the
+    two stages after it the SAME full deadline each, making the worst case
+    three times the budget — 45 minutes rather than 15. Bounded, but so
+    loosely that a reader still sat on "Still building this report" long past
+    the point of usefulness."""
     import inspect
 
     source = inspect.getsource(sections)
-    # The call spans two lines; what matters is that both go through the
-    # bounded helper and are handed the fan-out's own deadline.
-    assert '_bounded(\n            "executive_brief", deadline,' in source \
-        or '_bounded("executive_brief", deadline' in source
-    assert '_bounded("grounding_verification", deadline' in source
+    assert "def remaining()" in source, "no shared budget for the phase"
+    assert "as_completed(futures, timeout=remaining())" in source
+    assert '_bounded("grounding_verification", remaining()' in source
+    assert '"executive_brief", remaining(),' in source
+
+
+def test_the_whole_run_has_a_ceiling_above_the_analyst_phase():
+    """The analyst phase is bounded; the heavy blocks after it — resolution,
+    knowledge graph, temporal signals, sentiment framework, verification —
+    were not, and each makes model calls. A live run reached 12/15 and stayed
+    there: not failing, just never coming back."""
+    from engine.config import settings
+
+    assert settings.report_deadline_seconds > settings.analyst_deadline_seconds
+
+
+def test_every_unbounded_heavy_block_is_gated_on_the_run_ceiling():
+    import inspect
+
+    from engine import pipeline
+
+    source = inspect.getsource(pipeline.run_analysis)
+    for stage in ("entity_event_resolution", "sentiment_framework", "claim_verification"):
+        assert f'out_of_time("{stage}")' in source, f"{stage} can still overrun the run"
+
+
+def test_a_skipped_stage_says_it_ran_out_of_time():
+    """Silently absent, a skipped stage is indistinguishable from one the
+    corpus could not support — the defect behind four separate bugs already."""
+    import inspect
+
+    from engine import pipeline
+
+    source = inspect.getsource(pipeline.run_analysis)
+    assert "skipped: the run passed its" in source
