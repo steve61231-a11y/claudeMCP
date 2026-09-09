@@ -171,6 +171,7 @@ def retrieve_intersection(
         corpus.append(
             {
                 "id": row.id,
+                "kind": "document",   # a Document row, not a RawMention
                 "platform": row.domain or "web",
                 "source_type": "article",
                 "author_handle": row.author or row.domain or "web",
@@ -204,6 +205,7 @@ def retrieve_intersection(
         corpus.append(
             {
                 "id": row.id,
+                "kind": "mention",   # a RawMention row, whatever its source_type
                 "platform": row.platform,
                 "source_type": row.source_type,
                 "author_handle": row.author_handle,

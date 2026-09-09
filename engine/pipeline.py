@@ -62,6 +62,13 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
         corpus.append(
             {
                 "id": doc.id,
+                # WHICH TABLE this id belongs to, stated rather than guessed.
+                # Downstream code inferred it from source_type == "article",
+                # but GDELT stores news as RawMention rows whose source_type
+                # is also "article" — so a mention's id was written into
+                # event_evidence.document_id and Postgres rejected the whole
+                # flush, poisoning the session and failing the entire report.
+                "kind": "document",
                 "platform": doc.domain or "web",
                 "source_type": "article",
                 "author_handle": doc.author or doc.domain or "web",
@@ -86,6 +93,7 @@ def _as_corpus_dicts(rows) -> list[dict]:
     return [
         {
             "id": m.id,
+            "kind": "mention",
             "platform": m.platform,
             "source_type": m.source_type,
             "author_handle": m.author_handle,
@@ -134,6 +142,21 @@ def run_ingestion(
 ) -> IngestionRun:
     run = orchestrator.plan_run(db, politician, window_start, window_end, credit_budget)
     return orchestrator.execute_run(db, run.id)
+
+
+def _rollback_quietly(db) -> None:
+    """Return a session to a usable state after a failed flush.
+
+    SQLAlchemy will not let a session continue after one, and the exception it
+    raises for every subsequent statement (PendingRollbackError) names the
+    ORIGINAL failure — so the stage that reports the error is rarely the stage
+    that caused it. Rolling back at each guard keeps a failure local to the
+    stage that had it.
+    """
+    try:
+        db.rollback()
+    except Exception:  # noqa: BLE001 — a failed rollback must not mask the cause
+        traceback.print_exc()
 
 
 def run_analysis(
@@ -657,6 +680,15 @@ def run_analysis(
             for _key in ("resolution", "source_credibility", "knowledge_graph", "temporal", "signals"):
                 publish(_key, payload.get(_key))
         except Exception as exc:  # noqa: BLE001 — resolution must never break a report
+            # ROLL BACK before anything else touches the session. A failed
+            # flush leaves it in a state where EVERY later statement raises
+            # PendingRollbackError, so catching the exception here without
+            # rolling back did not contain the failure — it just moved the
+            # error to whichever innocent stage queried next, and the run died
+            # with "report generation failed" instead of one absent section.
+            # The comment on this handler says resolution must never break a
+            # report; that was only true of the exception, not of its wreckage.
+            _rollback_quietly(db)
             stages.current().failed("entity_event_resolution", exc)
             traceback.print_exc()
             payload["resolution"] = {"error": "entity/event resolution failed"}
@@ -743,6 +775,10 @@ def run_analysis(
             flag_modified(report, "payload")
             db.commit()
         except Exception as exc:  # noqa: BLE001 — an audit failure must not lose the report
+            # This guard wraps a db.commit(). A commit that fails leaves the
+            # session unusable, so without this the next innocent query is the
+            # one that raises and the report dies far from the real cause.
+            _rollback_quietly(db)
             stages.current().failed("verification", exc)
             traceback.print_exc()
 

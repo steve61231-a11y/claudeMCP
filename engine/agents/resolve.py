@@ -263,7 +263,22 @@ def _link_evidence(db, event: Event, item: dict) -> bool:
     item_id = item.get("id")
     if not item_id:
         return False
-    is_document = item.get("source_type") == "article"
+    # WHICH TABLE this id is in, taken from the corpus builder that read it
+    # rather than inferred from source_type. "article" does not mean document:
+    # GDELT news arrives as RawMention rows whose source_type is "article"
+    # too, so this inference wrote a mention's id into
+    # event_evidence.document_id, Postgres rejected the flush on the foreign
+    # key, and the poisoned session then failed the whole report with
+    # PendingRollbackError. It surfaced the moment GDELT started delivering
+    # again — the bug was always there, waiting for news to arrive.
+    kind = item.get("kind")
+    if kind not in ("document", "mention"):
+        # An older caller that does not mark its rows. Ask the database rather
+        # than guessing, and skip rather than write a row that cannot be valid.
+        from engine.db.models import Document as _Document
+
+        kind = "document" if db.get(_Document, item_id) else "mention"
+    is_document = kind == "document"
     existing = (
         db.query(EventEvidence)
         .filter_by(
