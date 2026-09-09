@@ -419,6 +419,22 @@
   const errorBelongsToRun = (prog, job_id) =>
     !!(prog && prog.error && prog.status === 'failed' && (!prog.job_id || prog.job_id === job_id));
 
+  /** A run the server has given up on. The stored row outlives the process
+      that wrote it, so without this a reader sits watching a spinner for a
+      run that died hours ago — one live run showed "nothing has arrived for
+      587 minutes" and could not be restarted, because the subject was locked
+      by its own corpse. */
+  function stalledNote(prog){
+    const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
+    const c=noteCard('This run stopped',
+      'The server stopped hearing from this run, so it has been abandoned. Everything below '
+      + 'was finished before it stopped and is stored — press Generate report to start a fresh '
+      + 'run, which builds on what this one already collected.'
+      + (when?' Last update '+when+' UTC.':''));
+    c.style.borderColor='var(--amber)';
+    return c;
+  }
+
   function stillRunningNote(prog){
     const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
     return noteCard('Still running',
@@ -1696,6 +1712,7 @@
         const prior=await fetchProgress(name,'report');
         if(prior&&prior.payload&&Object.keys(prior.payload).length){
           if(prior.status==='running')out.appendChild(stillRunningNote(prior));
+          else if(prior.status==='stalled')out.appendChild(stalledNote(prior));
           renderReport(out,prior.payload,{live:true,partial:prior.status==='running',
             sections_ready:prior.sections_ready,stage:prior.stage});
         }
@@ -2445,7 +2462,8 @@
           // run appeared to come back with "Analysed 0 of 2" seconds after it
           // started.
           renderIssueUnder(out,
-            prior.status==='running' ? stillRunningNote(prior)
+            prior.status==='stalled' ? stalledNote(prior)
+            : prior.status==='running' ? stillRunningNote(prior)
               : noteCard('Previous result',
                   'The stored map from the last run of this pair. The new run is in '
                   +'progress and replaces this as its sections land.'),

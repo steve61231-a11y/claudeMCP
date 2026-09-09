@@ -148,6 +148,23 @@ def _check_rate_limit(client_ip: str) -> None:
 
 _JOB_TTL_SECONDS = 3600
 
+#: How long a "running" job may go SILENT before it is presumed dead.
+#:
+#: `_evict_stale_jobs` deliberately never evicts a running job, however old,
+#: because a full-stack issue map can legitimately outlive an hour. But a job
+#: whose thread died — a deploy, a container restart, an OOM, an exception
+#: outside the guarded block — also stays "running" forever, and
+#: `_inflight_job` then hands every new request for that subject back to the
+#: corpse. A live run showed "nothing has arrived for 587 minutes" and could
+#: not be restarted at all: the subject was locked by a run that had been dead
+#: for ten hours.
+#:
+#: Age is the wrong test; SILENCE is the right one. A working run publishes a
+#: stage or a section continuously, so 30 minutes without a single update is
+#: far beyond the slowest legitimate stage (the analyst deadline is 15) while
+#: being nowhere near the hours a real run can take.
+_JOB_SILENCE_SECONDS = 1800
+
 
 def _evict_stale_jobs() -> None:
     """Drop finished jobs older than the TTL.
@@ -581,6 +598,12 @@ def _save_progress(subject_key: str, kind: str, *, job_id: str | None = None,
                    error: str | None = None) -> None:
     """Upsert one run's progress. Never raises — progress is a convenience and
     must not be able to cost the run it is describing."""
+    # Every stage and every section lands here, which makes this the run's
+    # heartbeat. `_inflight_job` uses it to tell a slow run from a dead one.
+    if job_id:
+        job = _jobs.get(job_id)
+        if job is not None:
+            job["last_update"] = time.time()
     from engine.db.models import RunProgress
 
     db = None
@@ -624,8 +647,20 @@ def _read_progress(subject_key: str, kind: str) -> dict | None:
         row = db.query(RunProgress).filter_by(subject_key=subject_key, kind=kind).first()
         if row is None:
             return None
+        # A stored row still saying "running" hours after the process that
+        # wrote it died leaves a reader watching a spinner that will never
+        # resolve — and the row outlives the container, so a restart does not
+        # clear it. Report it for what it is. The already-collected payload is
+        # still returned: the work it did reach is not lost.
+        status = row.status
+        if status == "running" and row.updated_at:
+            from datetime import datetime as _dt
+
+            silent = (_dt.utcnow() - row.updated_at).total_seconds()
+            if silent > _JOB_SILENCE_SECONDS:
+                status = "stalled"
         return {
-            "status": row.status,
+            "status": status,
             "job_id": row.job_id,
             "stage": row.stage,
             "sections_ready": row.sections_ready or [],
@@ -983,11 +1018,28 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
 
 
 def _inflight_job(name: str, report_type: str) -> str | None:
-    """The id of a still-running job for this subject, if there is one."""
+    """The id of a still-running job for this subject, if there is one.
+
+    A job that has gone silent past `_JOB_SILENCE_SECONDS` is presumed dead
+    and marked as such, so the caller starts a fresh run instead of being
+    reconnected to something that stopped producing hours ago.
+    """
     key = (name.strip().lower(), report_type)
+    now = time.time()
     for job_id, job in list(_jobs.items()):
-        if job.get("status") == "running" and job.get("subject") == key:
-            return job_id
+        if job.get("status") != "running" or job.get("subject") != key:
+            continue
+        silent_for = now - (job.get("last_update") or job.get("created_at") or now)
+        if silent_for > _JOB_SILENCE_SECONDS:
+            job["status"] = "done"
+            job["ok"] = False
+            job["error"] = (
+                f"This run stopped producing {int(silent_for // 60)} minutes ago and was "
+                "abandoned so a new one could start. Nothing was lost — whatever it had "
+                "already stored is still there and the next run builds on it."
+            )
+            continue
+        return job_id
     return None
 
 
