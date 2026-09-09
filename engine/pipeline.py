@@ -563,10 +563,25 @@ def run_analysis(
     from engine.reports.deltas import compute_deltas, sentiment_history
 
     deltas = compute_deltas(db, politician, payload)
-    if deltas:
-        payload["since_last_report"] = deltas
+    # A FIRST report has nothing to compare against, and no history to plot.
+    # That is a settled fact about this run, not a stage still working — but
+    # publishing None left both sitting as "pending" on the checklist for
+    # ever, so a finished report read as permanently unfinished (11/15, three
+    # of them never arriving however long anyone waited). Say which it is.
+    payload["since_last_report"] = deltas or {
+        "not_applicable": "This is the first stored report for this subject, so there "
+                          "is nothing to compare it against. The next run will show "
+                          "what changed."
+    }
+    # Kept a LIST — the chart and the API contract both expect one. The
+    # "nothing to plot yet" case is carried alongside instead of changing the
+    # shape underneath them.
     payload["sentiment_history"] = sentiment_history(db, politician)
-    publish("since_last_report", payload.get("since_last_report"))
+    if not payload["sentiment_history"]:
+        payload["sentiment_history_note"] = (
+            "Sentiment over time needs at least two stored reports. This is the "
+            "first, so there is no series to plot yet.")
+    publish("since_last_report", payload["since_last_report"])
     publish("sentiment_history", payload["sentiment_history"])
 
     # And again before the long stretch, so anything that failed during

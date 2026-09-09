@@ -310,8 +310,16 @@ def enrich_report_payload(
                 "sentiment_breakdown",
             )
         }
-        payload["executive_brief"] = stages.run_guarded(
-            "executive_brief",
+        # Under the SAME deadline as the fan-out above, and for the same
+        # reason. The comment there says "without one the report never
+        # finishes" — and then these last two stages were left outside it,
+        # running sequentially with no bound at all. A live run stopped here:
+        # eleven sections delivered, the executive brief spinning, and every
+        # stage after it (including the client's Sentiment Framework, which
+        # pipeline.py builds later) never reached. "Still building this
+        # report" for hours, because nothing was going to arrive.
+        payload["executive_brief"] = _bounded(
+            "executive_brief", deadline,
             lambda: analysts.synthesize_executive_brief(politician_name, analyst_outputs),
             fallback=payload.get("executive_summary", ""))
 
@@ -320,7 +328,9 @@ def enrich_report_payload(
             "executive_brief": payload.get("executive_brief", ""),
             "executive_summary": payload.get("executive_summary", ""),
         }
-        cleaned = analysts.verify_grounding(prose, source_quotes)
+        cleaned = _bounded("grounding_verification", deadline,
+                           lambda: analysts.verify_grounding(prose, source_quotes),
+                           fallback=prose) or prose
         payload.update(cleaned)
 
         # Resolve the analysts' inline [ref=xxxx] markers into numbered links.
@@ -340,6 +350,31 @@ def enrich_report_payload(
             publish(key, payload[key])
 
     return payload
+
+
+def _bounded(name: str, deadline: float, fn, fallback):
+    """Run `fn` with a wall-clock ceiling, like the analyst fan-out.
+
+    `stages.run_guarded` catches exceptions, which is not the same thing: a
+    call that never returns raises nothing, and there is no exception to
+    catch. That is the shape of every "it never finishes" report — the work
+    is not failing, it is simply not coming back, and a guard around it waits
+    just as long as no guard at all.
+    """
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(lambda: stages.run_guarded(name, fn, fallback=fallback))
+        try:
+            return future.result(timeout=deadline)
+        except FuturesTimeout:
+            stages.current().failed(
+                name, TimeoutError(
+                    f"did not finish within {int(deadline)}s and was abandoned so the "
+                    "rest of the report could be delivered"))
+            return fallback
+    finally:
+        # Do not wait on the abandoned worker; the whole point is not to block.
+        pool.shutdown(wait=False)
 
 
 def _collect_quotes(payload: dict) -> list[str]:

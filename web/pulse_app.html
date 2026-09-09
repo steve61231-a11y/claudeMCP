@@ -2200,6 +2200,34 @@
       else if(!seenPending){mark='●';cls='pill sky';seenPending=true;}
       list.innerHTML+=`<span class="${cls}">${mark} ${esc(label)}</span>`;
     });
+    return c;
+  }
+
+  /** The checklist AFTER a run has finished.
+   *
+   *  `progressCard` marks every section it has not seen as pending, which is
+   *  right while a run is live and wrong the moment it ends: a first report
+   *  has no previous report to compare against and no history to plot, so
+   *  "Since your last report" and "Sentiment over time" can never arrive. A
+   *  live run sat at 11/15 with three sections spinning for hours because the
+   *  page could not say "this one is not coming" — it only knew "not here
+   *  yet". A finished run says which sections it produced and which it did
+   *  not, and stops implying that waiting will help. */
+  function finishedSections(ready){
+    const _keys=new Set(SECTION_ORDER.map(([k])=>k));
+    const have=new Set((ready||[]).filter(k=>_keys.has(k)));
+    const missing=SECTION_ORDER.filter(([k])=>!have.has(k));
+    if(!missing.length)return null;
+    const c=el('div','card');
+    c.innerHTML=`<div class="lbl">Sections this run did not produce</div>
+      <div class="muted" style="font-size:13.5px;margin-top:6px">
+        The run has finished. These were not produced — a first report has no
+        earlier one to compare against, and some sections need data this
+        subject does not have yet. Waiting will not add them; another run
+        might.</div>`;
+    const list=el('div','row');list.style.cssText='margin-top:10px;flex-wrap:wrap;gap:6px';
+    missing.forEach(([,label])=>{list.innerHTML+=`<span class="chip">${esc(label)}</span>`;});
+    c.appendChild(list);
     c.appendChild(list);
     return c;
   }
@@ -2232,6 +2260,12 @@
       (r.name||'report').replace(/[^a-z0-9]+/gi,'-').toLowerCase()+'-report',
       $('#dlPdf',head), $('#dlMsg',head));
     if(meta&&meta.partial)wrap.appendChild(progressCard(meta.sections_ready,meta.stage));
+    else if(meta&&meta.sections_ready){
+      // Finished. Say what did not get produced instead of leaving the reader
+      // to notice the absence and assume it is still coming.
+      const gaps=finishedSections(meta.sections_ready);
+      if(gaps)wrap.appendChild(gaps);
+    }
     // Nothing was collected. Rendering the usual empty sections made this look
     // like a subject with no story, or like the app was broken. It is neither:
     // it is a collection result, and it is the only thing worth saying.
@@ -3366,6 +3400,6 @@
 
   // Render entry points, exposed for the browser smoke test. Read-only handles;
   // the app itself never goes through them.
-  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework,renderDeepRead,renderIssue,progressCard,DEMO};
+  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework,renderDeepRead,renderIssue,progressCard,finishedSections,DEMO};
 })();
 </script>
