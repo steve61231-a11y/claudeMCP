@@ -229,4 +229,45 @@ def linkify_report(payload: dict, mentions: list[dict]) -> dict:
             for d in dives
         ]
 
+    def _rows(items, keys):
+        result = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                result.append(item)
+                continue
+            item = dict(item)
+            for key in keys:
+                if isinstance(item.get(key), str) and item[key]:
+                    text, cites = linkify(item[key], ref_index)
+                    item[key] = text
+                    if cites:
+                        item[f"{key}_citations"] = cites
+            result.append(item)
+        return result
+
+    # The rest of the report's prose. Every one of these leaked a raw ref in a
+    # rendered PDF while the four fields above were clean — the same "covered
+    # what I had seen, not what the rule implies" mistake that took three
+    # rounds on the issue map. `timeline[].event` is an 80-200 word briefing,
+    # a narrative's `description` is a paragraph, and a public-voice theme's
+    # `summary` is 60-120 words. All are free prose with no quotes array of
+    # their own, which is exactly the condition that produces this.
+    if isinstance(out.get("timeline"), list):
+        out["timeline"] = _rows(out["timeline"], ("event",))
+    if isinstance(out.get("narrative_breakdown"), list):
+        out["narrative_breakdown"] = _rows(out["narrative_breakdown"],
+                                           ("description", "summary"))
+    voice = out.get("public_voice")
+    if isinstance(voice, dict):
+        voice = dict(voice)
+        for stance in ("supportive", "critical", "neutral"):
+            if isinstance(voice.get(stance), list):
+                voice[stance] = _rows(voice[stance], ("summary", "theme"))
+        out["public_voice"] = voice
+    if isinstance(out.get("influencer_stances"), list):
+        out["influencer_stances"] = _rows(out["influencer_stances"], ("summary",))
+    for section in ("risks", "opportunities", "trends"):
+        if isinstance(out.get(section), list):
+            out[section] = _rows(out[section], ("detail", "risk", "opportunity", "trend"))
+
     return out

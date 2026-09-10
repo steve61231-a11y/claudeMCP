@@ -247,3 +247,45 @@ def test_the_exact_paragraph_from_the_live_report():
               "fresh-3": {"url": "https://n/3"}})
     assert "ref=" not in out
     assert len(cites) == 3
+
+
+def test_no_report_prose_field_is_left_behind():
+    """The mirror of test_no_prose_field_is_left_behind, for the search report.
+
+    That test existed for the issue map and this one did not, so `linkify_report`
+    covered the four fields whose leak had been SEEN — brief, summary, insights,
+    deep-dives — and left the rest. A rendered PDF then carried seven raw refs
+    in the timeline, the narratives and the storyline descriptions while those
+    four were clean.
+    """
+    import json as _json
+
+    mentions = [{"id": "abcd1234", "platform": "nation.africa",
+                 "raw_payload": {"url": "https://n/1"}}]
+    raw = "text [ref=abcd1234] and (ref=abcd1234)."
+    out = citations.linkify_report({
+        "executive_brief": raw,
+        "executive_summary": raw,
+        "deep_insights": {"the_one_thing": raw,
+                          "insights": [{"headline": raw, "reasoning": raw, "implication": raw}]},
+        "narrative_deep_dives": [{"deep_dive": raw}],
+        "timeline": [{"date": "2026-09-09", "event": raw}],
+        "narrative_breakdown": [{"label": "N", "description": raw, "summary": raw}],
+        "public_voice": {"supportive": [{"theme": "T", "summary": raw}],
+                         "critical": [{"theme": "T", "summary": raw}],
+                         "neutral": [{"theme": "T", "summary": raw}]},
+        "influencer_stances": [{"handle": "@x", "summary": raw}],
+        "risks": [{"risk": "R", "detail": raw}],
+        "opportunities": [{"opportunity": "O", "detail": raw}],
+        "trends": [{"trend": "T", "detail": raw}],
+    }, mentions)
+    assert "ref=" not in _json.dumps(out), "a report prose field still leaks the raw format"
+
+
+def test_the_report_timeline_briefing_is_linkified():
+    """`event` is an 80-200 word briefing, the longest prose in the report."""
+    out = citations.linkify_report(
+        {"timeline": [{"event": "Launches the platform (ref=abcd1234)."}]},
+        [{"id": "abcd1234", "platform": "p", "raw_payload": {"url": "https://n/1"}}])
+    assert "ref=" not in out["timeline"][0]["event"]
+    assert out["timeline"][0]["event_citations"][0]["url"] == "https://n/1"
