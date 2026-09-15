@@ -54,8 +54,27 @@ The database is the only part of this system that is not reproducible from the
 repo. See `docs/DISASTER_RECOVERY.md` — it covers the backups, the restore, and
 the standing risk.
 
-If there is no backup and the data is gone: the app still works. It rebuilds a
-corpus by running. You lose accumulated history, not capability.
+### If there is no backup and the data is gone
+
+The engine survives — code, prompts, analysis logic, the ability to report on
+any subject. But be clear about what is actually lost, because "just re-run it"
+undersells it:
+
+- **The corpus is only partly recoverable.** Re-running re-scrapes, but only
+  what is still on the internet and still findable. GDELT and Google News do
+  not serve unlimited history; articles are deleted and paywalled; social posts
+  vanish. A corpus built up over months contains material that cannot be
+  collected again at any price.
+- **Every subject becomes a first run again.** The corpus is designed to
+  compound (see `engine/admin/purge.py`) — a second run on a subject is richer
+  than the first. That accumulated depth goes back to zero.
+- **Two features stop working until history rebuilds.** "Since your last
+  report" needs a previous stored report to diff against; "Sentiment over time"
+  needs a series of them. Both render as unavailable on a first run, correctly.
+- **Rebuilding costs real money.** Every re-run is full LLM spend.
+
+So: capability survives, evidence does not. That is why the dump matters even
+though the code is safe.
 
 ---
 
