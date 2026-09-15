@@ -5,6 +5,19 @@ Two things could go away: the **Render subscription** (hosting) and the
 its own, should be able to take the product down or lock you out of it.
 This document is the plan and the checklist for making that actually true.
 
+> **If both are ending and you are reading this in a hurry**, do these two
+> things and nothing else — they are the only ones that cannot be done
+> afterwards:
+>
+> 1. Copy every secret from the Render dashboard into a password manager.
+>    They are not in this repo and not derivable from anything.
+> 2. Take a `pg_dump` of the database using its **External** connection
+>    string. See "Downloading the database right now" below.
+>
+> Everything else — the code, the deployment blueprint, the context needed to
+> keep building — is already in this repository and survives on its own.
+> `docs/HANDOVER.md` is the runbook for picking it back up elsewhere.
+
 ## What's already safe, and why
 
 - **All source code** — `steve61231-a11y/claudeMCP` on GitHub. This has
@@ -79,6 +92,30 @@ This document is the plan and the checklist for making that actually true.
 3. **A written, step-by-step redeploy procedure**, so recreating the whole
    thing doesn't depend on remembering how Render was originally set up
    (or on Claude Code being available to reconstruct it). See below.
+
+## Downloading the database right now
+
+The nightly GitHub Action below needs a repository secret to be set. To take a
+dump immediately instead, from any machine with `psql` installed:
+
+```bash
+# Render dashboard -> the pulse-postgres database -> Connect ->
+# External Connection. NOT the dpg-xxxxx-a hostname the app uses: that one
+# only resolves inside Render's own network.
+pg_dump "<EXTERNAL DATABASE_URL>" --format=custom --no-owner --no-privileges \
+  --file=muugi-$(date +%Y%m%d).dump
+```
+
+Keep the file somewhere that is not Render. To restore it later, into a fresh
+database anywhere:
+
+```bash
+pg_restore --clean --no-owner --dbname "<NEW DATABASE_URL>" muugi-YYYYMMDD.dump
+```
+
+If you have no `psql` to hand, set the repository secret and run the workflow
+manually instead (Actions -> db-backup -> Run workflow), then download the
+artifact it produces.
 
 ## Full redeploy procedure (new Render account, or after this one is lost)
 
