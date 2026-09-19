@@ -169,6 +169,46 @@
   #zenith .fw-head{display:flex;align-items:center;gap:2px;margin-bottom:14px}
   #zenith .fw-title{font-size:17px;font-weight:700;letter-spacing:-.01em}
   #zenith .fw-sub{font-size:12px;color:var(--mut);margin-top:2px}
+/* ---------------------------------------------------------------------------
+   LAYERING — the answer, then the case, then the working.
+
+   A 66-page report is not long because it says too much; it is long because
+   it says everything at the same volume. Twenty sections stacked flat, each
+   as prominent as the next, and the thing a Cabinet Secretary needs is on
+   page 41 between a platform breakdown and a scoring-coverage table.
+
+   So the page has three zones. The ANSWER is open and is meant to be read
+   standing up: what is happening, how big, and what to do. THE CASE is the
+   analysis that supports it, one collapsed line each. THE WORKING is the
+   provenance — verification, coverage, sources — which has to be present
+   and almost never has to be read.
+
+   Collapsing is a presentation change and nothing else. Every section is
+   still built, still in the DOM, still in the printed file, and a section
+   that FAILED is still a banner at the top where it cannot be collapsed
+   away. The one thing this must never do is make an absent section and a
+   folded one look alike, which is why every head carries its own count.
+--------------------------------------------------------------------------- */
+#zenith .zone{display:flex;align-items:baseline;gap:10px;margin:26px 2px 2px}
+#zenith .zone-n{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--sky2)}
+#zenith .zone-t{font-size:12.5px;color:var(--mut)}
+#zenith .zone-rule{flex:1;height:1px;background:var(--line2)}
+
+#zenith .sect{padding:0}
+#zenith .sect-head{display:flex;width:100%;gap:12px;align-items:flex-start;
+  justify-content:space-between;background:none;border:none;color:inherit;
+  text-align:left;cursor:pointer;padding:14px 16px;font:inherit}
+#zenith .sect-head:hover{background:rgba(125,211,252,.05)}
+#zenith .sect-head .lbl{margin:0}
+#zenith .sect-sub{display:block;font-size:12.5px;color:var(--mut);margin-top:3px}
+#zenith .sect-meta{display:flex;gap:8px;align-items:center;flex-shrink:0}
+#zenith .sect-count{font-size:11.5px;color:var(--mut2,#6b7a8d);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+#zenith .sect-chev{font-size:11px;color:var(--sky2);transition:transform .15s}
+#zenith .sect[open] .sect-chev{transform:rotate(180deg)}
+#zenith .sect-body{padding:0 16px 14px}
+#zenith .sect:not([open]) .sect-body{display:none}
+
 .drill{background:none;border:1px solid var(--line,#2a3444);color:var(--sky2,#7dd3fc);border-radius:8px;padding:5px 10px;font-size:12.5px;cursor:pointer;margin-top:10px}
 .drill:hover{background:rgba(125,211,252,.08)}
 .drill-body{margin-top:8px;max-height:520px;overflow-y:auto;padding-right:4px}
@@ -192,8 +232,27 @@
           --txt:#111;--mut:#555;--sky2:#0b5f8a;--pos:#1a7f3c;--neg:#b3261e;--amber:#8a6100}
   #zenith *{color:inherit!important;box-shadow:none!important}
 
-  /* Controls, navigation and anything that only makes sense on a live page. */
-  nav.nav,.btn,button,input,select,textarea,.spinner,.drill{display:none!important}
+  /* Controls, navigation and anything that only makes sense on a live page.
+     `.sect-head` is exempt: it is a <button> because it toggles on screen,
+     but on paper it is the section's heading, and hiding every button would
+     have printed twenty bodies of text with no headings above them. */
+  nav.nav,.btn,button:not(.sect-head),input,select,textarea,.spinner,.drill{
+    display:none!important}
+
+  /* A printed file has no chevrons to click, so a folded section would
+     simply be missing — which is the one thing this report must never do to
+     a reader. Everything is open on paper; layering is for the screen. */
+  #zenith .sect-body{display:block!important}
+  #zenith .sect-chev,#zenith .sect-count{display:none!important}
+  #zenith .sect-head{padding:0 0 6px;cursor:auto}
+  #zenith .sect-body{padding:0}
+  #zenith .sect{padding:12px 14px}
+
+  /* The zone bands become the document's top-level headings. */
+  #zenith .zone{margin:18px 0 8px;break-after:avoid;page-break-after:avoid}
+  #zenith .zone-n{color:#111!important;font-weight:700}
+  #zenith .zone-rule{background:#bbb!important;-webkit-print-color-adjust:exact;
+    print-color-adjust:exact}
 
   /* Cards become plain sections with a hairline rule.
      -------------------------------------------------------------------
@@ -1914,10 +1973,81 @@
   const quotesHTML = qs => (qs||[]).map(quoteBlock).join('');
   const handle = h => '@'+esc(String(h||'').replace(/^@/,''));
 
-  function deepCard(label,sub){
-    const c=el('div','card');
-    c.innerHTML=`<div class="lbl">${esc(label)}</div>${sub?`<div class="muted" style="font-size:13px;margin-top:4px">${esc(sub)}</div>`:''}`;
+  /** A section of the report: a heading that can be read on its own, and a
+      body that opens.
+
+      Every analyst section already came through here, which is why this is
+      where layering goes in rather than in fifteen render functions. The
+      contract callers rely on is `c.appendChild(row)`, so that keeps working
+      — it just puts the row in the body instead of straight under the
+      heading.
+
+      `open` is for the few sections that are the answer rather than the
+      evidence for it. */
+  function deepCard(label,sub,opts){
+    opts=opts||{};
+    const c=el('div','card sect');
+    if(opts.open)c.setAttribute('open','');
+    c.dataset.title=label;
+
+    const head=el('button','sect-head');
+    head.type='button';
+    head.innerHTML=`<span><span class="lbl">${esc(label)}</span>`
+      +`${sub?`<span class="sect-sub">${esc(sub)}</span>`:''}</span>`
+      +`<span class="sect-meta"><span class="sect-count"></span>`
+      +`<span class="sect-chev">▾</span></span>`;
+    const body=el('div','sect-body');
+
+    // Attach with the real method: `c.appendChild` is replaced below, and
+    // using it here would put the head inside the body it has not got yet.
+    Element.prototype.appendChild.call(c,head);
+    Element.prototype.appendChild.call(c,body);
+
+    head.setAttribute('aria-expanded',opts.open?'true':'false');
+    head.addEventListener('click',()=>{
+      const open=c.hasAttribute('open');
+      if(open)c.removeAttribute('open'); else c.setAttribute('open','');
+      head.setAttribute('aria-expanded',open?'false':'true');
+    });
+
+    // Callers say `c.appendChild(row)`; the row belongs in the body.
+    c.appendChild=node=>body.appendChild(node);
     return c;
+  }
+
+  /** What a folded section says about itself.
+
+      A heading with nothing beside it gives a reader no way to tell a
+      section holding twenty dated events from one holding none — and "none"
+      is a finding this report is built to state out loud, not to hide behind
+      a chevron. Run once after a render, over whatever is actually in the
+      DOM, so it cannot drift from what each section built. */
+  function labelSections(root){
+    root.querySelectorAll('.sect').forEach(c=>{
+      const body=c.querySelector('.sect-body');
+      const count=c.querySelector('.sect-count');
+      if(!body||!count)return;
+      // Count leaves, then containers, then whatever is there — in that
+      // order and never added together. A combined selector counted Public
+      // Voice as "7 items": three stance columns PLUS the four themes
+      // inside them, which is not a number of anything.
+      const rows=body.querySelectorAll('.mentr').length
+                 || body.querySelectorAll('.stance-col,.tl-item,.qt').length
+                 || body.children.length;
+      count.textContent=rows?`${rows} ${rows===1?'item':'items'}`:'nothing to show';
+      if(!rows)count.style.color='var(--amber)';
+    });
+    // "Open all" on a zone holding one section is a button that does what
+    // clicking the section does.
+    root.querySelectorAll('.zone').forEach(z=>{
+      let n=0,sib=z.nextElementSibling;
+      while(sib&&!sib.classList.contains('zone')){
+        if(sib.classList.contains('sect'))n++;
+        sib=sib.nextElementSibling;
+      }
+      const all=z.querySelector('.zone-all');
+      if(all&&n<2)all.style.display='none';
+    });
   }
 
   /** What people are actually saying, split by stance, every theme backed by
@@ -1942,6 +2072,157 @@
     });
     c.appendChild(grid);
     return c;
+  }
+
+  /** The analyst's own reading — what the numbers do not say on their own. */
+  function renderInsights(di){
+    const rows=((di||{}).insights||[]).filter(i=>i&&i.headline);
+    if(!rows.length)return null;
+    const c=deepCard('Beneath the surface','What the volume and sentiment do not say on their own');
+    rows.forEach(ins=>{
+      const conf=(ins.confidence||'').toLowerCase();
+      c.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;align-items:flex-start">
+        <b style="font-size:15px;max-width:80%">${linkifyRefs(esc(ins.headline),ins.headline_citations)}</b>
+        <span class="pill ${conf==='high'?'pos':conf==='low'?'':'sky'}">${esc(ins.confidence||'')}</span></div>
+        <div class="muted" style="font-size:14px;margin-top:5px">${linkifyRefs(esc(ins.reasoning||''),ins.reasoning_citations)}</div>
+        ${ins.implication?`<div style="font-size:13px;margin-top:6px;color:var(--sky2)">→ ${linkifyRefs(esc(ins.implication),ins.implication_citations)}</div>`:''}`));
+    });
+    return c;
+  }
+
+  /** The stories the corpus is actually telling, by weight. */
+  function renderNarratives(rows){
+    rows=(rows||[]).filter(n=>n&&n.label);
+    if(!rows.length)return null;
+    const c=deepCard('Narratives','The distinct stories in the corpus, by share of conversation');
+    rows.slice(0,8).forEach(n=>{
+      const row=el('div','mentr',`<div class="row" style="justify-content:space-between"><b>${esc(n.label)}</b>
+        <span class="chip">${fmt(n.mentions)} mentions</span></div>
+        <div class="muted" style="font-size:13.5px;margin-top:4px">${linkifyRefs(esc(n.description||''),n.description_citations)}</div>`);
+      row.appendChild(receipts(n.evidence));
+      c.appendChild(row);
+    });
+    return c;
+  }
+
+  /** Raw source items, so a reader can see what the analysis was built on. */
+  function renderTopMentions(r){
+    // Three shapes reach this: the API's stored-mention payload, the corpus
+    // preview's, and the demo fixture's. Read every key any of them uses — a
+    // mismatch renders an empty evidence list, which is worse than no section
+    // at all because it looks like there is nothing to show.
+    const tm=((r.volume&&r.volume.topMentions)||r.topComments||[]).filter(Boolean);
+    if(!tm.length)return null;
+    const c=deepCard('Representative mentions','A sample of the source items themselves');
+    tm.slice(0,6).forEach(m=>{
+      const who=m.author||m.author_handle||m.handle||'';
+      const body=m.text||m.headline||'';
+      const when=String(m.posted_at||'').slice(0,10);
+      c.appendChild(el('div','mentr',`<div class="row" style="gap:8px;font-size:12px;flex-wrap:wrap">
+          <span class="chip">${esc(m.platform||'')}</span>
+          ${who?`<span class="muted">@${esc(String(who).replace(/^@/,''))}</span>`:''}
+          ${when?`<span class="muted">${esc(when)}</span>`:''}
+          ${m.metric?`<span class="muted">${esc(m.metric)}</span>`:''}</div>
+        <div style="font-size:14px;margin-top:6px">${body?esc(String(body).slice(0,300)):'<span class="muted">(no text captured)</span>'}</div>
+        ${m.url?`<div style="font-size:12px;margin-top:4px"><a class="src-link" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(m.url))}">${esc(outletOf(m.url))} ↗</a></div>`:''}`));
+    });
+    return c;
+  }
+
+  /** Turn a finished plain card into a folding section, using its own
+      heading as the title.
+
+      The issue map's twelve cards are built inline rather than through
+      `deepCard`, so this reaches them after the fact instead of rewriting
+      twelve blocks — and it picks up any card added there later without
+      anyone having to remember this exists. */
+  function foldSection(card){
+    const lbl=card.querySelector('.lbl');
+    if(!lbl)return null;
+    const title=lbl.textContent.trim();
+    let sub='';
+    const next=lbl.nextElementSibling;
+    if(next&&next.classList.contains('muted')){sub=next.textContent.trim();next.remove();}
+    lbl.remove();
+    const sect=deepCard(title,sub);
+    while(card.firstChild)sect.appendChild(card.firstChild);
+    return sect;
+  }
+
+  //: Which layer each issue-map section belongs to.
+  //:
+  //: Note what the map does NOT do that the report does: fold its case
+  //: sections. Sub-issues, Linking narratives, Key actors and Timeline all
+  //: repaint themselves when a node is selected in the issue graph — they
+  //: rewrite their own heading with a filter note ("3 of 11 — connected to
+  //: X"). Folding them moved those headings inside the collapsed body, so
+  //: selecting a node in the graph silently changed nothing a reader could
+  //: see, and clicking a point on the timeline strip scrolled to a row that
+  //: was not on the page. The map is an interactive analysis and folding
+  //: fights its central interaction; the report has no such coupling.
+  //:
+  //: So the map gets the ordering — the answer first, the methodology last
+  //: instead of first — and folds only the static provenance at the end.
+  //: A card on neither list stays open at the top, which is every warning
+  //: the map produces ("the record does not connect these two", "counted,
+  //: not read", a discovery sweep that did not run).
+  const ISSUE_CASE=['Sub-issues','Linking narratives','Key actors','Timeline'];
+  const ISSUE_WORKING=['How this was researched','Social sources',
+                       'Discovery sweep','Evidence sample'];
+
+  /** Re-lay the issue map into the same three zones as the report.
+      Called after `intersectionDetail` has built everything. */
+  function layerIssueMap(host){
+    const answer=[],theCase=[],working=[];
+    Array.from(host.children).forEach(card=>{
+      const lbl=card.querySelector&&card.querySelector('.lbl');
+      const title=lbl?lbl.textContent.trim():'';
+      if(ISSUE_CASE.includes(title))theCase.push(card);
+      else if(ISSUE_WORKING.includes(title))working.push(card);
+      else answer.push(card);
+    });
+    host.innerHTML='';
+    if(answer.length){
+      zone(host,'01','The answer','What the record says about this pair');
+      answer.forEach(c=>host.appendChild(c));
+    }
+    if(theCase.length){
+      zone(host,'02','The case','How the connection is made — filtered by the graph below');
+      theCase.forEach(c=>host.appendChild(c));
+    }
+    if(working.length){
+      zone(host,'03','The working','How this was built: what was read and what failed');
+      working.forEach(c=>host.appendChild(foldSection(c)||c));
+    }
+    labelSections(host);
+  }
+
+  /** A band across the page saying which of the three layers follows. */
+  function zone(host,n,title,sub){
+    const z=el('div','zone');
+    z.innerHTML=`<span class="zone-n">${esc(n)} · ${esc(title)}</span>`
+      +`<span class="zone-t">${esc(sub||'')}</span><span class="zone-rule"></span>`;
+    // Layering must not become a wall. Someone reading the whole report
+    // should not have to click twenty chevrons to get what the flat page
+    // gave them for free.
+    const all=el('button','drill zone-all');
+    all.type='button'; all.style.margin='0'; all.textContent='Open all';
+    all.addEventListener('click',()=>{
+      const mine=[]; let sib=z.nextElementSibling;
+      while(sib&&!sib.classList.contains('zone')){
+        if(sib.classList.contains('sect'))mine.push(sib);
+        sib=sib.nextElementSibling;
+      }
+      const opening=mine.some(c=>!c.hasAttribute('open'));
+      mine.forEach(c=>{
+        if(opening)c.setAttribute('open',''); else c.removeAttribute('open');
+        const h=c.querySelector('.sect-head');
+        if(h)h.setAttribute('aria-expanded',opening?'true':'false');
+      });
+      all.textContent=opening?'Close all':'Open all';
+    });
+    z.appendChild(all);
+    host.appendChild(z);
   }
 
   /** How the conversation sounds on each platform — tone, not counts. */
@@ -1998,18 +2279,24 @@
       timestamps alone, no model involved — where it started and how it spread. */
   function renderNarrativeDeepDives(dives){
     return (dives||[]).filter(d=>d&&d.label).map(d=>{
-      const c=el('div','card');
       const origin=d.origin||{}, fs=origin.first_seen||{};
-      c.innerHTML=`<div class="row" style="justify-content:space-between;align-items:flex-start">
-          <div><div class="lbl">Storyline</div><h3 style="margin:6px 0 0">${esc(d.label)}</h3></div>
-          ${d.mention_count?`<span class="chip">${fmt(d.mention_count)} mentions</span>`:''}</div>
-        <p style="font-size:14.5px;margin:12px 0 0">${esc(d.how_it_unfolded||'')}</p>
-        ${(d.who_is_driving_it||[]).length?`<div class="muted" style="font-size:12.5px;margin-top:10px">Driven by: ${(d.who_is_driving_it||[]).map(handle).join(' · ')}</div>`:''}`;
+      // A storyline is a section like any other. Built as a plain card it was
+      // the one thing on the page that could not be folded, so five of them
+      // filled ten pages of a printed report between two folded headings.
+      // The teaser is the storyline's own first sentence — the part a reader
+      // needs to decide whether to open it.
+      const opening=String(d.how_it_unfolded||'').split(/(?<=[.!?])\s/)[0]||'';
+      const c=deepCard(`Storyline — ${d.label}`,
+        (d.mention_count?`${fmt(d.mention_count)} mentions · `:'')
+        +(opening.length>150?opening.slice(0,150)+'…':opening));
+      c.appendChild(el('div','',
+        `<p style="font-size:14.5px;margin:0">${linkifyRefs(esc(d.how_it_unfolded||''),d.how_it_unfolded_citations)}</p>`
+        +`${(d.who_is_driving_it||[]).length?`<div class="muted" style="font-size:12.5px;margin-top:10px">Driven by: ${(d.who_is_driving_it||[]).map(handle).join(' · ')}</div>`:''}`));
       const fr=el('div','stance');
       if(d.supporter_framing)fr.appendChild(el('div','stance-col',
-        `<h4 style="color:var(--pos)">Supporters frame it as</h4><div style="font-size:13.5px;margin-top:6px">${esc(d.supporter_framing)}</div>`));
+        `<h4 style="color:var(--pos)">Supporters frame it as</h4><div style="font-size:13.5px;margin-top:6px">${linkifyRefs(esc(d.supporter_framing),d.supporter_framing_citations)}</div>`));
       if(d.critic_framing)fr.appendChild(el('div','stance-col',
-        `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13.5px;margin-top:6px">${esc(d.critic_framing)}</div>`));
+        `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13.5px;margin-top:6px">${linkifyRefs(esc(d.critic_framing),d.critic_framing_citations)}</div>`));
       if(fr.children.length)c.appendChild(fr);
       if(fs.date)c.appendChild(el('div','',`<div class="muted" style="font-size:12.5px;margin-top:12px">
         First seen ${esc(fs.date)} · ${handle(fs.author)} on ${esc(fs.platform||'—')}${origin.peak?` · peaked ${esc(origin.peak.date)} (${fmt(origin.peak.mentions)} mentions)`:''}${origin.platforms_reached?` · reached ${origin.platforms_reached} platform(s)`:''}</div>`));
@@ -2238,22 +2525,42 @@
       pipeline generated is dropped. */
   function renderDeepRead(host,r){
     useRefIndex(r);
-    [renderPublicVoice(r.publicVoice),
-     renderDeepTimeline(r.timeline),
-     renderPlatformPulse(r.platformPulse),
-     renderInfluencerStances(r.influencerStances)]
-      .filter(Boolean).forEach(c=>host.appendChild(c));
-    renderNarrativeDeepDives(r.narrativeDeepDives).forEach(c=>host.appendChild(c));
-    [renderScoringCoverage(r.sentimentScoring),
-     renderOpenQuestions(r.open_questions,r.investigation_leads),
-     renderJudgementLists(r),
-     renderSinceLastReport(r.sinceLastReport),
-     renderSentimentHistory(r.sentimentHistory),
-     renderRecency(r.recency,r.volume),
-     renderClaims(r.claims,r.verification),
-     renderEvidenceGate(r.evidence_gate),
-     renderDataCoverage(r.dataCoverage)]
-      .filter(Boolean).forEach(c=>host.appendChild(c));
+
+    // 02 — THE CASE. The analysis, in the order an argument is made: what we
+    // read into it, the stories it divides into, who is saying what, when it
+    // happened, where, and who is driving it.
+    const theCase=[
+      renderInsights(r.deepInsights),
+      renderNarratives(r.narratives),
+      renderPublicVoice(r.publicVoice),
+      renderDeepTimeline(r.timeline),
+      renderPlatformPulse(r.platformPulse),
+      renderInfluencerStances(r.influencerStances)]
+      .concat(renderNarrativeDeepDives(r.narrativeDeepDives))
+      .concat([renderSinceLastReport(r.sinceLastReport),
+               renderSentimentHistory(r.sentimentHistory)])
+      .filter(Boolean);
+    if(theCase.length){
+      zone(host,'02','The case','The analysis behind the answer — open what you need');
+      theCase.forEach(c=>host.appendChild(c));
+    }
+
+    // 03 — THE WORKING. Provenance. This has to be in the document and
+    // almost never has to be read: it is what makes the report auditable,
+    // not what makes it useful. Folding it is the difference between a
+    // deliverable and a data dump — and none of it is removed.
+    const working=[
+      renderClaims(r.claims,r.verification),
+      renderOpenQuestions(r.open_questions,r.investigation_leads),
+      renderScoringCoverage(r.sentimentScoring),
+      renderRecency(r.recency,r.volume),
+      renderEvidenceGate(r.evidence_gate),
+      renderDataCoverage(r.dataCoverage),
+      renderTopMentions(r)].filter(Boolean);
+    if(working.length){
+      zone(host,'03','The working','How this was built: what was read, checked, and what failed');
+      working.forEach(c=>host.appendChild(c));
+    }
   }
 
   /* ---------------- STREAMING PROGRESS ---------------- */
@@ -2469,6 +2776,16 @@
     }
 
 
+    // 01 — THE ANSWER. Everything above this line is an alert: a failed run,
+    // a test-grade backend, a section that could not be produced. Those are
+    // never folded and never demoted, because a reader who misses them draws
+    // conclusions from a report that has not got the evidence for them.
+    //
+    // What follows is the report's actual answer, and it is the only zone
+    // that is open by default: the finding, the brief, the four numbers that
+    // size it, and what to do. A reader who stops here has the report.
+    zone(wrap,'01','The answer','What is happening, how big it is, and what to do about it');
+
     // The One Thing
     const di=r.deepInsights||{};
     if(di.the_one_thing){
@@ -2500,57 +2817,24 @@
       sc.innerHTML=`<div class="lbl">Sentiment split</div>`+sentBar('Positive',s.positive,'var(--pos)')+sentBar('Neutral',s.neutral,'var(--neu)')+sentBar('Negative',s.negative,'var(--neg)');
       wrap.appendChild(sc);
     }
-    // Beneath the surface
-    if((di.insights||[]).length){
-      const ic=el('div','card');ic.innerHTML='<div class="lbl">Beneath the surface</div>';
-      di.insights.forEach(ins=>{
-        const conf=(ins.confidence||'').toLowerCase();
-        ic.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;align-items:flex-start">
-          <b style="font-size:15px;max-width:80%">${esc(ins.headline)}</b>
-          <span class="pill ${conf==='high'?'pos':conf==='low'?'':'sky'}">${esc(ins.confidence||'')}</span></div>
-          <div class="muted" style="font-size:14px;margin-top:5px">${esc(ins.reasoning||'')}</div>
-          ${ins.implication?`<div style="font-size:13px;margin-top:6px;color:var(--sky2)">→ ${esc(ins.implication)}</div>`:''}`));
-      });
-      wrap.appendChild(ic);
-    }
-    // narratives
-    if((r.narratives||[]).length){
-      const nc=el('div','card');nc.innerHTML='<div class="lbl">Narratives</div>';
-      r.narratives.slice(0,8).forEach(n=>{
-        const row=el('div','mentr',`<div class="row" style="justify-content:space-between"><b>${esc(n.label)}</b>
-          <span class="chip">${fmt(n.mentions)} mentions</span></div>
-          <div class="muted" style="font-size:13.5px;margin-top:4px">${esc(n.description||'')}</div>`);
-        row.appendChild(receipts(n.evidence));
-        nc.appendChild(row);
-      });
-      wrap.appendChild(nc);
-    }
+    // What to do about it — risks, openings, what is moving.
+    //
+    // This was built inside the deep read and landed on page 41 of a printed
+    // report, between a platform breakdown and a scoring-coverage table. It
+    // is the only section that tells the reader to DO something, so it is
+    // part of the answer, and it is the one section of the answer that opens
+    // as a section rather than a card.
+    const todo=renderJudgementLists(r);
+    if(todo){todo.setAttribute('open','');
+      const h=todo.querySelector('.sect-head');
+      if(h)h.setAttribute('aria-expanded','true');
+      wrap.appendChild(todo);}
+
     // The deep read — the corpus-grounded analyst sections. This is where
     // the report stops being a dashboard and starts being an intelligence
     // document: every claim below carries the quotes it came from.
     renderDeepRead(wrap,r);
-    // top mentions
-    const tm=(r.volume&&r.volume.topMentions)||r.topComments||[];
-    if(tm.length){
-      const mc=el('div','card');mc.innerHTML='<div class="lbl">Representative mentions</div>';
-      // Three shapes reach this: the API's stored-mention payload, the corpus
-      // preview's, and the demo fixture's. Read every key any of them uses — a
-      // mismatch renders an empty evidence list, which is worse than no section
-      // at all because it looks like there is nothing to show.
-      tm.slice(0,6).forEach(m=>{
-        const who=m.author||m.author_handle||m.handle||'';
-        const body=m.text||m.headline||'';
-        const when=String(m.posted_at||'').slice(0,10);
-        mc.appendChild(el('div','mentr',`<div class="row" style="gap:8px;font-size:12px;flex-wrap:wrap">
-            <span class="chip">${esc(m.platform||'')}</span>
-            ${who?`<span class="muted">@${esc(String(who).replace(/^@/,''))}</span>`:''}
-            ${when?`<span class="muted">${esc(when)}</span>`:''}
-            ${m.metric?`<span class="muted">${esc(m.metric)}</span>`:''}</div>
-          <div style="font-size:14px;margin-top:6px">${body?esc(String(body).slice(0,300)):'<span class="muted">(no text captured)</span>'}</div>
-          ${m.url?`<div style="font-size:12px;margin-top:4px"><a class="src-link" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(m.url))}">${esc(outletOf(m.url))} ↗</a></div>`:''}`));
-      });
-      wrap.appendChild(mc);
-    }
+    labelSections(wrap);
     out.appendChild(wrap);
 
     // The client deliverable, rendered to its own framework. Offered as a
@@ -3265,7 +3549,9 @@
     // reachable — one click apart, rather than one of them thrown away.
     const modes=[];
     if(m.issue_framework)modes.push(['framework','Issue Framework',host=>renderIssueFramework(host,m.issue_framework)]);
-    modes.push(['detail','Intersection detail',host=>intersectionDetail(host,m)]);
+    modes.push(['detail','Intersection detail',host=>{
+      intersectionDetail(host,m); layerIssueMap(host);
+    }]);
 
     const bar=el('div','row');bar.style.margin='14px 0 4px';
     const host=el('div','grid fade');host.style.marginTop='12px';

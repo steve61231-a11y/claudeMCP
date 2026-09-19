@@ -27,8 +27,13 @@ def test_the_api_sends_the_keys_the_page_reads():
 
 def test_the_renderer_tolerates_every_shape_that_reaches_it():
     html = APP_HTML.read_text(encoding="utf-8")
-    block = html[html.index("const tm=(r.volume"):]
-    block = block[: block.index("wrap.appendChild(mc)")]
+    # Anchored on the function rather than on one line inside it: this used to
+    # point at "const tm=(r.volume", which was the first line of an inline
+    # block in renderReport. Moving that block into a named section function —
+    # so it could be folded like every other section — renamed nothing and
+    # broke the test anyway.
+    block = html[html.index("function renderTopMentions("):]
+    block = block[: block.index("\n  }")]
     # Author, under any of its names.
     assert "m.author||m.author_handle||m.handle" in block
     # Body text, under either of its names.

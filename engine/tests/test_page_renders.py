@@ -73,6 +73,12 @@ def _server(html: str, payload: dict):
     return server
 
 
+#: Unfold every collapsible section, so `innerText` returns the whole report.
+OPEN_EVERY_SECTION = """() => {
+  document.querySelectorAll('.sect').forEach(s => s.setAttribute('open',''));
+}"""
+
+
 @pytest.fixture(scope="module")
 def rendered():
     from engine.api_server import render_frontend_document
@@ -90,6 +96,12 @@ def rendered():
             page.fill("#q", "Edwin Sifuna")
             page.click("#grun")
             page.wait_for_timeout(5000)
+            # The report is layered: most sections are folded on screen, and
+            # `innerText` does not return what is folded. These tests are
+            # about whether a section RENDERED, not about whether it happens
+            # to be open, so unfold everything before reading the page. The
+            # fold state has its own tests in test_the_report_is_layered.py.
+            page.evaluate(OPEN_EVERY_SECTION)
             text = page.evaluate("() => document.body.innerText")
             cards = page.evaluate("() => document.querySelectorAll('.card').length")
             # Leave the tab and come back. `go()` used to do v.innerHTML='' on
@@ -101,6 +113,7 @@ def rendered():
             issue_tab = page.evaluate("() => document.body.innerText")
             page.click("button:has-text('Search')")
             page.wait_for_timeout(500)
+            page.evaluate(OPEN_EVERY_SECTION)
             after_return = page.evaluate("() => document.body.innerText")
             lookback = page.evaluate("() => !!document.querySelector('#qd')")
             # The run publishes more keys than the checklist lists; the counter
