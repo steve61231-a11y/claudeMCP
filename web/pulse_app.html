@@ -195,11 +195,69 @@
   /* Controls, navigation and anything that only makes sense on a live page. */
   nav.nav,.btn,button,input,select,textarea,.spinner,.drill{display:none!important}
 
-  /* Cards become plain sections with a hairline rule, and are kept whole
-     across page breaks wherever they will fit. */
+  /* Cards become plain sections with a hairline rule.
+     -------------------------------------------------------------------
+     They used to carry `break-inside:avoid`, which sounds right and is not.
+     A card that will not fit in the space left is moved WHOLE to the next
+     page, and the report's cards are sections — "What happened, and when"
+     runs to twenty dated entries. So every long card began on a fresh page
+     and left whatever was below it blank: measured across a printed demo,
+     45% of one page and 52% of another, and in a 66-page live report it is
+     most of the reason it is 66 pages.
+
+     Atomicity belongs to the smallest unit that is meaningless when split,
+     not to the container. A quote cut across a page break is unreadable; a
+     twenty-entry section broken between entries is a normal document. So
+     cards flow, and the rows inside them stay whole. */
   #zenith .card{background:#fff!important;border:1px solid #ddd!important;
     border-radius:6px;padding:12px 14px;margin:0 0 10px;
+    break-inside:auto;page-break-inside:auto}
+
+  /* The units that ARE meaningless when split — and ONLY those.
+     -------------------------------------------------------------------
+     This list is easy to over-fill, and over-filling it recreates exactly
+     the problem it is meant to solve, one level further down. `.card` was
+     the first mistake. `.stance-col` was the second: it holds a whole
+     stance's themes and runs to most of a page. `.mentr` was the third and
+     least obvious — it looks like a row, and in some places it is, but in
+     Public Voice each `.mentr` is a theme heading plus a 150-word summary
+     plus up to six quotes, so making it atomic stranded a bordered,
+     three-quarters-empty column on its own page.
+
+     The test for this list is not "is it a row" but "is it still readable
+     if a page break falls inside it". A quote cut in half is not; a section
+     of twenty quotes broken between two of them is fine. So: quotes, and
+     the small fixed-size visuals that are single images of data. */
+  #zenith .qt,#zenith .hbar,#zenith .tl-item,
+  #zenith .chart-box,#zenith .chart-ring,#zenith .tl-strip{
     break-inside:avoid;page-break-inside:avoid}
+
+  /* A section heading alone at the foot of a page is the other half of the
+     same problem — and the heading here is two elements, a label and the
+     line of explanation under it, so avoiding a break after only the label
+     still strands both. */
+  #zenith .lbl,#zenith .eyebrow,#zenith .fw-title,
+  #zenith .lbl + .muted{
+    break-after:avoid;page-break-after:avoid}
+  #zenith p,#zenith .muted{orphans:3;widows:3}
+
+  /* Charts whose meaning IS their fill.
+     -------------------------------------------------------------------
+     A browser's print dialog defaults "Background graphics" to OFF, and
+     the app's own Download PDF prints through that dialog. Every bar in
+     this report is a div whose only visual is a background colour, so the
+     sentiment split printed as three labels and three percentages alone on
+     an otherwise empty A4 page — a chart that failed to print looking
+     exactly like a chart with no data, which is the one thing this product
+     is built not to do. `print-color-adjust:exact` is what overrides that
+     default, scoped to the elements whose colour carries meaning rather
+     than applied to the whole page. */
+  #zenith .bar,#zenith .bar>i,#zenith .hbar-track,#zenith .hbar-fill,
+  #zenith .legend-item i,#zenith svg,#zenith .chart-box{
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  /* The empty part of a bar is white-on-white otherwise, so a 95% bar and a
+     5% bar look the same length. */
+  #zenith .bar,#zenith .hbar-track{background:#e6e8eb!important}
   #zenith .lbl,#zenith .fw-title{color:#111!important}
   #zenith .muted,#zenith .fw-sub{color:#555!important}
 
@@ -219,6 +277,13 @@
   #zenith a.src-link{color:#0b5f8a!important;text-decoration:underline}
   #zenith a.src-link[data-src]:not([data-src=""])::after{content:" (" attr(data-src) ")";
     font-size:9px;color:#666!important}
+
+  /* Three stances side by side is a screen layout. On paper it is a grid row,
+     and Chromium does not fragment grid rows — the row moves to the next page
+     whole and leaves everything above it blank. Stacked, they flow and each
+     stance gets the full column width, which reads better anyway. */
+  #zenith .stance{display:block}
+  #zenith .stance-col{margin-bottom:10px}
 
   /* Scroll boxes must not clip their content to one screenful in print. */
   #zenith .drill-body,#zenith .tl-strip{max-height:none!important;overflow:visible!important}
