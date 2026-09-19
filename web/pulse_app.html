@@ -210,10 +210,15 @@
   #zenith .pill.neg{border-color:#b3261e!important;color:#b3261e!important}
   #zenith .pill.amber{border-color:#8a6100!important;color:#8a6100!important}
 
-  /* A citation is worthless on paper unless the address is on the paper. */
+  /* A citation must name its source on paper — but the SOURCE, not the
+     address. This stamped the full href after every inline [1], so a brief
+     citing eight items carried eight tracking URLs of 100+ characters
+     through the middle of its sentences. It was the single worst thing on
+     the printed page, and nobody can follow a URL off paper anyway. The
+     outlet is the part that means something. */
   #zenith a.src-link{color:#0b5f8a!important;text-decoration:underline}
-  #zenith a.src-link[href^="http"]::after{content:" (" attr(href) ")";
-    font-size:9px;color:#666!important;word-break:break-all}
+  #zenith a.src-link[data-src]:not([data-src=""])::after{content:" (" attr(data-src) ")";
+    font-size:9px;color:#666!important}
 
   /* Scroll boxes must not clip their content to one screenful in print. */
   #zenith .drill-body,#zenith .tl-strip{max-height:none!important;overflow:visible!important}
@@ -252,9 +257,57 @@
       if(!c)return whole;
       if(!c.url)return `<sup class="muted" style="font-size:10px" title="source not traced">[${n}]</sup>`;
       return `<sup><a class="src-link" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer" `
-        +`title="${esc(c.platform||'source')}" style="font-size:10px">[${n}]</a></sup>`;
+        +`title="${esc(c.platform||'source')}" data-src="${esc(outletOf(c.url))}" `
+        +`style="font-size:10px">[${n}]</a></sup>`;
     });
   }
+
+  /* --------------------------------------------------------------------
+     Where a source came from, in the form a reader can actually use.
+
+     Under every quote the page printed "ref 37d358e4" — the first eight
+     characters of a row id in our own database. It is not a leak from the
+     model; it is this template, and it told a reader nothing at all. In a
+     document meant to be handed to an executive it reads like debug output
+     that escaped, which is worse than useless: it makes the rest of the
+     page look unfinished.
+
+     The page had no way to do better, because the mapping from ref to
+     outlet lived only inside reports/citations.py. It now ships with the
+     payload as `ref_index`, so a quote can be attributed the way a quote is
+     attributed anywhere else — outlet, date, link.
+     -------------------------------------------------------------------- */
+  let REF_INDEX = {};
+  const useRefIndex = p => { REF_INDEX = (p && (p.ref_index || p.refIndex)) || {}; };
+
+  /** An address is not a word. Full URLs were being printed as running text
+      — in quote attributions, in evidence rows, and (worst) stamped after
+      every inline citation in print, where a 120-character tracking URL sat
+      in the middle of the executive brief and broke the line. Nobody has
+      ever typed a URL off a printed page. The outlet is the part that
+      carries meaning, so show that and keep the address in the href. */
+  function outletOf(url){
+    if(!url) return '';
+    try { return new URL(url).hostname.replace(/^www\./,''); }
+    catch(e){ return String(url).replace(/^[a-z]+:\/\//i,'').replace(/^www\./,'').split(/[\/?#]/)[0]; }
+  }
+
+  /** The attribution line under a quote: "nation.africa · 2026-03-12 ↗".
+      An untraceable ref must not render like a traceable one — the same rule
+      linkifyRefs follows for an unresolved citation. */
+  function sourceLine(ref, extra){
+    const found = REF_INDEX[ref] || {};
+    const outlet = outletOf(found.url) || found.platform || '';
+    const when = String(found.posted_at || '').slice(0,10);
+    const parts = [extra, outlet, when].filter(Boolean).map(esc);
+    if(!outlet && !found.url)
+      return `<span title="this quote's source could not be traced in the corpus">`
+        + `${parts.length?parts.join(' · ')+' · ':''}source not traced</span>`;
+    if(!found.url) return parts.join(' · ');
+    return `<a class="src-link" href="${esc(found.url)}" target="_blank" rel="noopener noreferrer" `
+      + `data-src="${esc(outlet)}">${parts.join(' · ')} ↗</a>`;
+  }
+
   const fmt = n => (n==null?'—':Number(n).toLocaleString());
   const pct = n => (n==null?'—':Math.round(n)+'%');
 
@@ -953,7 +1006,7 @@
     if(quotes.length){
       box.appendChild(el('div','lbl','In their own words'));
       quotes.slice(0,5).forEach(q=>box.appendChild(el('div','',
-        `<div class="qt">“${esc(q.text)}”<span class="qt-ref">${q.stance?esc(q.stance)+' · ':''}ref ${esc(q.ref||'—')}</span></div>`)));
+        `<div class="qt">“${esc(q.text)}”<span class="qt-ref">${sourceLine(q.ref,q.stance)}</span></div>`)));
     }
     const o=ev.origin||{};
     if(o.first_seen&&o.first_seen.date)box.appendChild(el('div','',
@@ -1792,7 +1845,7 @@
      they came from. So they render as evidence, not as summary.
      ================================================================= */
 
-  const quoteBlock = q => `<div class="qt">“${esc(q&&q.text||'')}”<span class="qt-ref">ref ${esc(q&&q.ref||'—')}</span></div>`;
+  const quoteBlock = q => `<div class="qt">“${esc(q&&q.text||'')}”<span class="qt-ref">${sourceLine(q&&q.ref)}</span></div>`;
   const quotesHTML = qs => (qs||[]).map(quoteBlock).join('');
   const handle = h => '@'+esc(String(h||'').replace(/^@/,''));
 
@@ -2027,7 +2080,7 @@
         d.innerHTML=`<summary>${cites.length} supporting source${cites.length===1?'':'s'}`
           +`${cl.independent_sources?` · ${cl.independent_sources} independent`:''} ▾</summary>`;
         cites.forEach(x=>d.appendChild(el('div','',
-          `<div class="qt">“${esc((x.quote||'').trim())}”<span class="qt-ref">${esc(x.source||'source')}${x.url?' · '+esc(x.url):''}</span></div>`)));
+          `<div class="qt">“${esc((x.quote||'').trim())}”<span class="qt-ref">${esc(x.source||'source')}${x.url?` · <a class="src-link" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(x.url))}">${esc(outletOf(x.url))} ↗</a>`:''}</span></div>`)));
         row.appendChild(d);
       } else {
         row.appendChild(el('div','muted','<div style="font-size:12.5px;margin-top:8px">No supporting passage found in the stored corpus.</div>'));
@@ -2119,6 +2172,7 @@
       nothing in it is skipped rather than rendered blank — but nothing the
       pipeline generated is dropped. */
   function renderDeepRead(host,r){
+    useRefIndex(r);
     [renderPublicVoice(r.publicVoice),
      renderDeepTimeline(r.timeline),
      renderPlatformPulse(r.platformPulse),
@@ -2233,6 +2287,7 @@
   }
 
   function renderReport(out,r,meta){
+    useRefIndex(r);
     out.innerHTML='';
     const wrap=el('div','grid fade');wrap.style.marginTop='8px';
     // header
@@ -2427,7 +2482,7 @@
             ${when?`<span class="muted">${esc(when)}</span>`:''}
             ${m.metric?`<span class="muted">${esc(m.metric)}</span>`:''}</div>
           <div style="font-size:14px;margin-top:6px">${body?esc(String(body).slice(0,300)):'<span class="muted">(no text captured)</span>'}</div>
-          ${m.url?`<div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all">${esc(m.url)}</div>`:''}`));
+          ${m.url?`<div style="font-size:12px;margin-top:4px"><a class="src-link" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(m.url))}">${esc(outletOf(m.url))} ↗</a></div>`:''}`));
       });
       wrap.appendChild(mc);
     }
@@ -3044,7 +3099,7 @@
           `<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(e.platform||'')}</span>
              <span class="muted">${esc(String(e.posted_at||'').slice(0,10))}</span></div>
            <div style="font-size:14px;margin-top:6px">${esc(e.text)}</div>
-           ${e.url?`<div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all"><a class="src-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer">${esc(e.url)}</a></div>`:''}`)));
+           ${e.url?`<div class="muted" style="font-size:12px;margin-top:4px"><a class="src-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(e.url))}">${esc(outletOf(e.url))} ↗</a></div>`:''}`)));
       };
       paintEv(null);onGraphSelect(paintEv);
       host.appendChild(c);
@@ -3082,6 +3137,7 @@
   }
 
   function renderIssue(out,m){
+    useRefIndex(m);
     out.innerHTML='';
     // Collected plenty, none of it on topic. This is a different result from
     // "no coverage exists", and the old page could not tell them apart — it

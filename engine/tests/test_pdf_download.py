@@ -126,12 +126,30 @@ def test_the_printed_page_is_recoloured_for_paper():
     assert "@page" in page
 
 
-def test_a_citation_carries_its_address_onto_the_paper():
-    """A link is worthless in a printed file unless the URL is printed too —
-    and the whole point of this export is that it leaves the app."""
+def test_a_citation_names_its_source_on_the_paper():
+    """A link is worthless in a printed file unless the source is printed too
+    — the whole point of this export is that it leaves the app.
+
+    This test used to require `attr(href)`: the FULL address stamped after
+    every citation. The premise was half right. A citation does have to carry
+    its source onto paper, but the address is the wrong half to carry. In a
+    live 66-page report an executive brief citing eight items dragged eight
+    100+ character tracking URLs through the middle of its sentences, and it
+    was the single worst thing on the printed page. Nobody has ever typed a
+    URL off paper; the outlet is the part a reader uses, to judge the source
+    and to find it again.
+
+    So the requirement stands and its content changed: the marker must still
+    name where the claim came from, by outlet, which the page stamps onto
+    every citation as `data-src`.
+    """
     from engine.api_server import render_frontend_document
 
-    assert 'a.src-link[href^="http"]::after' in render_frontend_document()
+    page = render_frontend_document()
+    assert "a.src-link[data-src]" in page, "print no longer names a citation's source"
+    assert "attr(data-src)" in page
+    assert "attr(href)" not in page, (
+        "the full address is being stamped into the text again")
 
 
 def test_chromium_is_found_rather_than_assumed(tmp_path, monkeypatch):

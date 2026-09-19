@@ -76,17 +76,91 @@ def linkify(text: str, ref_index: dict[str, dict]) -> tuple[str, list[dict]]:
     with `url: None`, so the frontend can render it as plain "[1]" rather
     than a link, honestly showing the source could not be traced.
     """
-    # Cheap reject before the regex, but it must not assume a bracket shape —
-    # "(ref=" and a bare "ref=" both reach the page otherwise.
-    if not text or "ref" not in text.lower():
-        return text or "", []
-
     seen: dict[str, int] = {}
     citations: list[dict] = []
+    return _linkify_shared(text, ref_index, seen, citations), citations
+
+
+# ---------------------------------------------------------------------------
+# Coverage: every string is prose until proven otherwise.
+#
+# This used to be two hand-written lists of field names — `_PROSE_FIELDS` for
+# the issue map, `_REPORT_PROSE_FIELDS` for the report. Both were written once
+# against the fields whose leak had been SEEN, and both fell behind the moment
+# an analyst gained a field. By the fourth round the lists were covering
+# thirteen names and still missing six, among them `how_it_unfolded` — the
+# 250-500 word deep-dive body, the longest prose block in the report — and
+# `what_they_say`, whose entry in the list said `summary`, a key the analyst
+# has never emitted. That one had been "fixed" and had never once run.
+#
+# A list of prose fields is the wrong shape for the problem. An analyst writes
+# prose; which key it lands under is an implementation detail that changes
+# whenever a prompt changes, and the list can only ever be updated *after* a
+# reader has seen the raw ref. So invert it: walk the whole structure and
+# treat every string as prose, except the handful of keys that structurally
+# cannot be — ids, addresses, enum labels, dates — and anything that looks
+# like a URL wherever it sits.
+#
+# This is safe to do broadly because `linkify` is anchored on a literal
+# "ref=" / "ref:" and returns untouched text when it finds none: walking a
+# field that holds no citation costs a substring check and changes nothing.
+# ---------------------------------------------------------------------------
+
+#: Keys whose values are never prose. Two reasons to be on this list:
+#: mangling (a URL containing "?ref=twitter" would be rewritten into "[1]",
+#: destroying the link), and noise (numbering a bare id or an enum).
+_NEVER_PROSE = frozenset({
+    "ref", "refs", "id", "mention_id", "document_id", "source_id",
+    "url", "source_url", "link", "href", "permalink", "image", "avatar",
+    "platform", "source", "source_type", "handle", "author", "username",
+    "date", "posted_at", "published_at", "created_at", "updated_at",
+    "stance", "confidence", "kind", "type", "lang", "language",
+})
+
+#: A URL anywhere — including under a key not on the list above, since models
+#: put addresses in fields named `detail` and `evidence` as readily as in `url`.
+_LOOKS_LIKE_URL = re.compile(r"^\s*(?:https?://|www\.)", re.IGNORECASE)
+
+#: A whole URL, so a "ref=" inside a query string can be stepped over.
+#:
+#: `_LOOKS_LIKE_URL` only anchors at the start of a value, which catches a
+#: field that IS an address but not an address quoted mid-sentence — and a
+#: model citing "the filing at kenyalaw.org/view?ref=12345" had that URL
+#: rewritten to ".../view?[1]", turning a working link into a dead one. The
+#: substitution skips any match that begins inside one of these spans.
+_URL_SPAN = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+#: The suffix used for the citation list attached beside a linkified field.
+#: Recognised on the way in so a second pass over an already-linkified payload
+#: does not treat the citations it produced as prose to linkify again.
+_CITATIONS_SUFFIX = "_citations"
+
+
+def _is_prose(key: str | None, value: str) -> bool:
+    if not value:
+        return False
+    if key is not None:
+        if key in _NEVER_PROSE or key.endswith(_CITATIONS_SUFFIX):
+            return False
+    return not _LOOKS_LIKE_URL.match(value)
+
+
+def _linkify_shared(text: str, ref_index: dict, seen: dict, citations: list) -> str:
+    """`linkify`, but numbering continues across several calls.
+
+    A list of strings under one key — `themes`, `who_is_driving_it` — shares a
+    single citations array, so each string cannot restart at [1] or the page
+    would show two different sources both numbered [1].
+    """
+    if not text or "ref" not in text.lower():
+        return text or ""
+
+    url_spans = [m.span() for m in _URL_SPAN.finditer(text)]
 
     def _replace(match: re.Match) -> str:
-        # One marker can carry several ids — "(ref=fresh-0, fresh-1)" — and
-        # each is a separate source that deserves its own number and link.
+        at = match.start()
+        if any(start <= at < end for start, end in url_spans):
+            return match.group(0)    # a query parameter, not a citation
         numbers = []
         for ref in _REF_SPLIT.split(match.group(1)):
             ref = ref.strip()
@@ -101,173 +175,83 @@ def linkify(text: str, ref_index: dict[str, dict]) -> tuple[str, list[dict]]:
             numbers.append(f"[{seen[ref]}]")
         return "".join(numbers)
 
-    rewritten = _REF_PATTERN.sub(_replace, text)
-    return rewritten, citations
+    return _REF_PATTERN.sub(_replace, text)
 
 
-#: Prose fields on the issue-map analysis that carry inline [ref=...] markers
-#: and have no dedicated quotes array of their own.
-#: Every free-prose field an analyst writes refs into.
-#:
-#: This listed three fields and missed the rest, so a live map rendered a clean
-#: "[1]" verdict at the top and then, four sections down, paragraphs reading
-#: "operates globally alongside the World Bank [ref=2ddf5220]" — the model's
-#: internal citation format, verbatim, in the body of a client deliverable.
-#: `international` and `national` are written by the background analyst and
-#: were never added here when that analyst was; the timeline's mini-briefings
-#: are prose for the same reason and leaked the same way, three times over,
-#: since the sequencing section reprints them.
-_PROSE_FIELDS = ("involvement", "tension_or_risk", "verdict",
-                 "international", "national")
+def _linkify_value(value, key, ref_index, seen, citations, used):
+    """Resolve refs anywhere inside `value`. Citations for strings at THIS
+    level accumulate into `citations`; nested dicts carry their own."""
+    if isinstance(value, str):
+        if key == "ref" and value:
+            used.add(value)          # a quote's structured ref — keep, but note it
+        if not _is_prose(key, value):
+            return value
+        return _linkify_shared(value, ref_index, seen, citations)
+    if isinstance(value, list):
+        return [_linkify_value(v, key, ref_index, seen, citations, used) for v in value]
+    if isinstance(value, dict):
+        return _linkify_mapping(value, ref_index, used)
+    return value
 
 
-def linkify_analysis(analysis: dict, mentions: list[dict]) -> dict:
-    """Resolve inline refs across every prose field of an issue-map analysis,
-    plus the free-text parts of narratives and sub-issues. Returns a new dict;
-    the input is not mutated."""
-    if not analysis:
-        return analysis
-    ref_index = build_ref_index(mentions)
-    out = dict(analysis)
-
-    for field in _PROSE_FIELDS:
-        if out.get(field):
-            text, citations = linkify(out[field], ref_index)
-            out[field] = text
-            if citations:
-                out[f"{field}_citations"] = citations
-
-    def _linkify_list(items, keys):
-        result = []
-        for item in items or []:
-            if not isinstance(item, dict):
-                result.append(item)
-                continue
-            item = dict(item)
-            for key in keys:
-                if item.get(key):
-                    text, citations = linkify(item[key], ref_index)
-                    item[key] = text
-                    if citations:
-                        item[f"{key}_citations"] = citations
-            result.append(item)
-        return result
-
-    if out.get("linking_narratives"):
-        out["linking_narratives"] = _linkify_list(out["linking_narratives"],
-                                                   ("summary", "detail"))
-    if out.get("sub_issues"):
-        out["sub_issues"] = _linkify_list(out["sub_issues"], ("detail",))
-    # The timeline's `event` is an 80-200 word mini-briefing, not a label, and
-    # the sequencing section reprints it — so a raw ref here surfaced three
-    # times in one report.
-    if out.get("timeline"):
-        out["timeline"] = _linkify_list(out["timeline"], ("event",))
-
+def _linkify_mapping(node: dict, ref_index: dict, used: set) -> dict:
+    out = {}
+    for key, value in node.items():
+        seen: dict[str, int] = {}
+        citations: list[dict] = []
+        out[key] = _linkify_value(value, key, ref_index, seen, citations, used)
+        if citations:
+            out[f"{key}{_CITATIONS_SUFFIX}"] = citations
+            used.update(c["ref"] for c in citations)
     return out
 
 
-#: The Search report's free-prose fields — the ones with no `quotes` array of
-#: their own, which is exactly the condition that leaks raw refs.
-#:
-#: This was fixed for the issue map and not for the report, because the leak
-#: was only ever SEEN on an issue map. Both run the same analysts under the
-#: same GROUNDING_RULES, which instruct the model to "include that item's ref
-#: id", so both were always going to do it.
-_REPORT_PROSE_FIELDS = ("executive_brief", "executive_summary")
+def _resolve(payload: dict, mentions: list[dict]) -> dict:
+    """Shared body of `linkify_analysis` and `linkify_report`.
 
-
-def linkify_report(payload: dict, mentions: list[dict]) -> dict:
-    """Resolve inline refs across a Search report's prose. Returns a new dict;
-    the input is not mutated."""
+    They differed only in which field names they knew about, which was the
+    bug. They do the same thing, so they are the same function.
+    """
     if not payload:
         return payload
     ref_index = build_ref_index(mentions)
-    out = dict(payload)
+    used: set[str] = set()
+    out = _linkify_mapping(payload, ref_index, used)
 
-    for field in _REPORT_PROSE_FIELDS:
-        if isinstance(out.get(field), str) and out[field]:
-            text, cites = linkify(out[field], ref_index)
-            out[field] = text
-            if cites:
-                out[f"{field}_citations"] = cites
-
-    # "Beneath the surface": headline / reasoning / implication are prose, and
-    # `the_one_thing` is the single line a decision-maker is meant to remember
-    # — the worst possible place for "[ref=fresh-12]".
-    insights = out.get("deep_insights")
-    if isinstance(insights, dict):
-        insights = dict(insights)
-        if isinstance(insights.get("the_one_thing"), str) and insights["the_one_thing"]:
-            text, cites = linkify(insights["the_one_thing"], ref_index)
-            insights["the_one_thing"] = text
-            if cites:
-                insights["the_one_thing_citations"] = cites
-        rows = []
-        for item in insights.get("insights") or []:
-            if not isinstance(item, dict):
-                rows.append(item)
-                continue
-            item = dict(item)
-            for key in ("headline", "reasoning", "implication"):
-                if isinstance(item.get(key), str) and item[key]:
-                    text, cites = linkify(item[key], ref_index)
-                    item[key] = text
-                    if cites:
-                        item[f"{key}_citations"] = cites
-            rows.append(item)
-        insights["insights"] = rows
-        out["deep_insights"] = insights
-
-    dives = out.get("narrative_deep_dives")
-    if isinstance(dives, list):
-        out["narrative_deep_dives"] = [
-            (dict(d, **dict(zip(("deep_dive", "deep_dive_citations"),
-                                linkify(d["deep_dive"], ref_index))))
-             if isinstance(d, dict) and isinstance(d.get("deep_dive"), str) and d["deep_dive"]
-             else d)
-            for d in dives
-        ]
-
-    def _rows(items, keys):
-        result = []
-        for item in items or []:
-            if not isinstance(item, dict):
-                result.append(item)
-                continue
-            item = dict(item)
-            for key in keys:
-                if isinstance(item.get(key), str) and item[key]:
-                    text, cites = linkify(item[key], ref_index)
-                    item[key] = text
-                    if cites:
-                        item[f"{key}_citations"] = cites
-            result.append(item)
-        return result
-
-    # The rest of the report's prose. Every one of these leaked a raw ref in a
-    # rendered PDF while the four fields above were clean — the same "covered
-    # what I had seen, not what the rule implies" mistake that took three
-    # rounds on the issue map. `timeline[].event` is an 80-200 word briefing,
-    # a narrative's `description` is a paragraph, and a public-voice theme's
-    # `summary` is 60-120 words. All are free prose with no quotes array of
-    # their own, which is exactly the condition that produces this.
-    if isinstance(out.get("timeline"), list):
-        out["timeline"] = _rows(out["timeline"], ("event",))
-    if isinstance(out.get("narrative_breakdown"), list):
-        out["narrative_breakdown"] = _rows(out["narrative_breakdown"],
-                                           ("description", "summary"))
-    voice = out.get("public_voice")
-    if isinstance(voice, dict):
-        voice = dict(voice)
-        for stance in ("supportive", "critical", "neutral"):
-            if isinstance(voice.get(stance), list):
-                voice[stance] = _rows(voice[stance], ("summary", "theme"))
-        out["public_voice"] = voice
-    if isinstance(out.get("influencer_stances"), list):
-        out["influencer_stances"] = _rows(out["influencer_stances"], ("summary",))
-    for section in ("risks", "opportunities", "trends"):
-        if isinstance(out.get(section), list):
-            out[section] = _rows(out[section], ("detail", "risk", "opportunity", "trend"))
-
+    # Ship the resolved sources for the refs this payload actually uses, so
+    # the page can render a quote's provenance — outlet and date — instead of
+    # the raw 8-character id that `quotes[].ref` carries. Scoped to what is
+    # cited rather than to the whole corpus: a run with 600 mentions and 40
+    # quotes should not send 560 unused rows to the browser.
+    #
+    # Everything in here is stored in a JSONB column and served as JSON, so
+    # it must be JSON-safe at the point it enters the payload. `posted_at`
+    # arrives from the ORM as a `datetime`, which the rest of the index never
+    # had to care about because it never left this module.
+    resolved = {ref: {"url": ref_index[ref].get("url"),
+                      "platform": ref_index[ref].get("platform"),
+                      "posted_at": _as_text(ref_index[ref].get("posted_at"))}
+                for ref in used if ref in ref_index}
+    if resolved:
+        out["ref_index"] = resolved
     return out
+
+
+def _as_text(value):
+    """A date the page can print, or None. Never a live object."""
+    if value is None or isinstance(value, str):
+        return value or None
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else str(value)
+
+
+def linkify_analysis(analysis: dict, mentions: list[dict]) -> dict:
+    """Resolve inline refs across every prose field of an issue-map analysis.
+    Returns a new dict; the input is not mutated."""
+    return _resolve(analysis, mentions)
+
+
+def linkify_report(payload: dict, mentions: list[dict]) -> dict:
+    """Resolve inline refs across every prose field of a Search report.
+    Returns a new dict; the input is not mutated."""
+    return _resolve(payload, mentions)

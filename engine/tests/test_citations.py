@@ -289,3 +289,175 @@ def test_the_report_timeline_briefing_is_linkified():
         [{"id": "abcd1234", "platform": "p", "raw_payload": {"url": "https://n/1"}}])
     assert "ref=" not in out["timeline"][0]["event"]
     assert out["timeline"][0]["event_citations"][0]["url"] == "https://n/1"
+
+
+# --- coverage is a rule, not a list ------------------------------------------
+#
+# Everything below exists because `test_no_report_prose_field_is_left_behind`,
+# directly above, is named like a rule and written like an instance: it seeds a
+# ref into the twelve fields whose names someone remembered, so it passed for
+# months while six other fields shipped raw `[ref=...]` to the page. A test
+# that enumerates the same list as the code can only ever confirm the code
+# matches itself.
+
+_M = [{"id": "abcd1234", "platform": "nation.africa",
+       "raw_payload": {"url": "https://n/1"}}]
+_RAW = "a sentence [ref=abcd1234]."
+
+
+def test_a_prose_field_nobody_has_thought_of_yet_is_still_linkified():
+    """The point of the traversal. These key names are invented — no list in
+    the codebase contains them, and no list ever could, because the next one
+    will be invented by whoever writes the next prompt."""
+    import json as _json
+    out = citations.linkify_report({
+        "some_future_analyst": {
+            "a_field_added_next_month": _RAW,
+            "nested": [{"deeper": [{"deepest": _RAW}]}],
+        }}, _M)
+    assert "ref=" not in _json.dumps(out)
+
+
+@pytest.mark.parametrize("payload,path", [
+    ({"influencer_stances": [{"handle": "@x", "what_they_say": _RAW}]},
+     "what_they_say"),
+    ({"platform_pulse": [{"platform": "tiktok", "tone": _RAW}]}, "tone"),
+    ({"narrative_deep_dives": [{"deep_dive": {"how_it_unfolded": _RAW}}]},
+     "how_it_unfolded"),
+    ({"narrative_deep_dives": [{"deep_dive": {"supporter_framing": _RAW}}]},
+     "supporter_framing"),
+    ({"narrative_deep_dives": [{"deep_dive": {"critic_framing": _RAW}}]},
+     "critic_framing"),
+])
+def test_the_six_fields_the_list_never_covered(payload, path):
+    """Every one of these leaked in a shipped 66-page report while the twelve
+    listed fields were clean.
+
+    Two of them are worth naming. `how_it_unfolded` is the 250-500 word
+    deep-dive body — the longest prose block the report produces. And
+    `influencer_stances` WAS on the list, under the key `summary`, which the
+    analyst has never emitted: the field is `what_they_say`, so that entry had
+    been "fixed" and had never once run.
+    """
+    import json as _json
+    out = citations.linkify_report(payload, _M)
+    assert "ref=" not in _json.dumps(out), f"{path} still leaks"
+
+
+def test_the_issue_map_and_the_report_cannot_drift_apart():
+    """They run the same analysts under the same GROUNDING_RULES, and the
+    linkifier fell behind on one and not the other three separate times. They
+    are now one function, so the only way to fix one is to fix both."""
+    payload = {"anything": _RAW}
+    assert (citations.linkify_report(payload, _M)
+            == citations.linkify_analysis(payload, _M))
+
+
+# --- what the traversal must NOT touch ---------------------------------------
+
+def test_a_url_containing_ref_is_not_eaten():
+    """Walking every string put addresses in reach of the pattern, and
+    `?ref=` is an ordinary tracking parameter. Rewriting it to "[1]" turns a
+    working citation into a dead link — the traversal causing the exact class
+    of damage it exists to prevent."""
+    out, cites = citations.linkify(
+        "see https://example.com/x?ref=fb for more", {})
+    assert out == "see https://example.com/x?ref=fb for more"
+    assert cites == []
+
+
+def test_a_real_citation_beside_a_url_still_resolves():
+    """Skipping URLs must not skip the sentence containing one."""
+    out, cites = citations.linkify(
+        "the filing at https://kenyalaw.org/view?ref=12345 [ref=abcd1234].",
+        {"abcd1234": {"url": "https://n/1"}})
+    assert out == "the filing at https://kenyalaw.org/view?ref=12345 [1]."
+    assert len(cites) == 1
+
+
+def test_a_bare_url_field_is_left_alone():
+    out = citations.linkify_report(
+        {"sources": [{"url": "https://example.com/a?ref=twitter"}]}, _M)
+    assert out["sources"][0]["url"] == "https://example.com/a?ref=twitter"
+
+
+def test_a_quotes_structured_ref_and_verbatim_text_survive():
+    """`quotes[].ref` is an id the page resolves itself, and `text` is checked
+    against the source by `_validate_quotes`. Numbering either would break
+    both."""
+    out = citations.linkify_report(
+        {"public_voice": {"supportive": [
+            {"theme": "T", "quotes": [{"ref": "abcd1234", "text": "verbatim"}]}]}},
+        _M)
+    quote = out["public_voice"]["supportive"][0]["quotes"][0]
+    assert quote == {"ref": "abcd1234", "text": "verbatim"}
+
+
+def test_linkifying_twice_is_a_no_op():
+    """The pipeline publishes incrementally and a payload can be passed
+    through more than once. A second pass must not renumber the citations it
+    produced the first time."""
+    once = citations.linkify_report({"executive_brief": _RAW}, _M)
+    twice = citations.linkify_report(once, _M)
+    assert twice["executive_brief"] == once["executive_brief"]
+    assert twice["executive_brief_citations"] == once["executive_brief_citations"]
+
+
+# --- numbering and provenance ------------------------------------------------
+
+def test_a_list_of_strings_shares_one_numbering():
+    """`themes` and `who_is_driving_it` are lists of short prose sharing a
+    single citations array. Numbering each entry from [1] would show a reader
+    two different sources both labelled [1]."""
+    out = citations.linkify_report(
+        {"platform_pulse": [{"themes": ["first [ref=abcd1234].",
+                                        "second [ref=efgh5678]."]}]},
+        _M + [{"id": "efgh5678", "platform": "x", "raw_payload": {"url": "https://n/2"}}])
+    pulse = out["platform_pulse"][0]
+    assert pulse["themes"] == ["first [1].", "second [2]."]
+    assert [c["n"] for c in pulse["themes_citations"]] == [1, 2]
+
+
+def test_the_page_is_given_what_it_needs_to_name_a_source():
+    """The page rendered `ref 37d358e4` under every quote — an internal id
+    where the outlet belongs. It had no way to do better: the resolved sources
+    existed only inside this module. Now they ship."""
+    out = citations.linkify_report(
+        {"public_voice": {"supportive": [
+            {"quotes": [{"ref": "abcd1234", "text": "q"}]}]}},
+        _M)
+    assert out["ref_index"]["abcd1234"]["platform"] == "nation.africa"
+    assert out["ref_index"]["abcd1234"]["url"] == "https://n/1"
+
+
+def test_the_ref_index_carries_only_what_is_cited():
+    """A run has hundreds of mentions and dozens of quotes. Shipping the whole
+    corpus index to the browser would be most of a megabyte of rows nothing
+    refers to."""
+    corpus = _M + [{"id": f"unused{i:03d}", "platform": "x",
+                    "raw_payload": {"url": f"https://n/{i}"}} for i in range(200)]
+    out = citations.linkify_report({"executive_brief": _RAW}, corpus)
+    assert list(out["ref_index"]) == ["abcd1234"]
+
+
+def test_a_report_with_nothing_cited_ships_no_index():
+    out = citations.linkify_report({"executive_brief": "No citations here."}, _M)
+    assert "ref_index" not in out
+
+
+def test_everything_the_linkifier_adds_survives_the_database():
+    """The payload is stored in a JSONB column and served as JSON. `ref_index`
+    was added carrying `posted_at` straight from the ORM — a live `datetime`,
+    which the index had never needed to be free of because it had never left
+    this module. Every end-to-end test failed on the insert.
+    """
+    import datetime as _dt
+    import json as _json
+
+    out = citations.linkify_report(
+        {"executive_brief": _RAW},
+        [{"id": "abcd1234", "platform": "nation.africa",
+          "posted_at": _dt.datetime(2026, 3, 12, 9, 0),
+          "raw_payload": {"url": "https://n/1"}}])
+    _json.dumps(out)     # the assertion: this is the insert that failed
+    assert out["ref_index"]["abcd1234"]["posted_at"].startswith("2026-03-12")
