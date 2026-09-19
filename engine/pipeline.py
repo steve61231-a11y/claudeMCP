@@ -752,7 +752,8 @@ def run_analysis(
 
             audit = verify.verify_payload(db, politician, payload, report_id=report.id)
             payload["verification"] = {
-                k: audit[k] for k in ("checked", "verified", "unverified", "contradicted")
+                k: audit.get(k) for k in
+                ("checked", "verified", "unverified", "contradicted", "measurements")
             }
             payload["claims"] = audit["claims"]
             publish("verification", payload["verification"])

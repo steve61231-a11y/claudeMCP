@@ -17,6 +17,7 @@ INDEPENDENT sources corroborate the claim, which is the thing that actually
 distinguishes a fact from a rumour that got repeated.
 """
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 from engine import llm, stages
@@ -30,6 +31,9 @@ VERIFIABLE_SECTIONS = ("executive_brief", "summary", "risks", "opportunities", "
 VERIFIED = "verified"
 UNVERIFIED = "unverified"
 CONTRADICTED = "contradicted"
+#: Not a verdict about the world — a restatement of this report's own
+#: arithmetic. See `_is_our_own_measurement`.
+MEASUREMENT = "measurement"
 
 _MAX_CLAIMS_PER_SECTION = 12
 _WORKERS = 4
@@ -59,6 +63,12 @@ Rules:
 - Include only assertions of FACT. Skip recommendations, questions, hedged
   speculation about the future, and pure opinion.
 - Copy the substance faithfully; do not add, soften or embellish.
+- SKIP anything that describes THIS REPORT'S OWN MEASUREMENTS rather than the
+  world: mention counts, sentiment percentages, platform volumes, strength or
+  growth or influence scores, "N of M sources". Those are arithmetic over the
+  collected data, not claims a news article could confirm. "Facebook has 55
+  mentions" is a measurement; "Mudavadi met Japan's foreign minister" is a
+  claim. Extract the second kind only.
 
 Passage:
 {passage}
@@ -92,6 +102,46 @@ Respond with ONLY this JSON:
 {{"verdict": "verified|contradicted|unverified", "support": [1, 2], "reason": "one sentence"}}"""
 
 
+#: Vocabulary that only occurs when a sentence is describing the dataset
+#: rather than the world.
+#:
+#: The analysts are HANDED the sentiment split, the per-platform volumes and
+#: the narrative scores (see reports/sections.py `_context_blob`) and asked to
+#: write trends "with the numbers that show it". They do exactly that — and
+#: then this stage took "Facebook has 55 mentions" and went looking for a news
+#: article that says so. There is none: we counted those rows ourselves.
+#:
+#: On a live report that produced roughly ten pages of "unverified · 21% conf ·
+#: no supporting passage found", almost all of it about our own arithmetic. The
+#: cost is not the wasted calls, it is that a reader sees "Overall sentiment is
+#: 76.1% neutral — UNVERIFIED" and concludes the sentiment analysis is
+#: unreliable. It is not; it was audited against the wrong oracle.
+_MEASUREMENT_MARKERS = (
+    "mention", "mentions", "sentiment", "percent", "%",
+    "strength score", "growth rate", "growth score", "influence score",
+    "influence driver", "sentiment contribution", "total volume",
+    "of total", "score of", "engagement", "dominates volume",
+)
+
+#: A claim has to be BOTH about our vocabulary AND carry a number to count as
+#: a measurement. "Sentiment turned against him after the Korea trip" is a
+#: claim about the world and must still be checked.
+_HAS_NUMBER = re.compile(r"\d")
+
+
+def _is_our_own_measurement(claim: str) -> bool:
+    """Is this sentence describing the dataset rather than the world?
+
+    Conservative on purpose: when in doubt it returns False and the claim goes
+    to the corpus as before. Wrongly skipping a world-claim would hide a real
+    hallucination, which is far worse than one stray "unverified".
+    """
+    lowered = (claim or "").lower()
+    if not _HAS_NUMBER.search(lowered):
+        return False
+    return any(marker in lowered for marker in _MEASUREMENT_MARKERS)
+
+
 def extract_claims(passage: str, max_claims: int = _MAX_CLAIMS_PER_SECTION) -> list[str]:
     """Decompose written prose into atomic checkable assertions."""
     if not passage or not passage.strip():
@@ -117,6 +167,13 @@ attached to the number of the passage it came from.
 
 Skip anything that is opinion, recommendation or analysis rather than a factual
 assertion. A passage with no checkable claims simply has no entries.
+
+ALSO skip anything describing THIS REPORT'S OWN MEASUREMENTS rather than the
+world: mention counts, sentiment percentages, platform volumes, strength or
+growth or influence scores, "N of M sources". Those are arithmetic over the
+collected data, not claims a news article could confirm. "Facebook has 55
+mentions" is a measurement; "Mudavadi met Japan's foreign minister" is a
+claim. Extract the second kind only.
 
 Passages:
 {batch}
@@ -344,10 +401,19 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
             lambda batch: (batch, extract_claims_batch([passage for _, passage in batch])),
             extract_batches,
         ))
+    measurements = 0
     for batch, per_position in extracted:
         for position, texts in sorted(per_position.items()):
             section = batch[position - 1][0]
             for claim_text in texts:
+                # Arithmetic over our own stored rows never goes to the corpus.
+                # No article says "Facebook has 55 mentions" because nobody but
+                # this system counted them, so sending it produced a confident
+                # "unverified" about a number that was simply measured. Counted
+                # and disclosed, never silently dropped.
+                if _is_our_own_measurement(claim_text):
+                    measurements += 1
+                    continue
                 claims.append((section, claim_text))
 
     if not claims:
@@ -357,7 +423,7 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
         extraction_failed = any(r.name.startswith("claim_extraction")
                                 for r in stages.current().failures)
         return {"checked": 0, "verified": 0, "unverified": 0, "contradicted": 0,
-                "claims": [],
+                "measurements": measurements, "claims": [],
                 "note": ("claim extraction failed, so nothing was checked — this is not a "
                          "report without factual assertions"
                          if extraction_failed else
@@ -446,6 +512,9 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
         "verified": counts.get(VERIFIED, 0),
         "unverified": counts.get(UNVERIFIED, 0),
         "contradicted": counts.get(CONTRADICTED, 0),
+        # Disclosed rather than hidden: a reader can see that N statements were
+        # this report's own measurements and were therefore not corpus-checked.
+        "measurements": measurements,
         "claims": [
             {
                 "section": r["section"],
