@@ -157,6 +157,25 @@
     border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:12.5px;
     box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none;transform:translate(-50%,-100%)}
   #zenith .tl-tip .tl-tip-date{color:var(--sky2);font-weight:700;font-size:11px;margin-bottom:4px}
+  #zenith .tl-vol{fill:var(--sky2);opacity:.20}
+  #zenith .tl-axis{fill:var(--mut);font-size:10px}
+  #zenith .tl-axis-line{stroke:var(--line2);stroke-width:1.5}
+  #zenith .tl-node-dot{stroke:var(--bg,#0a0e14);stroke-width:2}
+  #zenith .tl-node-dot.is-confirmed{fill:var(--pos)}
+  #zenith .tl-node-dot.is-single{fill:var(--amber)}
+  #zenith .tl-node-dot.is-plain{fill:var(--sky2)}
+  #zenith .tl-strip-node:focus{outline:none}
+  #zenith .tl-strip-node:focus circle{stroke:var(--sky2);stroke-width:3}
+  #zenith .tl-row{cursor:pointer}
+  #zenith .tl-row:hover{background:rgba(125,211,252,.04)}
+  /* The open moment is already shown in full in the panel above, so on
+     screen this list is an index — two lines each. On paper there is no
+     panel to click and no moment is "open", so the clamp comes off and the
+     list is the complete record. */
+  #zenith .tl-row-event{font-size:14.5px;margin-top:6px;display:-webkit-box;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  #zenith .tl-detail{margin-top:14px;padding:12px 14px;border:1px solid var(--line2);
+    border-radius:10px;background:var(--panel2)}
   #zenith .tl-strip-hint{font-size:11.5px;color:var(--mut);margin-top:2px}
   #zenith .delta-stat{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:16px}
   #zenith .delta-value{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:4px 0}
@@ -346,6 +365,13 @@
 
   /* Scroll boxes must not clip their content to one screenful in print. */
   #zenith .drill-body,#zenith .tl-strip{max-height:none!important;overflow:visible!important}
+  /* Paper has no panel to open, so every moment must be readable in the
+     list — un-clamp it, or the printed timeline is twenty truncated stubs. */
+  #zenith .tl-row-event{-webkit-line-clamp:unset!important;overflow:visible!important}
+  /* And with the whole list printed in full, the detail panel is one of
+     those entries a second time — it exists to save a click, and there are
+     no clicks here. */
+  #zenith .tl-detail,#zenith .tl-onscreen{display:none!important}
 
   h1,h2,h3,b{break-after:avoid;page-break-after:avoid}
 }
@@ -948,53 +974,208 @@
     return wrap;
   }
 
-  /** Compact hoverable/clickable timeline strip for the Issue Map. CEOs get
-      the shape of events at a glance; hovering a point shows what happened,
-      clicking it jumps to the full entry in the list below. The list below
-      is untouched — this never replaces or trims the underlying data, only
-      adds a faster way to scan it. */
-  function interactiveTimelineStrip(items,onSelect){
+  /** When a moment happened, as a number, from whatever the model wrote.
+
+      Analysts emit "2026-06-02", "2026-06", "2026", "Q1 2026" and "undated"
+      interchangeably. A partial date is placed at the middle of the period
+      it names — the honest position for "June 2026" is mid-June, not the
+      1st, which would assert a precision the source does not have. */
+  function whenOf(t){
+    const raw=String((t&&(t.date||t.when))||'').trim();
+    let m=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(raw);
+    if(m)return Date.UTC(+m[1],+m[2]-1,+m[3]);
+    m=/^(\d{4})-(\d{1,2})$/.exec(raw);
+    if(m)return Date.UTC(+m[1],+m[2]-1,15);
+    m=/^Q([1-4])\s*(\d{4})$/i.exec(raw);
+    if(m)return Date.UTC(+m[2],(+m[1]-1)*3+1,15);
+    m=/^(\d{4})$/.exec(raw);
+    if(m)return Date.UTC(+m[1],6,1);
+    return null;
+  }
+
+  const DAY=86400000;
+  const shortDate=ms=>new Date(ms).toISOString().slice(0,10);
+
+  /** The timeline, as one graph you can read the window off in a glance.
+      ------------------------------------------------------------------
+      What this replaces spaced its points evenly by INDEX. Three things in
+      one week and a fourth six months later drew identically, which is not
+      a timeline — it is a numbered list wearing one. The shape of a window
+      (a quiet month, then everything at once) is most of what a timeline is
+      for, and it was the one thing the picture could not show.
+
+      It also threw away `mentions_that_day`, which the pipeline already
+      produces: where the conversation actually spiked is the first question
+      anyone asks of a window, and it was in the payload, undrawn.
+
+      So: real time on the x-axis, volume as the height, and each moment a
+      marker coloured by whether more than one independent outlet reported
+      it. Clicking one opens it in full underneath — the whole briefing, its
+      corroboration and its quotes — rather than scrolling somewhere else.
+
+      `onSelect(idx)` keeps the old contract for the Issue Map, whose list
+      below is filtered by the issue graph and does its own scrolling. */
+  function interactiveTimelineStrip(items,onSelect,opts){
+    opts=opts||{};
     const wrap=el('div','tl-strip');
     if(!items.length)return wrap;
-    const W=Math.max(560,items.length*90),H=54,y=27;
-    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.setAttribute('width',W);svg.setAttribute('height',H);
-    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
-    const line=document.createElementNS(svg.namespaceURI,'line');
-    line.setAttribute('x1',24);line.setAttribute('x2',W-24);
-    line.setAttribute('y1',y);line.setAttribute('y2',y);
-    line.style.stroke='var(--line2)';line.setAttribute('stroke-width','2');
-    svg.appendChild(line);
-    const tip=el('div','tl-tip');tip.style.display='none';
+
+    const dated=[],undated=[];
     items.forEach((t,idx)=>{
-      const x=24+(W-48)*(items.length===1?0.5:idx/(items.length-1));
-      const tc=t.corroboration;
-      const fill=tc?(tc.confirmed?'var(--pos)':'var(--amber)'):'var(--sky2)';
-      const g=document.createElementNS(svg.namespaceURI,'g');
-      g.setAttribute('class','tl-strip-node');
-      const c=document.createElementNS(svg.namespaceURI,'circle');
-      c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',6);
-      c.style.fill=fill;c.style.stroke='var(--bg,#0a0e14)';c.setAttribute('stroke-width','2');
-      g.appendChild(c);svg.appendChild(g);
+      const ms=whenOf(t);
+      (ms==null?undated:dated).push({t,idx,ms});
+    });
+
+    // Every point on one day, or nothing parseable at all: a real axis would
+    // stack them on top of each other. Fall back to even spacing and say so,
+    // rather than drawing a line that means nothing.
+    const span=dated.length>1?(Math.max(...dated.map(d=>d.ms))-Math.min(...dated.map(d=>d.ms))):0;
+    const timeScaled=dated.length>1&&span>0;
+    const points=timeScaled?dated:items.map((t,idx)=>({t,idx,ms:null}));
+
+    const hasVolume=points.some(p=>p.t&&p.t.mentions_that_day);
+    const W=760,H=hasVolume?150:70,padL=30,padR=30,base=H-30;
+    const maxVol=Math.max(1,...points.map(p=>(p.t&&p.t.mentions_that_day)||0));
+    const lo=timeScaled?Math.min(...dated.map(d=>d.ms)):0;
+    const hi=timeScaled?Math.max(...dated.map(d=>d.ms)):1;
+    const xOf=p=>timeScaled
+      ? padL+(W-padL-padR)*((p.ms-lo)/(hi-lo))
+      : padL+(W-padL-padR)*(points.length===1?0.5:p.idx/(points.length-1));
+
+    const NS='http://www.w3.org/2000/svg';
+    const svg=document.createElementNS(NS,'svg');
+    svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+    svg.setAttribute('width','100%');svg.setAttribute('height',H);
+    svg.setAttribute('preserveAspectRatio','xMidYMid meet');
+    svg.setAttribute('role','img');
+    svg.setAttribute('aria-label',
+      `Timeline of ${items.length} moments`
+      +(timeScaled?` between ${shortDate(lo)} and ${shortDate(hi)}`:''));
+    const mk=(tag,attrs)=>{const n=document.createElementNS(NS,tag);
+      for(const k in attrs)n.setAttribute(k,attrs[k]);return n;};
+
+    // Volume first, behind everything.
+    if(hasVolume){
+      points.forEach(p=>{
+        const v=(p.t&&p.t.mentions_that_day)||0;
+        if(!v)return;
+        const h=Math.max(2,(H-64)*(v/maxVol));
+        const bar=mk('rect',{x:xOf(p)-5,y:base-h,width:10,height:h,rx:2,
+                             class:'tl-vol'});
+        svg.appendChild(bar);
+      });
+      const cap=mk('text',{x:padL,y:14,class:'tl-axis'});
+      cap.textContent=`peak ${maxVol} mentions in a day`;
+      svg.appendChild(cap);
+    }
+
+    svg.appendChild(mk('line',{x1:padL,x2:W-padR,y1:base,y2:base,class:'tl-axis-line'}));
+
+    if(timeScaled){
+      [[lo,padL,'start'],[hi,W-padR,'end']].forEach(([ms,x,anchor])=>{
+        const lab=mk('text',{x:x,y:base+18,class:'tl-axis','text-anchor':anchor});
+        lab.textContent=shortDate(ms);
+        svg.appendChild(lab);
+      });
+      const days=Math.round((hi-lo)/DAY);
+      const mid=mk('text',{x:W/2,y:base+18,class:'tl-axis','text-anchor':'middle'});
+      mid.textContent=days>=1?`${days} days`:'same day';
+      svg.appendChild(mid);
+    }
+
+    const tip=el('div','tl-tip');tip.style.display='none';
+    const detail=opts.detail?el('div','tl-detail'):null;
+
+    const select=p=>{
+      wrap.querySelectorAll('.tl-strip-node').forEach(n=>n.classList.remove('sel'));
+      const node=wrap.querySelector(`.tl-strip-node[data-idx="${p.idx}"]`);
+      if(node)node.classList.add('sel');
+      if(detail)detail.innerHTML=momentHTML(p.t);
+      if(onSelect)onSelect(p.idx);
+    };
+
+    points.forEach(p=>{
+      const x=xOf(p),tc=p.t&&p.t.corroboration;
+      const g=mk('g',{class:'tl-strip-node','data-idx':p.idx,tabindex:'0',
+                      role:'button'});
+      g.setAttribute('aria-label',
+        `${(p.t&&(p.t.date||p.t.when))||'undated'}: `
+        +String((p.t&&p.t.event)||'').slice(0,80));
+      const c=mk('circle',{cx:x,cy:base,r:6,
+        class:'tl-node-dot '+(tc?(tc.confirmed?'is-confirmed':'is-single'):'is-plain')});
+      g.appendChild(c);
+      svg.appendChild(g);
       const show=()=>{
         tip.style.display='block';
-        tip.innerHTML=`<div class="tl-tip-date">${esc(t.date||t.when||'undated')}</div>
-          <div>${esc(String(t.event||'').slice(0,180))}${String(t.event||'').length>180?'…':''}</div>
+        tip.innerHTML=`<div class="tl-tip-date">${esc((p.t&&(p.t.date||p.t.when))||'undated')}</div>
+          <div>${esc(String((p.t&&p.t.event)||'').slice(0,180))}${String((p.t&&p.t.event)||'').length>180?'…':''}</div>
+          ${p.t&&p.t.mentions_that_day?`<div class="muted" style="margin-top:4px">${fmt(p.t.mentions_that_day)} mentions that day</div>`:''}
           ${tc?`<div class="muted" style="margin-top:4px">${esc(tc.label)}</div>`:''}`;
-        tip.style.left=x+'px';tip.style.top=(y-8)+'px';
+        tip.style.left=Math.round((x/W)*100)+'%';
+        tip.style.top='0px';
       };
       g.addEventListener('mouseenter',show);
       g.addEventListener('mouseleave',()=>{tip.style.display='none';});
-      g.addEventListener('click',()=>{
-        wrap.querySelectorAll('.tl-strip-node').forEach(n=>n.classList.remove('sel'));
-        g.classList.add('sel');
-        if(onSelect)onSelect(idx);
+      g.addEventListener('click',()=>select(p));
+      g.addEventListener('keydown',e=>{
+        if(e.key==='Enter'||e.key===' '){e.preventDefault();select(p);}
       });
     });
+
     wrap.appendChild(svg);
     wrap.appendChild(tip);
-    wrap.appendChild(el('div','tl-strip-hint','Hover a point for the moment · click to jump to it below'));
+
+    // A moment with no usable date is still a moment. Dropping it off the
+    // axis silently would be the corpus quietly losing an event.
+    if(timeScaled&&undated.length){
+      wrap.appendChild(el('div','tl-strip-hint',
+        `${undated.length} moment${undated.length===1?'':'s'} could not be dated `
+        +`and ${undated.length===1?'is':'are'} not on the axis — `
+        +(opts.detail?'listed in full below.':'see the list below.')));
+    }
+    wrap.appendChild(el('div','tl-strip-hint',
+      timeScaled?'Spaced by real date.'
+               :'Not enough distinct dates to scale by time — spaced evenly.'));
+    // Kept separate from the line above because that one is a disclosure
+    // about the axis and belongs on paper; this one is an instruction for a
+    // mouse and does not.
+    wrap.appendChild(el('div','tl-strip-hint tl-onscreen',
+      opts.detail?'Click a point — or a row below — to read that moment in full.'
+                 :'Hover a point for the moment · click to jump to it below.'));
+
+    // Let a caller drive the panel — the list below the graph is the same
+    // set of moments, and clicking a row there should open it here rather
+    // than being a dead end next to a live control.
+    wrap.selectMoment=idx=>{
+      const p=points.find(q=>q.idx===idx);
+      if(p)select(p);
+    };
+
+    if(detail){
+      // Open on the biggest spike rather than on nothing: the largest day is
+      // the one a reader was going to click first anyway.
+      const start=hasVolume
+        ? points.reduce((a,b)=>((b.t&&b.t.mentions_that_day)||0)>((a.t&&a.t.mentions_that_day)||0)?b:a)
+        : points[0];
+      wrap.appendChild(detail);
+      select(start);
+    }
     return wrap;
+  }
+
+  /** One moment, in full — the panel a click on the graph opens. */
+  function momentHTML(t){
+    if(!t)return '';
+    const tc=t.corroboration;
+    const tone=tc?(tc.confirmed?'pos':'amber'):'';
+    return `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+        <b style="font-size:15px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
+        <div class="row" style="gap:6px">
+          ${t.mentions_that_day?`<span class="chip">${fmt(t.mentions_that_day)} mentions that day</span>`:''}
+          ${tc?`<span class="pill ${tone}" title="${esc((tc.outlets||[]).join(', '))}">${esc(tc.label)}</span>`:''}
+        </div></div>
+      <div style="font-size:14.5px;margin-top:8px;white-space:pre-wrap">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>
+      ${quotesHTML(t.quotes)}`;
   }
 
   /** Probability bars — the framework's outcome tree, as proportions. */
@@ -2246,12 +2427,27 @@
     const rows=(tl||[]).filter(t=>t&&(t.event||t.date));
     if(!rows.length)return null;
     const c=deepCard('What happened, and when','Dated moments that drove the conversation');
-    rows.forEach(t=>c.appendChild(el('div','mentr',
-      `<div class="row" style="justify-content:space-between;align-items:flex-start">
-         <b style="font-size:14px;color:var(--sky2)">${esc(t.date||'undated')}</b>
-         ${t.mentions_that_day?`<span class="chip">${fmt(t.mentions_that_day)} mentions that day</span>`:''}</div>
-       <div style="font-size:14.5px;margin-top:6px">${esc(t.event||'')}</div>
-       ${quotesHTML(t.quotes)}`)));
+    // The graph first, then the full list. The list is not a fallback for the
+    // graph and the graph is not a summary of the list — one is for seeing
+    // the shape of the window, the other for reading it, and a printed file
+    // needs both because nothing in it can be clicked.
+    const graph=interactiveTimelineStrip(rows,null,{detail:true});
+    c.appendChild(graph);
+    c.appendChild(el('div','lbl','Every moment, in order'));
+    rows.forEach((t,idx)=>{
+      const row=el('div','mentr tl-row',
+        `<div class="row" style="justify-content:space-between;align-items:flex-start">
+           <b style="font-size:14px;color:var(--sky2)">${esc(t.date||'undated')}</b>
+           ${t.mentions_that_day?`<span class="chip">${fmt(t.mentions_that_day)} mentions that day</span>`:''}</div>
+         <div class="tl-row-event">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>
+         ${quotesHTML(t.quotes)}`);
+      row.tabIndex=0;
+      row.addEventListener('click',()=>graph.selectMoment(idx));
+      row.addEventListener('keydown',e=>{
+        if(e.key==='Enter'||e.key===' '){e.preventDefault();graph.selectMoment(idx);}
+      });
+      c.appendChild(row);
+    });
     return c;
   }
 

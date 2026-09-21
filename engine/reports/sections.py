@@ -12,7 +12,7 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports import analysts, citations
+from engine.reports import analysts, citations, triangulation
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -354,6 +354,14 @@ def enrich_report_payload(
         # exactly as it did on the issue map. That was fixed there and not
         # here only because it had been SEEN there.
         linked = citations.linkify_report(payload, mentions or [])
+        # How many INDEPENDENT outlets back each dated moment, not how many
+        # mentions repeat it. This ran on the issue map and not here — the
+        # same "fixed where it was seen" mistake that took three rounds on
+        # citations — so a report's timeline could rest every event on one
+        # syndicated wire story and say nothing about it. It runs after
+        # linkify because that is what produces the ref index the quotes are
+        # resolved through.
+        linked = triangulation.annotate(linked)
         for key, value in linked.items():
             if payload.get(key) is not value:
                 payload[key] = value

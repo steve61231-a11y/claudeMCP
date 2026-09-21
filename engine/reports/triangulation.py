@@ -50,6 +50,35 @@ def corroboration(rows: list[dict]) -> dict:
     }
 
 
+def _resolved_rows(item: dict, ref_index: dict) -> list[dict]:
+    """The citation rows backing one claim, in whatever form it carries them.
+
+    This is the fix for a feature that had never once worked. `corroboration`
+    wants rows with `platform` and `url`; an analyst's quotes are
+    `{"ref": "abcd1234", "text": "..."}` and carry neither, so every timeline
+    event on every live issue map was scored from zero outlets and labelled
+    "No independently-traceable source" — including events backed by four
+    different newspapers. The unit test passed because it fed quotes shaped
+    `{"platform": ..., "url": ...}`, a shape no analyst has ever produced.
+
+    A ref IS a resolvable source; it just needs the index that
+    `citations.linkify_analysis` now ships beside the payload.
+    """
+    rows = [row for row in (item.get("citations") or []) if isinstance(row, dict)]
+    for key in ("event_citations", "verdict_citations", "involvement_citations"):
+        rows += [row for row in (item.get(key) or []) if isinstance(row, dict)]
+    for quote in item.get("quotes") or []:
+        if not isinstance(quote, dict):
+            continue
+        if quote.get("platform") and quote.get("url"):
+            rows.append(quote)          # already resolved
+            continue
+        found = ref_index.get(str(quote.get("ref") or ""))
+        if found:
+            rows.append(found)
+    return rows
+
+
 def annotate(analysis: dict) -> dict:
     """Attach corroboration to the verdict (the single most load-bearing
     claim in the map) and to every timeline event. Returns a new dict; the
@@ -58,8 +87,9 @@ def annotate(analysis: dict) -> dict:
     if not analysis:
         return analysis
     out = dict(analysis)
+    ref_index = out.get("ref_index") or {}
 
-    verdict_rows = (out.get("verdict_citations") or []) + (out.get("involvement_citations") or [])
+    verdict_rows = _resolved_rows(out, ref_index)
     if verdict_rows:
         out["verdict_corroboration"] = corroboration(verdict_rows)
 
@@ -71,7 +101,7 @@ def annotate(analysis: dict) -> dict:
                 new_timeline.append(event)
                 continue
             event = dict(event)
-            event["corroboration"] = corroboration(event.get("quotes") or [])
+            event["corroboration"] = corroboration(_resolved_rows(event, ref_index))
             new_timeline.append(event)
         out["timeline"] = new_timeline
 
