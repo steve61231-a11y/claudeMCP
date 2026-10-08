@@ -95,8 +95,12 @@ jobs:
           # and server cannot agree on, so try the explicit modes before
           # concluding the data is gone. Costs seconds; the alternative is
           # writing off a corpus that is still there.
-          dumped=""
-          for mode in "" "?sslmode=require" "?sslmode=prefer" "?sslmode=verify-full"; do
+          # verify-full is not in this list: it needs a CA bundle at
+          # ~/.postgresql/root.crt, so it always fails here for a reason that
+          # has nothing to do with the database — and being last, its error
+          # was the one reported, hiding what the real modes said.
+          dumped=""; attempts=""
+          for mode in "" "?sslmode=require" "?sslmode=prefer" "?sslmode=disable"; do
             url="$DATABASE_URL"
             case "$url" in *\?*) [ -n "$mode" ] && url="${url}&${mode#\?}" ;;
                            *)     url="${url}${mode}" ;; esac
@@ -106,14 +110,16 @@ jobs:
               dumped="yes"; echo "  -> connected"; break
             fi
             echo "  -> ${err}"
+            attempts="${attempts}
+  ${mode:-<as supplied>}: ${err}"
           done
           if [ -z "$dumped" ]; then
-            echo "::error::pg_dump failed: ${err}"
+            echo "::error::pg_dump could not connect under any TLS mode:${attempts}"
             {
               echo "### The database could not be dumped"
               echo
               echo '```'
-              echo "${err}"
+              echo "${attempts}"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
