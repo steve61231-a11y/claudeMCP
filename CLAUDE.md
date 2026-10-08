@@ -60,7 +60,8 @@ engine/
   alembic/          Migrations. Run automatically on deploy.
   tests/            109 files, ~1155 tests. They are the specification.
 web/pulse_app.html  The ENTIRE frontend. One file, ~3,400 lines, no build step.
-render.yaml         Deploy blueprint. Both services. Read it before deploying.
+fly.toml            Deploy config — Fly.io. THIS is the live one.
+render.yaml         The old Render blueprint. Kept as a reference; not in use.
 docs/               Recovery runbook, data policy, this project's history.
 ```
 
@@ -141,7 +142,7 @@ The ones you cannot run without:
 
 | Variable | Notes |
 |---|---|
-| `DATABASE_URL` | Postgres. See the warning in `docs/DISASTER_RECOVERY.md`. |
+| `DATABASE_URL` | Postgres — Neon, billed separately from the app on purpose. See `docs/DEPLOY_FLY.md`. |
 | `PULSE_API_KEY` | Gates the API. The frontend sends it as `x-api-key`. |
 | `ALLOWED_ORIGINS` | CORS. |
 | `ANTHROPIC_API_KEY` | Only when `LLM_PROVIDER=anthropic`. |

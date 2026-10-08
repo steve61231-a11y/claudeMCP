@@ -1,16 +1,29 @@
+# One image, any host. Render reads it via render.yaml, Fly via fly.toml.
+# Keeping a single Dockerfile is deliberate: two of them drift, and the first
+# symptom is always "works on the old host, not the new one".
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Chromium, for the PDF export. The report is a rendered web page, so the
-# only way a PDF can be guaranteed to match it is to print the page itself —
-# any second, PDF-shaped template drifts from the live one the first time a
-# section changes. This is the system package driven via
-# `--headless --print-to-pdf`, roughly a tenth the size of Playwright plus its
-# own browser download, and it is invoked per download rather than resident.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends chromium fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
+# Chromium, for SERVER-SIDE PDF export — off by default.
+#
+# It is ~300MB of image and the memory headroom that forced a 2GB instance,
+# which is most of what this deployment was paying for. It is also no longer
+# on the path a user takes: "Download PDF" prints from the reader's own
+# browser, which has already rendered the report. The server-side endpoints
+# remain for tests and any future scheduled export, and they degrade honestly
+# where no browser is installed — `chromium_available()` returns False and the
+# caller is told, rather than a 503 with no explanation.
+#
+# Turn it on where you actually want it:  --build-arg INSTALL_CHROMIUM=true
+# (Also required by the Scweet X connector, which drives a real browser.
+# ENABLE_TWSCRAPE is the pure-HTTP X path that works without it.)
+ARG INSTALL_CHROMIUM=false
+RUN if [ "$INSTALL_CHROMIUM" = "true" ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends chromium fonts-liberation \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY engine/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
@@ -21,5 +34,8 @@ COPY mock-data ./mock-data
 COPY web ./web
 
 ENV PYTHONPATH=/app
+# Render injects PORT; Fly and a plain `docker run` do not. Without a default
+# the container starts uvicorn on an empty --port and exits immediately.
+ENV PORT=8000
 
 CMD ["sh", "-c", "cd engine && alembic upgrade head && cd .. && uvicorn engine.api_server:app --host 0.0.0.0 --port $PORT"]

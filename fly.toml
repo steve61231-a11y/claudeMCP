@@ -1,0 +1,68 @@
+# Fly.io deployment for Mũũgĩ.
+#
+# Replaces a Render blueprint that was costing $32/month: `pulse-engine` on
+# the standard plan ($25) plus a separate `zenith-searxng` on starter ($7).
+# Neither was necessary.
+#
+#   - The standard plan was bought for memory the image did not need once
+#     Chromium came out of it (see engine/Dockerfile.render). Local ML is off
+#     by default and torch was never installed, so there is no large model to
+#     hold.
+#   - SearXNG is optional. `searxng_url` defaults to "" and the corpus is
+#     built from GDELT, Google News, Reddit, YouTube and Wikipedia without it.
+#     Run it later as its own Fly app if you want it back; it does not belong
+#     in the critical path of a deploy you need working today.
+#
+# The database is NOT defined here, on purpose. It lives on Neon's free tier,
+# billed separately from this app, because the previous arrangement let one
+# unpaid hosting invoice take the data with it — and the data is the only part
+# of this system that cannot be rebuilt from this repository.
+#
+# Deploy:  fly launch --no-deploy --copy-config   (first time)
+#          fly secrets set DATABASE_URL=... ANTHROPIC_API_KEY=... (etc)
+#          fly deploy
+# See docs/DEPLOY_FLY.md for the whole runbook.
+
+app = "muugi"
+primary_region = "jnb"          # Johannesburg — closest Fly region to Nairobi
+
+[build]
+  dockerfile = "engine/Dockerfile.render"
+  [build.args]
+    # Server-side PDF export off: the page prints from the reader's own
+    # browser. Set "true" and redeploy if you ever want the server endpoints,
+    # and raise the memory below with it.
+    INSTALL_CHROMIUM = "false"
+
+[env]
+  PORT = "8000"
+  # Reports are long-running background jobs with their own ceiling; see
+  # REPORT_DEADLINE_SECONDS in engine/config.py.
+  PYTHONUNBUFFERED = "1"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+
+  # Both of these are deliberate, and they are the reason this app costs
+  # money at all.
+  #
+  # A report takes tens of minutes and runs as a BACKGROUND job: the browser
+  # polls, so the run itself generates no HTTP traffic. Fly's idle detector
+  # only sees requests, so with auto-stop on it would suspend the machine in
+  # the middle of a run that is working perfectly — and the page would show a
+  # report that never finishes, which is the exact failure this codebase
+  # spent a week eliminating in the pipeline. Paying for an always-on machine
+  # is cheaper than reproducing that bug in the infrastructure.
+  auto_stop_machines = false
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"        # alembic runs before uvicorn binds
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"                # measured, not guessed — see docs/DEPLOY_FLY.md

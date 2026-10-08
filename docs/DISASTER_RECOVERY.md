@@ -1,3 +1,23 @@
+# Disaster recovery
+
+> **This already happened.** On 8 October 2026 the Render account was
+> suspended over an unpaid ~$200 bill. The move off it is written up in
+> **`docs/DEPLOY_FLY.md`**, which is the runbook to follow — read that first;
+> this file is the reasoning behind it.
+>
+> Two things are worth carrying forward from how it went.
+>
+> **The nightly backup had failed every run since the night it was written** —
+> thirty for thirty — because the `DATABASE_URL` secret held Render's
+> *internal* hostname, which only resolves inside Render's network. Nothing
+> said so. The workflow now refuses that string by name and opens an issue
+> when a dump does not happen. **A backup you have not watched succeed is not
+> a backup.**
+>
+> **The database is now on Neon, billed separately from the app.** That is the
+> change that actually removes the risk described below: one unpaid hosting
+> invoice could take the data with it, and did.
+
 # Disaster recovery — staying safe if Render or Claude Code lapses
 
 Two things could go away: the **Render subscription** (hosting) and the
