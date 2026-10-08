@@ -96,8 +96,21 @@ jobs:
           fi
           echo "server reports major version: $major"
           sudo apt-get install -y --no-install-recommends "postgresql-client-${major}" \
-            || echo "::warning::No postgresql-client-${major} package; using whatever is installed."
-          pg_dump --version
+            || echo "::warning::No postgresql-client-${major} package available."
+
+          # Call the versioned binary directly, not `pg_dump`.
+          #
+          # On Debian and Ubuntu `pg_dump` is pg_wrapper, which picks the
+          # NEWEST installed client regardless of which one you asked for. So
+          # installing the matching package changed nothing and the mismatch
+          # survived two attempts at fixing it, with the version actually in
+          # use never printed anywhere.
+          PGDUMP="/usr/lib/postgresql/${major}/bin/pg_dump"
+          [ -x "$PGDUMP" ] || PGDUMP="$(command -v pg_dump)"
+          echo "PGDUMP=${PGDUMP}" >> "$GITHUB_ENV"
+          # Put both versions in the run's annotations. Not being able to see
+          # them is why this took three goes.
+          echo "::notice::server major ${major}; using ${PGDUMP} ($("$PGDUMP" --version))"
 
       - name: Dump the database
         env:
@@ -127,7 +140,7 @@ jobs:
             case "$url" in *\?*) [ -n "$mode" ] && url="${url}&${mode#\?}" ;;
                            *)     url="${url}${mode}" ;; esac
             echo "trying: ${mode:-<as supplied>}"
-            if err=$(pg_dump "$url" --format=custom --no-owner \
+            if err=$("$PGDUMP" "$url" --format=custom --no-owner \
                        --no-privileges --file="backup/db-${stamp}.dump" 2>&1); then
               dumped="yes"; echo "  -> connected"; break
             fi
@@ -144,7 +157,7 @@ jobs:
             attempts="${attempts} | ${mode:-as-supplied}: ${err}"
           done
           if [ -z "$dumped" ]; then
-            echo "::error::pg_dump could not connect under any TLS mode:${attempts}"
+            echo "::error::${PGDUMP} could not dump under any TLS mode:${attempts}"
             {
               echo "### The database could not be dumped"
               echo
