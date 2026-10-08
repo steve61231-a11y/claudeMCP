@@ -115,7 +115,11 @@ jobs:
             # scalar ends it, and the rest of the file is then parsed as
             # YAML — which is how this workflow stopped having a
             # workflow_dispatch trigger at all.
-            attempts=$(printf '%s\n  %s: %s' "$attempts" "${mode:-as-supplied}" "$err")
+            # One line, separated by " | ". A `::error::` annotation is
+            # truncated at its first newline, so a multi-line summary of the
+            # attempts rendered as an empty message — the detail was there
+            # and unreadable, which is the whole failure mode again.
+            attempts="${attempts} | ${mode:-as-supplied}: ${err}"
           done
           if [ -z "$dumped" ]; then
             echo "::error::pg_dump could not connect under any TLS mode:${attempts}"
