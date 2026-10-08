@@ -110,8 +110,12 @@ jobs:
               dumped="yes"; echo "  -> connected"; break
             fi
             echo "  -> ${err}"
-            attempts="${attempts}
-  ${mode:-<as supplied>}: ${err}"
+            # Accumulate with a printf rather than a literal newline inside
+            # the string: a continuation line indented less than this block
+            # scalar ends it, and the rest of the file is then parsed as
+            # YAML — which is how this workflow stopped having a
+            # workflow_dispatch trigger at all.
+            attempts=$(printf '%s\n  %s: %s' "$attempts" "${mode:-as-supplied}" "$err")
           done
           if [ -z "$dumped" ]; then
             echo "::error::pg_dump could not connect under any TLS mode:${attempts}"
