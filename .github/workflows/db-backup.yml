@@ -83,8 +83,23 @@ jobs:
         run: |
           mkdir -p backup
           stamp=$(date -u +%Y%m%d-%H%M%S)
-          pg_dump "$DATABASE_URL" --format=custom --no-owner --no-privileges \
-            --file="backup/db-${stamp}.dump"
+          # Capture pg_dump's own words rather than letting them die in a log
+          # body. GitHub serves raw logs from blob storage, so the reason a
+          # backup failed was unreadable from anywhere except a browser — and
+          # "exit code 1" in the annotation is the same non-answer for a wrong
+          # hostname, a deleted database and a rotated password.
+          if ! err=$(pg_dump "$DATABASE_URL" --format=custom --no-owner \
+                       --no-privileges --file="backup/db-${stamp}.dump" 2>&1); then
+            echo "::error::pg_dump failed: ${err}"
+            {
+              echo "### The database could not be dumped"
+              echo
+              echo '```'
+              echo "${err}"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           echo "STAMP=${stamp}" >> "$GITHUB_ENV"
           ls -la backup/
 
@@ -110,10 +125,15 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           title="Database backup is failing — there is no usable dump"
-          existing=$(gh issue list --state open --search "$title in:title" \
+          # --repo is not optional here: this job never checks the code out,
+          # so gh has no repository to infer, and every call failed. The alarm
+          # that exists so failures are not silent was failing silently.
+          existing=$(gh issue list --repo "$GH_REPO" --state open \
+                     --search "$title in:title" \
                      --json number --jq '.[0].number' 2>/dev/null || true)
           body=$(printf '%s\n' \
             "The nightly \`db-backup\` job failed: $RUN_URL" \
@@ -131,18 +151,20 @@ jobs:
             "This issue is reused, not duplicated, and closes itself on the" \
             "first successful dump.")
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body "$body"
+            gh issue comment "$existing" --repo "$GH_REPO" --body "$body"
           else
-            gh issue create --title "$title" --body "$body"
+            gh issue create --repo "$GH_REPO" --title "$title" --body "$body"
           fi
 
       - name: Close the alarm once a dump has actually been taken
         if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           title="Database backup is failing — there is no usable dump"
-          for n in $(gh issue list --state open --search "$title in:title" \
+          for n in $(gh issue list --repo "$GH_REPO" --state open \
+                     --search "$title in:title" \
                      --json number --jq '.[].number' 2>/dev/null || true); do
-            gh issue close "$n" --comment "A dump succeeded — closing."
+            gh issue close "$n" --repo "$GH_REPO" --comment "A dump succeeded — closing."
           done
