@@ -2187,9 +2187,34 @@ def health():
             supply["socialcrawl_credit_balance"] = SocialCrawlConnector().check_balance()
         except Exception:
             supply["socialcrawl_credit_balance"] = None
+    # Is there a database at all, and can we reach it?
+    #
+    # `ok: true` used to be hardcoded. On a first deploy with no DATABASE_URL
+    # the app now starts rather than crashing — which is right, because a
+    # container that vanishes tells an operator nothing — but a health check
+    # that then reports "ok" would be the same lie in a new place. It must
+    # distinguish "running and working" from "running and useless".
+    # "configured" asks whether this process has a database URL bound at all,
+    # which is NOT the same as reading settings.database_url: tests and local
+    # development bind the engine from elsewhere, and a check that only looks
+    # at the raw setting reports a perfectly working app as unconfigured.
+    # Ask the engine what it is actually pointed at.
+    try:
+        from engine.db.session import engine as _engine
+
+        _bound = _engine.url
+        database: dict = {"configured": bool(_bound.host or _bound.database),
+                          "host": _bound.host, "reachable": False}
+    except Exception:
+        database = {"configured": False, "reachable": False}
     db = SessionLocal()
     try:
+        from sqlalchemy import text
+
         from engine.db.models import IngestionRun
+
+        db.execute(text("SELECT 1"))
+        database["reachable"] = True
 
         last_run = db.query(IngestionRun).order_by(IngestionRun.started_at.desc()).first()
         if last_run:
@@ -2199,15 +2224,27 @@ def health():
                 "mentions_total": (last_run.stats or {}).get("mentions_total"),
                 "source_health": (last_run.stats or {}).get("source_health"),
             }
-    except Exception:
-        pass
+    except Exception as exc:
+        database["error"] = f"{type(exc).__name__}: {exc}"[:300]
     finally:
         db.close()
+    if not database["configured"]:
+        database["hint"] = ("DATABASE_URL is not set. Set it to a Postgres "
+                            "connection string and redeploy.")
+    elif not database["reachable"]:
+        database["hint"] = ("DATABASE_URL is set but the database could not be "
+                            "reached. Check the password, that the database is "
+                            "not suspended, and that the string keeps its "
+                            "?sslmode=require suffix.")
     import os
 
     commit = os.environ.get("RENDER_GIT_COMMIT", "") or os.environ.get("GIT_COMMIT", "")
     return {
-        "ok": True,
+        # Serving a page is not the same as working. Without a database every
+        # report will fail, and saying "ok" here would hide the one fact an
+        # operator needs on a first deploy.
+        "ok": database["reachable"],
+        "database": database,
         "build": commit[:7] or "local",
         "local_ml": settings.use_local_ml,
         "uptime_seconds": int(time.time() - _PROCESS_START),

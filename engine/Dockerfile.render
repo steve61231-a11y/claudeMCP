@@ -38,4 +38,11 @@ ENV PYTHONPATH=/app
 # the container starts uvicorn on an empty --port and exits immediately.
 ENV PORT=8000
 
-CMD ["sh", "-c", "cd engine && alembic upgrade head && cd .. && uvicorn engine.api_server:app --host 0.0.0.0 --port $PORT"]
+COPY engine/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+# See start.sh for why this is a script and not an `alembic && uvicorn`
+# one-liner: the `&&` turned a missing DATABASE_URL into a crashed container
+# with no visible reason, and on a host that only offers a domain once a
+# service is listening, a crash loop means the domain can never be created.
+CMD ["/app/start.sh"]
