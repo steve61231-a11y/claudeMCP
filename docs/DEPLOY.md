@@ -45,8 +45,9 @@ not a risk: nothing is deleted.
 3. If it asks for permission, allow Railway to see `steve61231-a11y/claudeMCP`.
 4. Pick **claudeMCP**. It starts building straight away — that is fine, it
    will fail the first time because it has no database yet. Expected.
-5. Click the service that appears → **Variables** tab → **New Variable**, and
-   add these four. Paste the real values; they are in your password manager.
+5. Click the **service box** that appears on the canvas → **Variables** tab →
+   **New Variable**, and add these four. (Everything from here on happens
+   inside the service, not the project.) Paste the real values; they are in your password manager.
 
    | Name | Value |
    |---|---|
@@ -55,8 +56,17 @@ not a risk: nothing is deleted.
    | `PULSE_API_KEY` | any long random string you make up — it is the password for your own API |
    | `ALLOWED_ORIGINS` | leave until step 7, then put the real URL here |
 
-6. **Settings** tab → **Networking** → **Generate Domain**. That gives you a
-   `something.up.railway.app` address. Copy it.
+6. **Click the service box on the canvas first**, then **Settings** →
+   **Networking** → **Public Networking** → **Generate Domain**. Copy the
+   `something.up.railway.app` address it creates.
+
+   Railway has *two* Settings pages and only one of them has Networking. The
+   project settings — reached from the canvas background rather than from a
+   service — do not, which reads as "that step does not exist". Open the
+   service first and the section is there.
+
+   If there is no service box on the canvas at all, the GitHub import did not
+   attach and nothing below will work; redo step 2.
 7. Back to **Variables** → set `ALLOWED_ORIGINS` to that full address,
    including `https://`.
 8. **Deployments** tab → **Redeploy**.
