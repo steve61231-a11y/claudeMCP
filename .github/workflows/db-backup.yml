@@ -88,8 +88,26 @@ jobs:
           # backup failed was unreadable from anywhere except a browser — and
           # "exit code 1" in the annotation is the same non-answer for a wrong
           # hostname, a deleted database and a rotated password.
-          if ! err=$(pg_dump "$DATABASE_URL" --format=custom --no-owner \
+          # "SSL connection has been closed unexpectedly" is the server
+          # hanging up during the handshake, not a bad address — the host
+          # resolved and the TCP connection landed. It can mean the database
+          # is suspended, but it can also mean a TLS negotiation the client
+          # and server cannot agree on, so try the explicit modes before
+          # concluding the data is gone. Costs seconds; the alternative is
+          # writing off a corpus that is still there.
+          dumped=""
+          for mode in "" "?sslmode=require" "?sslmode=prefer" "?sslmode=verify-full"; do
+            url="$DATABASE_URL"
+            case "$url" in *\?*) [ -n "$mode" ] && url="${url}&${mode#\?}" ;;
+                           *)     url="${url}${mode}" ;; esac
+            echo "trying: ${mode:-<as supplied>}"
+            if err=$(pg_dump "$url" --format=custom --no-owner \
                        --no-privileges --file="backup/db-${stamp}.dump" 2>&1); then
+              dumped="yes"; echo "  -> connected"; break
+            fi
+            echo "  -> ${err}"
+          done
+          if [ -z "$dumped" ]; then
             echo "::error::pg_dump failed: ${err}"
             {
               echo "### The database could not be dumped"
