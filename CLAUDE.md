@@ -60,7 +60,9 @@ engine/
   alembic/          Migrations. Run automatically on deploy.
   tests/            109 files, ~1155 tests. They are the specification.
 web/pulse_app.html  The ENTIRE frontend. One file, ~3,400 lines, no build step.
-fly.toml            Deploy config — Fly.io. THIS is the live one.
+railway.json        Deploy config — Railway. THIS is the live one.
+                    docs/DEPLOY.md is the click-only guide; no terminal needed.
+fly.toml            Deploy config — Fly.io. The CLI alternative, cheaper.
 render.yaml         The old Render blueprint. Kept as a reference; not in use.
 docs/               Recovery runbook, data policy, this project's history.
 ```

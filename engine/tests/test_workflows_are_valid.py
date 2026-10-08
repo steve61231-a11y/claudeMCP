@@ -61,3 +61,34 @@ def test_the_backup_can_still_be_run_by_hand():
         "db-backup can no longer be triggered by hand — the Run workflow "
         "button will not appear")
     assert "schedule" in triggers, "db-backup no longer runs nightly"
+
+
+# --- the deploy config is as load-bearing as the workflows --------------------
+
+def test_the_railway_config_points_at_a_dockerfile_that_exists():
+    """Railway looks for a `Dockerfile` at the repository root by default and
+    this project keeps its one under engine/. If `railway.json` stops parsing,
+    or the path drifts, Railway does not complain — it falls back, finds
+    nothing, and the build fails with a message about a missing Dockerfile
+    that is nowhere near the actual cause.
+    """
+    import json
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = json.loads((root / "railway.json").read_text())
+    path = cfg["build"]["dockerfilePath"]
+    assert (root / path).exists(), f"railway.json points at {path}, which is not there"
+
+
+def test_the_app_is_not_allowed_to_sleep():
+    """A report runs for tens of minutes as a background job, so it generates
+    no web traffic while it works. Any idle-sleep feature watches web traffic
+    only, and would suspend the machine mid-run — leaving the page on a report
+    that never finishes, which is the exact failure this codebase spent a week
+    removing from the pipeline.
+    """
+    import json
+
+    root = Path(__file__).resolve().parents[2]
+    cfg = json.loads((root / "railway.json").read_text())
+    assert cfg["deploy"]["sleepApplication"] is False
