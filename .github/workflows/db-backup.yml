@@ -27,13 +27,38 @@ on:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    # The alarm below opens and closes an issue. The default token is
+    # read-only on repositories configured that way, and a workflow that
+    # cannot raise the alarm fails silently in a NEW way, which is the bug
+    # it exists to fix.
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - name: Check the secret is set
+      - name: Check the secret is set, and is one GitHub can actually reach
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          if [ -z "${{ secrets.DATABASE_URL }}" ]; then
+          if [ -z "$DATABASE_URL" ]; then
             echo "::error::DATABASE_URL secret is not set — see the comment at the top of this workflow."
             exit 1
           fi
+          # The failure this workflow actually had, thirty nights running.
+          #
+          # A Render INTERNAL host is `dpg-xxxxx-a` with no dots — it resolves
+          # only inside Render's network, so pg_dump here fails with "could
+          # not translate host name" every time. The step above passed (the
+          # secret WAS set), the dump step failed, and nothing distinguished
+          # "wrong hostname" from "database down" from "credentials expired".
+          # Name it, so the next person loses minutes rather than months.
+          host=$(printf '%s' "$DATABASE_URL" | sed -E 's#^[a-z+]+://[^@]*@##; s#[:/?].*$##')
+          echo "host: $host"
+          case "$host" in
+            *.*) : ;;   # a real domain — Neon, Supabase, Render external, anything
+            "")  echo "::error::Could not read a hostname out of DATABASE_URL."; exit 1 ;;
+            *)   echo "::error::DATABASE_URL points at '$host', which has no domain — that is a Render INTERNAL hostname and only resolves inside Render's own network. GitHub can never reach it, so this backup can never run. Use the EXTERNAL connection string (Render dashboard -> pulse-postgres -> Connect -> External Connection), or any ordinary host such as Neon or Supabase."
+                 exit 1 ;;
+          esac
 
       # pg_dump refuses to dump a server NEWER than itself, and this is exactly
       # how the first manual backup attempt failed (server 18.6, client 17.11).
@@ -69,3 +94,55 @@ jobs:
           name: db-backup-${{ env.STAMP }}
           path: backup/db-${{ env.STAMP }}.dump
           retention-days: 90
+
+      # A backup that failed must never look like a backup that ran.
+      #
+      # This job failed every night from the day it was written and nobody
+      # knew, because a red tick in a tab nobody opens is not a signal. The
+      # product this repo builds is founded on exactly that rule — an empty
+      # section must not look like a section with nothing to say — and the
+      # backup protecting it was breaking the same rule for a month.
+      #
+      # So: say so somewhere that gets read. One open issue, reused rather
+      # than piling up a new one every night, closed automatically the first
+      # time a dump succeeds.
+      - name: Say so, loudly, if the dump did not happen
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Database backup is failing — there is no usable dump"
+          existing=$(gh issue list --state open --search "$title in:title" \
+                     --json number --jq '.[0].number' 2>/dev/null || true)
+          body=$(printf '%s\n' \
+            "The nightly \`db-backup\` job failed: $RUN_URL" \
+            "" \
+            "**Until this is green there is no database backup at all.** The" \
+            "code in this repository is safe on GitHub; the corpus is not" \
+            "reproducible from it, so this is the only thing standing between" \
+            "a hosting problem and losing every run ever collected." \
+            "" \
+            "Most likely causes, in order:" \
+            "1. \`DATABASE_URL\` is an internal hostname the runner cannot resolve." \
+            "2. The database is gone, suspended, or its password was rotated." \
+            "3. The server is newer than the client (see the install step)." \
+            "" \
+            "This issue is reused, not duplicated, and closes itself on the" \
+            "first successful dump.")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Close the alarm once a dump has actually been taken
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Database backup is failing — there is no usable dump"
+          for n in $(gh issue list --state open --search "$title in:title" \
+                     --json number --jq '.[].number' 2>/dev/null || true); do
+            gh issue close "$n" --comment "A dump succeeded — closing."
+          done
