@@ -114,8 +114,13 @@ def _run_in_node(calls: list[str]):
     script = SOURCE.split("<script>", 1)[1].rsplit("</script>", 1)[0]
     # The helpers live inside the page's IIFE; lift the two under test out of
     # it by name, along with the `esc` they depend on.
+    # `ukDate` is here because sourceLine now calls it: quote attributions
+    # changed from "2026-03-12" to "12th Mar 2026" along with every other date
+    # on the page. Lifting sourceLine without its dependency fails with
+    # "ukDate is not defined", which looks like a product bug and is not.
     wanted = [_extract(script, name) for name in
-              ("const esc =", "function outletOf(", "function sourceLine(")]
+              ("const esc =", "const _MONTHS =", "function ukDate(",
+               "function outletOf(", "function sourceLine(")]
     harness = ("let REF_INDEX = {};\n" + "\n".join(wanted)
                + "\nREF_INDEX = " + json.dumps({
                    "abcd1234": {"url": "https://www.nation.africa/kenya/news/story"
@@ -155,7 +160,7 @@ def test_an_outlet_is_extracted_from_any_address():
 def test_a_quote_is_attributed_to_its_outlet_and_date():
     line, = _run_in_node(['sourceLine("abcd1234")'])
     seen = _visible(line)
-    assert seen.strip() == "nation.africa · 2026-03-12 ↗", seen
+    assert seen.strip() == "nation.africa · 12th Mar 2026 ↗", seen
     assert "abcd1234" not in seen, "the internal id reached the page again"
     assert "utm_source" not in seen, "the address belongs in the href, not the text"
     assert 'href="https://www.nation.africa' in line, "the link must still work"
@@ -164,7 +169,7 @@ def test_a_quote_is_attributed_to_its_outlet_and_date():
 @requires_node
 def test_a_stance_is_kept_in_front_of_the_attribution():
     line, = _visible(_run_in_node(['sourceLine("abcd1234", "critical")'])[0]),
-    assert line.strip() == "critical · nation.africa · 2026-03-12 ↗", line
+    assert line.strip() == "critical · nation.africa · 12th Mar 2026 ↗", line
 
 
 @requires_node

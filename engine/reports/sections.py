@@ -105,18 +105,39 @@ shows it, and what acting on it would look like. Specific, not generic advice.
 Respond with ONLY a JSON object: {{"opportunities": ["...", "...", "...", "...", "...", "..."]}}
 """
 
-TRENDS_PROMPT = """You are a political intelligence analyst flagging emerging trends to watch
+# Emerging issues: THREE, each with a take.
+#
+# This asked for "typically 6-12 ... not three", and twelve items of 2-4
+# sentences is a page and a half an executive will not read. Twelve things to
+# watch is also not a priority order; it is a list that has refused to choose,
+# and choosing is the work being paid for.
+#
+# The shape changed too. It returned bare strings, so each item was a
+# paragraph that opened with what happened — a headline — and the reader had
+# to get to the end to find out what it means for them. Splitting `issue` from
+# `take` forces the model to state the thing and then commit to a reading of
+# it, and lets the page show the second one as the emphasis.
+TRENDS_PROMPT = """You are a political intelligence analyst flagging emerging issues
 from the structured data below — don't invent facts.
 
 Data:
 {context}
 
-List every emerging trend worth monitoring going forward (e.g. a narrative with high growth
-rate even if not yet dominant, an emerging platform shift) — typically 6-12 where the data
-supports it, not three. Each is 2-4 sentences: what is moving, the numbers that show it, and
-where it goes if it continues. Specific, not generic advice.
+Identify the THREE most important emerging issues worth watching. Not six, not twelve:
+the three that would change a decision. Rank them, most important first.
 
-Respond with ONLY a JSON object: {{"trends": ["...", "...", "...", "...", "...", "..."]}}
+For each one give:
+- "issue": the thing itself, in under 12 words. Not a headline, not a quote — name it.
+- "take": 1-2 sentences. What it means and where it goes if it continues. This is the
+  analyst's reading, not a restatement of the issue.
+- "reaction": how the public is responding to it — one of "supportive", "critical",
+  "mixed", or "neutral".
+- "direction": one of "rising", "steady", or "fading".
+
+Respond with ONLY a JSON object:
+{{"trends": [{{"issue": "...", "take": "...", "reaction": "critical", "direction": "rising"}},
+             {{"issue": "...", "take": "...", "reaction": "mixed", "direction": "steady"}},
+             {{"issue": "...", "take": "...", "reaction": "neutral", "direction": "fading"}}]}}
 """
 
 
@@ -135,9 +156,37 @@ def generate_opportunities(context: str) -> list[str]:
     return result.get("opportunities", [])
 
 
-def generate_trends(context: str) -> list[str]:
+#: How many emerging issues reach the page. Three is a decision; twelve is a
+#: list that refused to make one.
+MAX_TRENDS = 3
+
+
+def generate_trends(context: str) -> list[dict]:
+    """The emerging issues, ranked, each with the analyst's reading of it.
+
+    Returns dicts now, not strings. Old reports hold strings, and a model can
+    always ignore a schema, so both shapes are normalised here rather than in
+    the renderer — otherwise the page grows a second opinion about what a
+    trend is, and they drift.
+    """
     result = llm.call_json(TRENDS_PROMPT.format(context=context), max_tokens=llm.budget_for(SECTION_MAX_TOKENS))
-    return result.get("trends", [])
+    out: list[dict] = []
+    for row in (result.get("trends") or [])[:MAX_TRENDS]:
+        if isinstance(row, str):
+            # A bare string is a pre-change report, or a model that ignored the
+            # schema. Keep the text as the issue rather than dropping it: a
+            # trend the reader cannot see is worse than one without a take.
+            text = row.strip()
+            if text:
+                out.append({"issue": text[:120], "take": text if len(text) > 120 else ""})
+        elif isinstance(row, dict) and (row.get("issue") or row.get("take")):
+            out.append({
+                "issue": str(row.get("issue") or "").strip(),
+                "take": str(row.get("take") or "").strip(),
+                "reaction": str(row.get("reaction") or "").strip().lower() or None,
+                "direction": str(row.get("direction") or "").strip().lower() or None,
+            })
+    return out
 
 
 def enrich_report_payload(

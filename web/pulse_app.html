@@ -428,7 +428,15 @@
      attributed anywhere else — outlet, date, link.
      -------------------------------------------------------------------- */
   let REF_INDEX = {};
-  const useRefIndex = p => { REF_INDEX = (p && (p.ref_index || p.refIndex)) || {}; };
+  //: The denominator for every "N mentions" on the page. Set once per render
+  //: beside the ref index, because the renderers that show counts are nested
+  //: several levels below the payload and a share without a total is just a
+  //: number wearing a percent sign.
+  let CORPUS_TOTAL = 0;
+  const useRefIndex = p => {
+    REF_INDEX = (p && (p.ref_index || p.refIndex)) || {};
+    CORPUS_TOTAL = Number((p && ((p.volume && p.volume.total) || p.mentions_total)) || 0);
+  };
 
   /** An address is not a word. Full URLs were being printed as running text
       — in quote attributions, in evidence rows, and (worst) stamped after
@@ -448,7 +456,7 @@
   function sourceLine(ref, extra){
     const found = REF_INDEX[ref] || {};
     const outlet = outletOf(found.url) || found.platform || '';
-    const when = String(found.posted_at || '').slice(0,10);
+    const when = found.posted_at ? ukDate(found.posted_at) : '';
     const parts = [extra, outlet, when].filter(Boolean).map(esc);
     if(!outlet && !found.url)
       return `<span title="this quote's source could not be traced in the corpus">`
@@ -456,6 +464,65 @@
     if(!found.url) return parts.join(' · ');
     return `<a class="src-link" href="${esc(found.url)}" target="_blank" rel="noopener noreferrer" `
       + `data-src="${esc(outlet)}">${parts.join(' · ')} ↗</a>`;
+  }
+
+  /* --------------------------------------------------------------------
+     Numbers an executive can act on, and dates they can read.
+     --------------------------------------------------------------------
+     "214 mentions" is a number you cannot do anything with. 214 out of what?
+     A reader has to find the total, divide, and only then knows whether the
+     narrative is most of the story or a footnote — and that is work done
+     once per row, by someone deciding in minutes.
+
+     So the proportion is the headline and the count is the detail: the share
+     is what the eye lands on, and the raw figure is in the tooltip for
+     anyone who wants to check it. Nothing is hidden; it is reordered by what
+     a decision actually needs.
+     -------------------------------------------------------------------- */
+
+  /** "19%", with the real count on hover. `of` is the denominator; without a
+      usable one this falls back to the plain number rather than inventing a
+      proportion out of nothing. */
+  function share(n, of, noun){
+    noun = noun || 'mentions';
+    if(n==null) return '—';
+    const count = Number(n);
+    if(!of || !Number(of) || Number(of) <= 0) return `${fmt(count)} ${noun}`;
+    const p = Math.round(100 * count / Number(of));
+    return `<span title="${fmt(count)} of ${fmt(of)} ${esc(noun)}">${p}%</span>`;
+  }
+
+  /** "2025-08-01 – 2026-07-13" -> "1st Aug 2025 – 13th Jul 2026".
+      The window is assembled server-side as a single string, so it is
+      reformatted here rather than giving the API a second date format to
+      keep in step with this one. */
+  function ukWindow(value){
+    const raw = String(value || '');
+    if(!raw) return '';
+    return raw.replace(/\d{4}-\d{2}-\d{2}/g, m => ukDate(m));
+  }
+
+  const _MONTHS = ['Jan','Feb','Mar','Apr','May','Jun',
+                   'Jul','Aug','Sept','Oct','Nov','Dec'];
+
+  /** "9th Sept 2026".
+      ISO ("2026-09-09") is unambiguous and unreadable; "09/09/2026" is
+      readable and ambiguous — an American reader and a Kenyan one get
+      different days out of 06/07/2026. An ordinal day with a named month
+      cannot be misread by either, which is the whole point in a document
+      that gets forwarded. */
+  function ukDate(value){
+    if(!value) return '—';
+    const raw = String(value);
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+    let d;
+    if(m) d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3]));
+    else { d = new Date(raw); if(isNaN(d.getTime())) return raw.slice(0,10); }
+    const day = d.getUTCDate();
+    const ord = (day % 10 === 1 && day !== 11) ? 'st'
+              : (day % 10 === 2 && day !== 12) ? 'nd'
+              : (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+    return `${day}${ord} ${_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
   }
 
   const fmt = n => (n==null?'—':Number(n).toLocaleString());
@@ -994,7 +1061,7 @@
   }
 
   const DAY=86400000;
-  const shortDate=ms=>new Date(ms).toISOString().slice(0,10);
+  const shortDate=ms=>ukDate(new Date(ms).toISOString());
 
   /** The timeline, as one graph you can read the window off in a glance.
       ------------------------------------------------------------------
@@ -1169,9 +1236,9 @@
     const tc=t.corroboration;
     const tone=tc?(tc.confirmed?'pos':'amber'):'';
     return `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
-        <b style="font-size:15px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
+        <b style="font-size:15px;color:var(--sky2)">${esc(t.date||t.when?ukDate(t.date||t.when):'undated')}</b>
         <div class="row" style="gap:6px">
-          ${t.mentions_that_day?`<span class="chip">${fmt(t.mentions_that_day)} mentions that day</span>`:''}
+          ${t.mentions_that_day?`<span class="chip">${share(t.mentions_that_day,CORPUS_TOTAL,"mentions that day")} of mentions</span>`:''}
           ${tc?`<span class="pill ${tone}" title="${esc((tc.outlets||[]).join(', '))}">${esc(tc.label)}</span>`:''}
         </div></div>
       <div style="font-size:14.5px;margin-top:8px;white-space:pre-wrap">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>
@@ -1351,7 +1418,7 @@
     btn.addEventListener('click',()=>{body.hidden=!body.hidden;setLabel();});
     setLabel();
     list.forEach(item=>{
-      const when=(item.posted_at||'').slice(0,10);
+      const when=item.posted_at?ukDate(item.posted_at):'';
       const tone=(item.sentiment||'').toLowerCase();
       const pill=tone==='positive'?'pos':tone==='negative'?'neg':tone?'sky':'';
       const head=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
@@ -1453,7 +1520,7 @@
         row.appendChild(el('div','',`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
           <b style="font-size:14px">${esc(src.source)}</b>
           <span>${lean?`<span class="pill ${pill}">${esc(lean)}</span>`:'<span class="chip">lean not established</span>'}
-          <span class="chip" style="margin-left:6px">${fmt(src.mentions)} mentions</span></span></div>
+          <span class="chip" style="margin-left:6px">${share(src.mentions,CORPUS_TOTAL)} of mentions</span></span></div>
           <div class="muted" style="font-size:12.5px;margin-top:4px">${esc((src.outlet_type||'').replace(/_/g,' '))} ·
           ${fmt(src.positive)} positive / ${fmt(src.neutral)} neutral / ${fmt(src.negative)} negative
           ${src.unscored?` · ${fmt(src.unscored)} unscored`:''}${src.scored<3?' · too few scored to call a lean':''}</div>`));
@@ -1926,7 +1993,7 @@
       narr.forEach((n,i)=>{
         const row=el('div','');row.style.marginTop='14px';
         row.appendChild(el('div','',`<b style="font-size:14px;color:${SERIES[i%SERIES.length]}">${esc(n.label)}</b>
-          <span class="chip" style="margin-left:8px">${fmt(n.mentions)} mentions</span>
+          <span class="chip" style="margin-left:8px">${share(n.mentions,CORPUS_TOTAL)} of mentions</span>
           ${n.labelled_by==='derived'?'<span class="chip" style="margin-left:6px">named from the text</span>':''}`));
         if(n.description)row.appendChild(el('div','muted',`<div style="font-size:13px;margin-top:4px">${esc(n.description)}</div>`));
         row.appendChild(receipts(n.evidence));
@@ -1981,7 +2048,7 @@
     const row8=el('div','row');row8.style.marginTop='10px';
     if(sub.position)row8.appendChild(el('span','pill sky',esc(sub.position)));
     if(sub.subject_type)row8.appendChild(el('span','chip',esc(sub.subject_type)));
-    row8.appendChild(el('span','chip','window '+esc(r.window||'—')));
+    row8.appendChild(el('span','chip','window '+esc(ukWindow(r.window)||'—')));
     c8.appendChild(row8);
     if(r.executiveBrief||sub.executive_summary)
       c8.appendChild(el('p','muted',esc(sub.executive_summary||r.executiveBrief)));
@@ -2001,7 +2068,7 @@
     g10.appendChild(kpiCard('Evidence examined',fmt(gate.examined),(gate.on_topic!=null?gate.on_topic+' on topic':'')));
     g10.appendChild(kpiCard('Claims verified',fmt(ver.verified),(ver.unverified!=null?ver.unverified+' unverified':'')));
     g10.appendChild(kpiCard('Coverage',cov.complete?'Complete':'Partial',fmt(cov.mentions_analyzed)+' analysed'));
-    g10.appendChild(kpiCard('Connection',meta&&meta.live?'Live':'Cached',esc((r.generatedAt||'').slice(0,16).replace('T',' '))));
+    g10.appendChild(kpiCard('Connection',meta&&meta.live?'Live':'Cached',esc(ukDate(r.generatedAt))));
     c10.appendChild(g10);
     out.appendChild(c10);
 
@@ -2278,7 +2345,7 @@
     const c=deepCard('Narratives','The distinct stories in the corpus, by share of conversation');
     rows.slice(0,8).forEach(n=>{
       const row=el('div','mentr',`<div class="row" style="justify-content:space-between"><b>${esc(n.label)}</b>
-        <span class="chip">${fmt(n.mentions)} mentions</span></div>
+        <span class="chip">${share(n.mentions,CORPUS_TOTAL)} of mentions</span></div>
         <div class="muted" style="font-size:13.5px;margin-top:4px">${linkifyRefs(esc(n.description||''),n.description_citations)}</div>`);
       row.appendChild(receipts(n.evidence));
       c.appendChild(row);
@@ -2298,7 +2365,7 @@
     tm.slice(0,6).forEach(m=>{
       const who=m.author||m.author_handle||m.handle||'';
       const body=m.text||m.headline||'';
-      const when=String(m.posted_at||'').slice(0,10);
+      const when=m.posted_at?ukDate(m.posted_at):'';
       c.appendChild(el('div','mentr',`<div class="row" style="gap:8px;font-size:12px;flex-wrap:wrap">
           <span class="chip">${esc(m.platform||'')}</span>
           ${who?`<span class="muted">@${esc(String(who).replace(/^@/,''))}</span>`:''}
@@ -2414,7 +2481,7 @@
     rows.forEach(p=>c.appendChild(el('div','mentr',
       `<div class="row" style="justify-content:space-between;align-items:flex-start">
          <b style="font-size:15px">${esc(p.platform)}</b>
-         ${p.mention_count?`<span class="chip">${fmt(p.mention_count)} mentions</span>`:''}</div>
+         ${p.mention_count?`<span class="chip">${share(p.mention_count,CORPUS_TOTAL)} of mentions</span>`:''}</div>
        <div style="font-size:14px;margin-top:6px">${esc(p.tone||'')}</div>
        ${(p.themes||[]).length?`<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${(p.themes||[]).map(t=>`<span class="chip">${esc(t)}</span>`).join('')}</div>`:''}
        ${(p.notable_voices||[]).length?`<div class="muted" style="font-size:12.5px;margin-top:8px">Notable voices: ${(p.notable_voices||[]).map(handle).join(' · ')}</div>`:''}
@@ -2437,8 +2504,8 @@
     rows.forEach((t,idx)=>{
       const row=el('div','mentr tl-row',
         `<div class="row" style="justify-content:space-between;align-items:flex-start">
-           <b style="font-size:14px;color:var(--sky2)">${esc(t.date||'undated')}</b>
-           ${t.mentions_that_day?`<span class="chip">${fmt(t.mentions_that_day)} mentions that day</span>`:''}</div>
+           <b style="font-size:14px;color:var(--sky2)">${esc(t.date?ukDate(t.date):'undated')}</b>
+           ${t.mentions_that_day?`<span class="chip">${share(t.mentions_that_day,CORPUS_TOTAL,"mentions that day")} of mentions</span>`:''}</div>
          <div class="tl-row-event">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>
          ${quotesHTML(t.quotes)}`);
       row.tabIndex=0;
@@ -2483,7 +2550,7 @@
       // needs to decide whether to open it.
       const opening=String(d.how_it_unfolded||'').split(/(?<=[.!?])\s/)[0]||'';
       const c=deepCard(`Storyline — ${d.label}`,
-        (d.mention_count?`${fmt(d.mention_count)} mentions · `:'')
+        (d.mention_count?`${share(d.mention_count,CORPUS_TOTAL)} of mentions · `:'')
         +(opening.length>150?opening.slice(0,150)+'…':opening));
       c.appendChild(el('div','',
         `<p style="font-size:14.5px;margin:0">${linkifyRefs(esc(d.how_it_unfolded||''),d.how_it_unfolded_citations)}</p>`
@@ -2495,9 +2562,9 @@
         `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13.5px;margin-top:6px">${linkifyRefs(esc(d.critic_framing),d.critic_framing_citations)}</div>`));
       if(fr.children.length)c.appendChild(fr);
       if(fs.date)c.appendChild(el('div','',`<div class="muted" style="font-size:12.5px;margin-top:12px">
-        First seen ${esc(fs.date)} · ${handle(fs.author)} on ${esc(fs.platform||'—')}${origin.peak?` · peaked ${esc(origin.peak.date)} (${fmt(origin.peak.mentions)} mentions)`:''}${origin.platforms_reached?` · reached ${origin.platforms_reached} platform(s)`:''}</div>`));
+        First seen ${esc(ukDate(fs.date))} · ${handle(fs.author)} on ${esc(fs.platform||'—')}${origin.peak?` · peaked ${esc(ukDate(origin.peak.date))} (${share(origin.peak.mentions,CORPUS_TOTAL)} of mentions)`:''}${origin.platforms_reached?` · reached ${origin.platforms_reached} platform(s)`:''}</div>`));
       if((origin.spread_path||[]).length)c.appendChild(el('div','',
-        `<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${origin.spread_path.map(sp=>`<span class="chip">${esc(sp.platform)} · ${esc(sp.date)}</span>`).join('')}</div>`));
+        `<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${origin.spread_path.map(sp=>`<span class="chip">${esc(sp.platform)} · ${esc(ukDate(sp.date))}</span>`).join('')}</div>`));
       if((d.quotes||[]).length)c.appendChild(el('div','',quotesHTML(d.quotes)));
       return c;
     });
@@ -2521,7 +2588,7 @@
   function renderSinceLastReport(d){
     if(!d)return null;
     const shift=d.sentiment_shift||{};
-    const c=deepCard('Since your last report',`Compared with ${esc(String(d.previous_report_at||'').slice(0,16).replace('T',' '))}`);
+    const c=deepCard('Since your last report',`Compared with ${esc(ukDate(d.previous_report_at))}`);
     const g=el('div','grid');g.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';g.style.marginTop='12px';
     [['Positive',shift.positive,'pts'],['Negative',shift.negative,'pts'],['Mentions',d.mention_volume_change,'']]
       .forEach(([label,val,suffix])=>{
@@ -2560,6 +2627,36 @@
 
   /** Risks, opportunities and trends — three dedicated LLM calls per report,
       and until now not one of them reached the screen. */
+  /** One risk / opening / emerging issue.
+
+      Emerging issues now arrive as {issue, take, reaction, direction} rather
+      than a paragraph, because a paragraph opening with what happened buries
+      what it means — the reader had to reach the end of every item to find
+      the only part they needed. The issue is the label; the take is the
+      emphasis. Risks and opportunities are still strings and render as before.
+  */
+  function rowOf(item){
+    if(typeof item === 'string')
+      return `<div style="font-size:14px">${esc(item)}</div>`;
+    if(!item || typeof item !== 'object') return '';
+    if(item.issue || item.take){
+      const tone = item.reaction === 'supportive' ? 'pos'
+                 : item.reaction === 'critical'   ? 'neg'
+                 : item.reaction ? 'amber' : '';
+      const arrow = item.direction === 'rising' ? '↑'
+                  : item.direction === 'fading' ? '↓'
+                  : item.direction === 'steady' ? '→' : '';
+      return `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+          <b style="font-size:14.5px">${esc(item.issue || '')}</b>
+          <div class="row" style="gap:6px;flex-shrink:0">
+            ${arrow?`<span class="chip" title="${esc(item.direction)}">${arrow}</span>`:''}
+            ${item.reaction?`<span class="pill ${tone}">${esc(item.reaction)}</span>`:''}
+          </div></div>
+        ${item.take?`<div class="muted" style="font-size:13.5px;margin-top:5px">${esc(item.take)}</div>`:''}`;
+    }
+    return `<div style="font-size:14px">${esc(item.text || item.label || '')}</div>`;
+  }
+
   function renderJudgementLists(r){
     const specs=[['Reputation risks',r.risks,'var(--neg)'],
                  ['Opportunities',r.opportunities,'var(--pos)'],
@@ -2572,8 +2669,7 @@
       const col=el('div','stance-col');
       col.innerHTML=`<h4 style="color:${color}">${esc(label)}</h4>
         <div class="muted" style="font-size:12px">${items.length} identified</div>`;
-      items.forEach(i=>col.appendChild(el('div','mentr',
-        `<div style="font-size:14px">${esc(typeof i==='string'?i:(i&&(i.text||i.label))||'')}</div>`)));
+      items.forEach(i=>col.appendChild(el('div','mentr', rowOf(i))));
       g.appendChild(col);
     });
     c.appendChild(g);
@@ -2862,16 +2958,16 @@
     const fresh=r.freshness||{}; const live=meta&&meta.live;
     const head=el('div','card');
     head.innerHTML=`<div class="row" style="justify-content:space-between">
-      <div><div class="eyebrow">${esc(r.window||'')}</div><h2 style="margin-top:4px">${esc(r.name||'')}</h2></div>
+      <div><div class="eyebrow">${esc(ukWindow(r.window))}</div><h2 style="margin-top:4px">${esc(r.name||'')}</h2></div>
       <div class="row">
         ${live?'<span class="pill pos">● Live</span>':'<span class="pill amber">Cached / demo</span>'}
         ${meta&&meta.stale_fallback?'<span class="pill amber">stale fallback</span>':''}
         ${r.grade&&r.grade.production===false?`<span class="pill neg" title="${esc(r.grade.warning||'')}">⚠ Test-grade · ${esc(r.grade.backend||'')}</span>`:''}
       </div></div>
       <div class="row" style="margin-top:12px;gap:16px;align-items:center">
-        <span class="chip">Updated ${esc((r.generatedAt||'').slice(0,16).replace('T',' '))||'—'}</span>
+        <span class="chip">Updated ${esc(ukDate(r.generatedAt))||'—'}</span>
         <span class="chip">${fmt(fresh.mentionsLast24h)} new · 24h</span>
-        <span class="chip">newest ${esc((fresh.newestMentionAt||'—').toString().slice(0,10))}</span>
+        <span class="chip">newest ${esc(ukDate(fresh.newestMentionAt))}</span>
         <button class="btn ghost" id="dlPdf" style="margin-left:auto">Download PDF</button>
         <span class="muted" id="dlMsg" style="font-size:12.5px"></span>
       </div>`;
@@ -3649,7 +3745,7 @@
         (shown.length?shown:tl).forEach(t=>{const tc=t.corroboration;const row=el('div','mentr',
           `<div class="row" style="gap:10px;align-items:center;justify-content:space-between">
              <div class="row" style="gap:10px;align-items:center">
-               <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when||'undated')}</b>
+               <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when?ukDate(t.date||t.when):'undated')}</b>
                ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
              ${tc?`<span class="pill ${tc.confirmed?'pos':'amber'}" style="font-size:11px" title="${esc(tc.outlets.join(', '))}">${esc(tc.label)}</span>`:''}</div>
            <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`);
@@ -3683,7 +3779,7 @@
         ebody.innerHTML='';
         (shown.length?shown:ev).forEach(e=>ebody.appendChild(el('div','mentr',
           `<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(e.platform||'')}</span>
-             <span class="muted">${esc(String(e.posted_at||'').slice(0,10))}</span></div>
+             <span class="muted">${esc(ukDate(e.posted_at))}</span></div>
            <div style="font-size:14px;margin-top:6px">${esc(e.text)}</div>
            ${e.url?`<div class="muted" style="font-size:12px;margin-top:4px"><a class="src-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(e.url))}">${esc(outletOf(e.url))} ↗</a></div>`:''}`)));
       };
