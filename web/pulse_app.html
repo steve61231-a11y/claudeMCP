@@ -2937,6 +2937,47 @@
       wrap.appendChild(bar);
     }
 
+    // Names the sources do not contain.
+    //
+    // The grounding rules are an instruction to the model, and on a cheaper
+    // backend an instruction is not a guarantee. Quotes are validated against
+    // their ref; prose never was. A reader has no way to tell a grounded
+    // report from an inventive one, and an invented name in front of a client
+    // is the fastest way to lose them — so say it here, above the findings,
+    // where it cannot be scrolled past.
+    const gr = r.grounding || {};
+    if ((gr.ungrounded || []).length) {
+      const bad = el('div','card');
+      bad.style.cssText = 'border-color:var(--neg);background:rgba(251,113,133,.14)';
+      const names = gr.ungrounded.slice(0, 12);
+      bad.innerHTML = `<div class="row" style="gap:10px;align-items:flex-start">
+        <div style="font-size:22px">⛔</div>
+        <div style="flex:1"><b style="font-size:15px">${gr.ungrounded.length}
+          name${gr.ungrounded.length === 1 ? '' : 's'} in this report ${gr.ungrounded.length === 1 ? 'does' : 'do'} not appear in any source.</b>
+        <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">
+          Checked ${fmt(gr.checked)} names against the collected corpus.
+          A name the sources do not contain was not reported — it was invented.
+          Treat every sentence naming one as unreliable, and do not send this
+          to a client until it is clean.</div>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+          ${names.map(n => `<span class="pill neg">${esc(n)}</span>`).join('')}
+          ${gr.ungrounded.length > names.length
+            ? `<span class="chip">+${gr.ungrounded.length - names.length} more</span>` : ''}
+        </div></div></div>`;
+      wrap.appendChild(bad);
+    } else if (gr.checked) {
+      // "We looked and found none" is a different result from "nobody
+      // looked", and this codebase does not let those two render the same.
+      const ok = el('div','card');
+      ok.innerHTML = `<div class="row" style="gap:10px;align-items:center">
+        <div style="font-size:16px">✓</div>
+        <div class="muted" style="font-size:13px">All ${fmt(gr.checked)} names in this
+          report appear in the collected sources${gr.method === 'capitalised-names'
+            ? ' (checked by name pattern — set LOW_MEMORY=false for the fuller entity check)' : ''}.</div>
+      </div>`;
+      wrap.appendChild(ok);
+    }
+
     // Sections that FAILED, named. An empty section that ran is a finding; an
     // empty section that never ran is not, and the two look identical without
     // this. Four separate bugs in this system have hidden behind that.

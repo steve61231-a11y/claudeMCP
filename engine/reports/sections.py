@@ -12,7 +12,7 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports import analysts, citations, triangulation
+from engine.reports import analysts, citations, grounding, triangulation
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -362,6 +362,12 @@ def enrich_report_payload(
         # linkify because that is what produces the ref index the quotes are
         # resolved through.
         linked = triangulation.annotate(linked)
+        # Names the sources do not contain. The grounding rules are a prompt
+        # instruction, and this codebase's own lesson is that an instruction
+        # is not a guarantee — quotes are validated against their ref, prose
+        # never was, so an analyst could write any sentence into the brief and
+        # nothing mechanical looked at it.
+        linked["grounding"] = grounding.check(linked, mentions or [])
         for key, value in linked.items():
             if payload.get(key) is not value:
                 payload[key] = value

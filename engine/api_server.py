@@ -542,6 +542,11 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # is the shape the dashboard's Key Questions renderer already expects.
         "open_questions": (payload.get("investigation") or {}).get("agenda", []),
         "investigation_leads": (payload.get("investigation") or {}).get("follow_up_queries", []),
+        # Names in the report that appear nowhere in the sources. Shipped to
+        # the page because a reader has no other way to tell a grounded
+        # report from an inventive one, and a client reading an invented name
+        # is the fastest way to lose them.
+        "grounding": payload.get("grounding"),
     }
 
 
