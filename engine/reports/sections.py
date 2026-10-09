@@ -12,7 +12,7 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports import analysts, citations, grounding, triangulation
+from engine.reports import analysts, citations, grounding, style_check, triangulation
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -368,6 +368,11 @@ def enrich_report_payload(
         # never was, so an analyst could write any sentence into the brief and
         # nothing mechanical looked at it.
         linked["grounding"] = grounding.check(linked, mentions or [])
+        # House style, checked rather than merely instructed. This ran on the
+        # issue map and never on the Search report, over three hand-named
+        # fields — so the executive brief, the single most-read paragraph in
+        # the product, was never looked at.
+        linked = style_check.annotate(linked)
         for key, value in linked.items():
             if payload.get(key) is not value:
                 payload[key] = value

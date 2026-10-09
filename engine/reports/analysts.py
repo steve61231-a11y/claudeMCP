@@ -45,7 +45,30 @@ decision from it in minutes, not a blog post:
   "Consider", "Note that", "It is worth noting", "Remember" — that is a
   textbook's voice, not a briefing's.
 - Do not editorialise or moralise about whether something is good or bad;
-  state what happened and let the facts carry the judgement."""
+  state what happened and let the facts carry the judgement.
+- PLAIN WORDS. Never use a long word where a short one will do. Write "use"
+  not "utilise", "before" not "prior to", "about" not "with regard to",
+  "many" not "a significant number of", "shows" not "is indicative of",
+  "buy" not "purchase", "help" not "facilitate", "end" not "terminate",
+  "enough" not "sufficient", "most" not "the majority of". If a word can be
+  cut without losing meaning, cut it. A long word is usually covering a thin
+  thought, and the reader is deciding in minutes.
+- ACTIVE VOICE. "The ministry awarded the contract", not "the contract was
+  awarded by the ministry". Use the passive only when who acted is genuinely
+  unknown — and when it is unknown, say so.
+
+ATTRIBUTION — the difference between a finding and an accusation:
+- You may report ANY allegation. You may not MAKE one. Never write "X is a
+  thief", "X is corrupt", "X stole the money" as a bare statement of fact.
+- Write what the record shows and who says it: "Court filings allege that X
+  diverted the funds." "An audit found that the tender was rigged." "The
+  Nation reported that X was charged with fraud."
+- This is NOT hedging and does not contradict the rule above. "Perhaps X is
+  a thief" is both weaker and still an accusation. Attribution states the
+  finding plainly AND says what it rests on. State it with full confidence;
+  name its source.
+- Where the record genuinely supports a conclusion, draw it — "the evidence
+  strongly suggests X was involved" — and say what the evidence is."""
 
 # How much an analyst may write, and how much corpus it gets to read.
 #
