@@ -461,3 +461,88 @@ def test_everything_the_linkifier_adds_survives_the_database():
           "raw_payload": {"url": "https://n/1"}}])
     _json.dumps(out)     # the assertion: this is the insert that failed
     assert out["ref_index"]["abcd1234"]["posted_at"].startswith("2026-03-12")
+
+
+# --- round four: the word "ref" was never the rule ----------------------------
+#
+# Three earlier rounds each taught the pattern one more way of writing "ref":
+# [ref=x], then (ref=x), then (ref=x, y). Then a live report arrived reading
+#
+#     why she calls him the "butcher of..." (fc6041cb)
+#
+# with the word absent entirely, and every one of those rounds counted for
+# nothing. Anchoring on "ref" was the mistake, repeated four times.
+#
+# The rule is: a token that IS one of this corpus's ref ids is a citation,
+# however the model punctuated it. Match the bracket and let the INDEX decide
+# — which is also what makes it safe on bare text, because ordinary prose does
+# not contain parenthesised eight-character hex strings that happen to be row
+# ids in our own database.
+
+_LIVE = {
+    "fc6041cb": {"url": "https://ktn/1", "platform": "ktnnews.com"},
+    "928c20f7": {"url": "https://x/1", "platform": "x"},
+    "88816149": {"url": "https://ele/1", "platform": "theelephant.info"},
+    "fresh-0": {"url": "https://n/0", "platform": "nation.africa"},
+}
+
+
+@pytest.mark.parametrize("raw", [
+    'why she calls him the "butcher of..." (fc6041cb)',   # bare, round brackets
+    "a piece titled 'Martha Karua: An Icon' [88816149]",   # bare, square
+    "headlines like 'NYAMAZA' (ref 928c20f7)",             # space, no operator
+    "fact [ref=fresh-0] here.",                            # the original
+    "fact (ref=fresh-0) here.",
+    "fact [ref: fresh-0] here.",
+    "fact ref=fresh-0 here.",
+])
+def test_any_punctuation_around_a_known_ref_is_resolved(raw):
+    out, cites = citations.linkify(raw, _LIVE)
+    assert out != raw, f"still leaking: {out!r}"
+    assert cites and cites[0]["url"]
+
+
+def test_an_unknown_bracketed_number_is_left_alone():
+    """The safety property. Only ids the corpus can resolve are rewritten, so
+    a case number, a docket, a year in brackets or anyone else's identifier
+    stays exactly as the analyst wrote it."""
+    for prose in ("a case number (99999999) we cannot resolve",
+                  "petition [deadbeef] filed elsewhere",
+                  "the figure (12345678) appears in the audit"):
+        out, cites = citations.linkify(prose, _LIVE)
+        assert out == prose and cites == []
+
+
+def test_a_bare_space_after_ref_still_does_not_eat_prose():
+    """Widening the separator to allow "ref 928c20f7" briefly turned
+    "the ref blew the whistle" into "the [1] the whistle". An operator proves
+    intent; a space does not, so that form demands an id-shaped token."""
+    for prose in ("the ref blew the whistle",
+                  "a referendum on the referral of the matter",
+                  "references were checked before publication"):
+        out, cites = citations.linkify(prose, _LIVE)
+        assert out == prose and cites == []
+
+
+def test_the_exact_sentences_from_the_shipped_report():
+    """Verbatim from screenshots of a report shown to prospective clients."""
+    import json as _json
+
+    payload = {
+        "executive_brief":
+            "KTN News Kenya calling her 'tough-talking and very principled' (b7b8bf59). "
+            "Lynn Ngugi hosted her under the banner 'the fearless Martha Karua', asking "
+            "'what she truly thinks of President Ruto, why she calls him the “butcher "
+            "of...”' (fc6041cb). The Elephant ran a piece titled 'Martha Karua: An Icon "
+            "and a Great Exemplar of Political Leadership' (88816149).",
+    }
+    mentions = [
+        {"id": "b7b8bf5900", "platform": "ktnnews.com", "raw_payload": {"url": "https://k/1"}},
+        {"id": "fc6041cb00", "platform": "youtube", "raw_payload": {"url": "https://y/1"}},
+        {"id": "8881614900", "platform": "theelephant.info", "raw_payload": {"url": "https://e/1"}},
+    ]
+    out = citations.linkify_report(payload, mentions)
+    brief = out["executive_brief"]
+    for leaked in ("(b7b8bf59)", "(fc6041cb)", "(88816149)"):
+        assert leaked not in brief, f"{leaked} reached the page again"
+    assert len(out["executive_brief_citations"]) == 3

@@ -38,7 +38,16 @@ _REF_PATTERN = re.compile(
                             # inner \s* is INSIDE this group on purpose: left
                             # outside, it swallowed the space before an
                             # unbracketed "ref=" and ran two words together.
-    refs?\s*[=:]\s*         # ref= / refs: / ref :
+    (?:                     # -- how the word is joined to the id --
+      refs?\s*[=:]\s*        #   ref= / refs: / ref :  — the operator proves
+                            #   intent, so the id after it can be anything
+      |                     #
+      refs?\s+(?=[0-9a-fA-F]{6,12}\b|[\w]+-\d+)
+                            #   "ref 928c20f7" — a bare space proves nothing,
+                            #   so this form demands an ID-SHAPED token.
+                            #   Without the lookahead, "the ref blew the
+                            #   whistle" became "the [1] the whistle".
+    )
     (                       # -- the ids --
       [\w-]+                 # first id
       (?:\s*,\s*[\w-]+)*    # ", second, third" in the same marker
@@ -47,6 +56,22 @@ _REF_PATTERN = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+#: A bracketed token with NO "ref" word at all: "(fc6041cb)", "[88816149]".
+#:
+#: The fourth spelling, and the one that finally shows the pattern was the
+#: wrong shape. Three previous rounds each taught the regex one more way of
+#: writing the word "ref" — and then a live report arrived citing
+#: "why she calls him the 'butcher of...' (fc6041cb)", with the word absent
+#: entirely, and every one of those rounds counted for nothing.
+#:
+#: Anchoring on "ref" was never the rule. The rule is: a token that IS one of
+#: this corpus's ref ids is a citation, however the model chose to punctuate
+#: it. So match the bracket, and let the index decide — a match is rewritten
+#: only when the id actually resolves, which is what makes this safe to apply
+#: to bare text. Ordinary prose does not contain parenthesised eight-character
+#: hex strings that happen to be row ids in our own database.
+_BARE_REF_PATTERN = re.compile(r"[\[\(]\s*([0-9a-fA-F]{6,12}|[\w]+-\d+)\s*[\]\)]")
 
 #: Splits the captured id list. A marker can carry several.
 _REF_SPLIT = re.compile(r"\s*,\s*")
@@ -152,8 +177,12 @@ def _linkify_shared(text: str, ref_index: dict, seen: dict, citations: list) -> 
     single citations array, so each string cannot restart at [1] or the page
     would show two different sources both numbered [1].
     """
-    if not text or "ref" not in text.lower():
-        return text or ""
+    # The old early-return was `"ref" not in text` — which skipped every
+    # bare-bracket citation before the pattern ever ran.
+    if not text:
+        return ""
+    if "ref" not in text.lower() and "(" not in text and "[" not in text:
+        return text
 
     url_spans = [m.span() for m in _URL_SPAN.finditer(text)]
 
@@ -175,7 +204,27 @@ def _linkify_shared(text: str, ref_index: dict, seen: dict, citations: list) -> 
             numbers.append(f"[{seen[ref]}]")
         return "".join(numbers)
 
-    return _REF_PATTERN.sub(_replace, text)
+    text = _REF_PATTERN.sub(_replace, text)
+
+    def _replace_bare(match: re.Match) -> str:
+        at = match.start()
+        if any(start <= at < end for start, end in url_spans):
+            return match.group(0)
+        ref = match.group(1)
+        # The safety property: only rewrite what the corpus can resolve.
+        # An unknown bracketed hex string is somebody's case number, not our
+        # citation, and must be left exactly as written.
+        if ref not in ref_index:
+            return match.group(0)
+        if ref not in seen:
+            n = len(seen) + 1
+            seen[ref] = n
+            found = ref_index.get(ref) or {}
+            citations.append({"n": n, "ref": ref, "url": found.get("url"),
+                              "platform": found.get("platform")})
+        return f"[{seen[ref]}]"
+
+    return _BARE_REF_PATTERN.sub(_replace_bare, text)
 
 
 def _linkify_value(value, key, ref_index, seen, citations, used):

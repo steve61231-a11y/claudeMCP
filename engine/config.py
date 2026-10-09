@@ -236,7 +236,21 @@ class Settings(BaseSettings):
     enable_scrapling_stealth: bool = False
     # Wikipedia (keyless MediaWiki REST API): authoritative background on the
     # subject + linked entities. ON by default: free, no key, no extra packages.
-    enable_wikipedia: bool = True
+    # Wikipedia: OFF.
+    #
+    # Turned off at the client's request, and the reports show why. A live
+    # Search report opened on "Alma mater is an allegorical Latin phrase
+    # meaning 'nourishing mother'" as the subject summary — a dictionary
+    # definition scraped from an infobox link, presented as who the subject
+    # is. Another headline carried "(; born 22 September 1957)", the stray
+    # semicolon of a stripped infobox template.
+    #
+    # The deeper problem is that the analysts cannot tell an encyclopedia
+    # entry from reporting. A Wikipedia page is a tertiary source written
+    # about the whole of a life; this product reports what was published in
+    # a window. Mixed into the corpus it reads as the most authoritative item
+    # present and pulls the summary toward biography and away from the news.
+    enable_wikipedia: bool = False
     # Genuinely-free, keyless, Kenya-relevant sources — the real fix for data
     # starvation when SocialCrawl credits are exhausted. All ON by default: no
     # key, no login, no credits; only need open egress.

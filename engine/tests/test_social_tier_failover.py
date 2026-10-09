@@ -79,7 +79,12 @@ def test_free_fallback_skipped_without_x_credentials(db_session, monkeypatch):
 def test_news_and_web_sources_run_in_both_tiers(db_session, monkeypatch):
     """Social tier never gates news/archive/discovery — they're additive."""
     monkeypatch.setattr(settings, "socialcrawl_api_key", "test-key", raising=False)
-    expected = {"gdelt", "wikipedia", "google_news", "reddit", "youtube"}
+    # Wikipedia is not here: it is disabled by default now, because an
+    # encyclopedia entry about a whole life kept being summarised as what
+    # happened in a one-month window. That is a decision about source
+    # quality and has nothing to do with the social tier, which is what
+    # this test is about.
+    expected = {"gdelt", "google_news", "reddit", "youtube"}
 
     for tier in ("managed", "free"):
         monkeypatch.setattr(orchestrator, "resolve_social_tier", lambda t=tier: (t, 0.0, t))

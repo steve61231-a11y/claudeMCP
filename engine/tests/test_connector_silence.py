@@ -82,8 +82,18 @@ def test_gdelt_records_a_refused_host(monkeypatch):
 
 
 def test_wikipedia_records_a_refused_host(monkeypatch):
+    """Wikipedia is disabled by default now — it was putting encyclopedia
+    prose into reports about a news window — and the connector self-gates on
+    that setting, so it returns before it can reach a network to fail on.
+
+    This test is about the connector's error reporting, not about whether it
+    is switched on, so it switches it on. If the feature is ever removed
+    outright this test goes with it.
+    """
+    from engine.config import settings
     from engine.ingestion import wikipedia_connector as wc
 
+    monkeypatch.setattr(settings, "enable_wikipedia", True)
     connector = wc.WikipediaConnector()
     _fetch_with_dead_network(connector, monkeypatch, wc)
     assert connector.last_error
