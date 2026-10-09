@@ -230,6 +230,90 @@ def intersection_discovery_variants(
     return _dedupe(variants)[:MAX_INTERSECTION_DISCOVERY_VARIANTS]
 
 
+#: How many query variants each keyword source is worth running, chosen from
+#: what that host will tolerate rather than from what we would like.
+#:
+#: `ingestion/http.py` paces GDELT at one request per five seconds and Reddit
+#: at one per two, so a generous budget there buys little and costs the run
+#: minutes. Google News RSS has no pacing at all and is the cheap win.
+#: YouTube is unpaced but slow per call.
+#:
+#: Raising any of these trades run time for coverage. Zero disables the
+#: expansion for that source and returns it to a single bare-name query.
+SOURCE_VARIANT_BUDGET = {
+    "google_news": 12,
+    "gdelt": 6,
+    "reddit": 4,
+    "youtube": 3,
+}
+
+
+def connector_variants(politician: Politician, source: str, budget: int | None = None,
+                       rotation: int = 0) -> list[str]:
+    """The queries ONE keyword source should run for this subject.
+
+    Every free connector was being handed `politician.name` and nothing else.
+    One bare-name query returns whatever is trending today — this module's own
+    DISCOVERY_PROBES comment says exactly that — so a subject's business
+    record, court record, earlier career and anything not in this week's news
+    were unreachable by construction. The probes, the aliases, the timespan
+    nudges and the investigator's follow-up questions all existed, and all of
+    them were wired to `discovery_variants()`, which runs only when SearXNG is
+    configured. Without that one optional service the entire search was a name.
+
+    Order is the design:
+
+    1. The bare name, always and first, so this can only ever add to what the
+       source already returned. Nothing regresses.
+    2. The investigator's leads from the last run — the specific questions
+       THIS subject raised, as opposed to the ones we ask about everyone.
+       This is also the only thing that makes a second run an investigation
+       rather than a repeat, and it had no consumer outside SearXNG.
+    3. Other identities: aliases, titles, honorifics, Swahili terms.
+    4. A rotating slice of the probe list.
+
+    `rotation` is how many runs this subject has already had. The probe slice
+    advances by exactly what each run consumes, so successive runs share no
+    probe and the whole list is swept in a predictable number of runs rather
+    than re-asking the same six questions forever. The corpus is designed to
+    compound; this is what gives it something new to compound with.
+    """
+    if budget is None:
+        budget = SOURCE_VARIANT_BUDGET.get(source, 0)
+    name = politician.name
+    if budget <= 1:
+        return [name]
+
+    # Ration the budget rather than concatenating and truncating.
+    #
+    # Concatenation looks fine and is wrong: a subject with two aliases, two
+    # titles and a honorific fills six slots before a single probe is reached,
+    # so GDELT at budget 6 would have run five ways of spelling the name and
+    # asked nothing about courts, contracts or the earlier record. Every
+    # category has to be guaranteed room or the cheapest one silently takes
+    # the lot — and the probes are the whole point of the expansion.
+    remaining = budget - 1                       # the bare name is slot one
+    lead_slots = min(len(_pending_leads(politician)), max(1, budget // 4))
+    remaining -= lead_slots
+    probe_slots = max(1, (remaining + 1) // 2)   # probes get at least half
+    identity_slots = max(0, remaining - probe_slots)
+
+    out: list[str] = [name]
+    out.extend(_pending_leads(politician)[:lead_slots])
+    out.extend([v for v in text_variants(politician) if v != name][:identity_slots])
+
+    probes = DISCOVERY_PROBES + DISCOVERY_TIMESPAN_PROBES
+    if probes and probe_slots:
+        # Advance by exactly what the last run consumed, so run N and run
+        # N+1 share no probe at all. A fixed stride would either repeat
+        # questions or skip whole categories depending on the budget.
+        start = (rotation * probe_slots) % len(probes)
+        ordered = probes[start:] + probes[:start]
+        out.extend(f'"{name}" {probe}' for probe in ordered[:probe_slots])
+
+    return _dedupe(out)[:budget]
+
+
 def _pending_leads(politician: Politician) -> list[str]:
     """Follow-up queries a previous investigator pass recorded on the subject.
 

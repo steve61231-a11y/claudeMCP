@@ -85,6 +85,31 @@ def plan_run(
 
     tasks: list[IngestionTask] = []
 
+    # How many runs this subject has already had. It drives which slice of the
+    # probe list the keyword sources ask this time, so run 2 investigates
+    # ground run 1 did not. See queries.connector_variants.
+    prior_runs = (
+        db.query(IngestionRun)
+        .filter(IngestionRun.politician_id == politician.id, IngestionRun.id != run.id)
+        .count()
+    )
+
+    def _keyword_tasks(connector: str, platform: str, endpoint: str) -> None:
+        """One task per query variant.
+
+        Every one of these connectors used to get `politician.name` and
+        nothing else, so the whole search was a single bare-name lookup per
+        source — whatever is trending today, and nothing about the business
+        record, the court record or the earlier career. The probes, aliases
+        and investigator leads all existed; they were wired only to the
+        SearXNG discovery layer, which is optional and off here.
+        """
+        for variant in queries.connector_variants(politician, connector, rotation=prior_runs):
+            tasks.append(
+                IngestionTask(run_id=run.id, connector=connector, platform=platform,
+                              endpoint=endpoint, query=variant)
+            )
+
     # Social-media tier decision. News, archives and web discovery are separate
     # sources and always run regardless of this — they are additive, not an
     # either/or with social.
@@ -150,9 +175,7 @@ def plan_run(
         )
 
     if settings.enable_gdelt:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="gdelt", platform="news", endpoint="doc", query=politician.name)
-        )
+        _keyword_tasks("gdelt", "news", "doc")
 
     if settings.enable_wayback:
         tasks.append(
@@ -199,19 +222,13 @@ def plan_run(
         )
 
     if settings.enable_google_news:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="google_news", platform="news", endpoint="rss", query=politician.name)
-        )
+        _keyword_tasks("google_news", "news", "rss")
 
     if settings.enable_reddit:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="reddit", platform="reddit", endpoint="search", query=politician.name)
-        )
+        _keyword_tasks("reddit", "reddit", "search")
 
     if settings.enable_youtube:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="youtube", platform="youtube", endpoint="search", query=politician.name)
-        )
+        _keyword_tasks("youtube", "youtube", "search")
 
     slug = politician.name.lower().replace(" ", "_")
     if (CURATED_DIR / f"{slug}.json").exists():
