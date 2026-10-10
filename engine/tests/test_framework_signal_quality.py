@@ -110,3 +110,99 @@ def test_no_reference_material_means_no_claim():
     assert fw.subject_profile_from_corpus(
         [{"source_type": "article", "text": "Ruto spoke today about the budget."}]
     ) is None
+
+
+# --- 5.0 is three things that are happening, not ten headlines ---------------
+#
+# The section was a feed: up to ten items, each tagged "international media"
+# or "social media", in rank order. Read at speed it said nothing, because
+# three of those items were one story told by three outlets and the reader
+# had to notice that themselves. The client's instruction was to keep three
+# slots and group similar items into them, so that three lines carry a whole
+# window.
+
+def _win(mention_id, text, engagement, platform="news", hour=2):
+    return {
+        "id": mention_id, "text": text, "platform": platform,
+        "posted_at": NOW - timedelta(hours=hour),
+        "engagement": {"likes": engagement}, "source_url": f"http://x/{mention_id}",
+    }
+
+
+WINDOW = [
+    _win(1, "Patient advocacy groups publish a county list of facilities turning away registered members", 4120),
+    _win(2, "Two counties confirm facilities were asking for cash, blame a reimbursement backlog", 2870),
+    _win(3, "Health ministry says a circular on point-of-care charges is being finalised", 1960),
+    _win(4, "Chronic illness patients describe rationing medication while waiting on approvals", 3340, "twitter"),
+    _win(5, "Oncology unit says approval delays have pushed treatment dates by weeks", 2180, "twitter"),
+    _win(6, "Registration passes 4.2 million members, authority says cover does not expire", 640, "twitter"),
+]
+
+
+def test_a_narrative_the_mentions_already_belong_to_names_the_theme():
+    """Grouping is done the exact way first. The mentions have already been
+    clustered into narratives elsewhere in the report, so a theme can take
+    that name — and then the same vocabulary appears in Share of Voice and
+    the theme mix instead of three different names for one thing."""
+    out = fw.build_emergent_issues(
+        WINDOW, now=NOW,
+        narratives=[{"label": "SHA rollout pain", "mention_ids": [1, 2, 3]}])
+    first = out["themes"][0]
+    assert first["label"] == "SHA rollout pain"
+    assert first["labelled_by"] == "narrative"
+    assert first["count"] == 3
+
+
+def test_an_inflected_form_is_the_same_word():
+    """"approval delays" and "waiting on approvals" are one story and share
+    no token at all. A synonym list would have had to be taught that single
+    case."""
+    out = fw.build_emergent_issues(WINDOW, now=NOW, narratives=[
+        {"label": "SHA rollout pain", "mention_ids": [1, 2, 3]}])
+    grouped = {t["label"]: t for t in out["themes"]}
+    approvals = [t for t in out["themes"] if "approval" in (t["shared_terms"] or [])]
+    assert approvals, f"the two approval items were not grouped: {list(grouped)}"
+    assert approvals[0]["count"] == 2
+
+
+def test_one_rare_shared_word_groups_and_one_common_word_does_not():
+    """In a corpus about one subject every item says the subject's name, so
+    a single shared word is usually a coincidence. A word that only two
+    items in the window use is the opposite."""
+    out = fw.build_emergent_issues(WINDOW, now=NOW)
+    sizes = sorted((t["count"] for t in out["themes"]), reverse=True)
+    assert max(sizes) <= 3, (
+        "a theme swallowed most of the window — single-link chaining is back")
+    assert sum(t["count"] for t in out["themes"]) + out["other_item_count"] == len(WINDOW)
+
+
+def test_nothing_in_the_window_is_dropped():
+    """Three themes and silence about the rest is a claim that the window
+    held three things."""
+    wide = WINDOW + [
+        _win(7, "Unrelated: parliament debates a county revenue formula", 900, "news", 1),
+        _win(8, "Unrelated: new import duty on cooking oil announced", 850, "news", 1),
+    ]
+    out = fw.build_emergent_issues(wide, now=NOW)
+    accounted = sum(t["count"] for t in out["themes"]) + out["other_item_count"]
+    assert accounted == len(out["items"]), (
+        "items in the window are in neither the themes nor the remainder")
+    if out["other_item_count"]:
+        assert out["other_themes"], "a remainder count with nothing behind it"
+
+
+def test_theme_shares_are_shares_of_the_window():
+    out = fw.build_emergent_issues(WINDOW, now=NOW, narratives=[
+        {"label": "SHA rollout pain", "mention_ids": [1, 2, 3]}])
+    total = out["window_engagement"]
+    for theme in out["themes"]:
+        assert abs(theme["share"] - round(100 * theme["engagement"] / total, 1)) < 0.11
+
+
+def test_a_group_of_one_is_not_named_by_word_frequency():
+    """Over one document every word occurs in one of one, so "ranking" them
+    is alphabetical order wearing a statistic's clothes — it produced
+    "Authority Cover Does" for a headline about registration figures."""
+    out = fw.build_emergent_issues([WINDOW[-1]], now=NOW)
+    label = out["themes"][0]["label"]
+    assert label.lower().startswith("registration"), label

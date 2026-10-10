@@ -146,6 +146,8 @@ Return one entry for EVERY cluster id you were given."""
 _STOPWORDS = frozenset("""
 a an the and or but if of to in on at by for with from as is are was were be been being
 this that these those it its his her their our your my we you they he she i not no nor so
+do does did doing done have has had having would could should might must may shall
+into onto upon amid amid while whose been being does
 than then there here when what which who whom how why all any both each few more most other
 some such only own same too very can will just should now about after before over under
 video news kenya kenyan live watch subscribe channel latest today daily update updates
@@ -155,6 +157,56 @@ county senator mp mca hon president governor political politics
 """.split())
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]{2,}")
+
+#: Suffixes trimmed before two words are treated as the same word, longest
+#: first.
+#:
+#: Matching on surface forms fails on the pair it is most often asked
+#: about: "approval delays" and "waiting on approvals" are the same story
+#: and share no token at all. A synonym list would have had to be taught
+#: that one case; folding the inflection fixes the category. It also stops
+#: a derived label reading "Approval Approvals Chronic", which is one
+#: concept spelled twice and a wasted slot out of three.
+_SUFFIXES = (("ies", "y"), ("ing", ""), ("edly", ""), ("ed", ""),
+             ("es", ""), ("ly", ""), ("s", ""))
+
+#: A stem shorter than this is not evidence of anything.
+_MIN_STEM = 4
+
+
+def stem(word: str) -> str:
+    """Crude, deliberate and explainable. Not a linguistic stemmer: enough
+    to stop one concept counting twice, and small enough that anyone
+    reading a surprising grouping can see why it happened."""
+    for suffix, replacement in _SUFFIXES:
+        trimmed = len(word) - len(suffix) + len(replacement)
+        if word.endswith(suffix) and trimmed >= _MIN_STEM:
+            return word[: -len(suffix)] + replacement
+    return word
+
+
+#: Where a one-line name is allowed to end.
+_LABEL_CHARS = 64
+
+
+def short_label(text: str, limit: int = _LABEL_CHARS) -> str:
+    """A headline's opening, cut at a word boundary.
+
+    Used where a name is needed for a single item, which word-frequency
+    cannot supply. Cut at a clause first — a comma or a dash is the
+    writer's own mark for where the point ends — and at a word otherwise.
+    """
+    body = " ".join((text or "").split())
+    if not body:
+        return "Unlabelled coverage"
+    for mark in (" — ", " – ", ", ", "; ", ": "):
+        head = body.split(mark)[0]
+        if 16 <= len(head) <= limit:
+            return head
+    if len(body) <= limit:
+        return body
+    cut = body[:limit].rsplit(" ", 1)[0]
+    return (cut or body[:limit]).rstrip(",;:-") + "…"
 
 
 def derived_label(texts: list[str], exclude: set[str] | None = None) -> tuple[str, str]:
@@ -170,20 +222,52 @@ def derived_label(texts: list[str], exclude: set[str] | None = None) -> tuple[st
     so one 400-word article cannot name the whole cluster on its own.
     """
     exclude = {w.lower() for w in (exclude or set())}
+    # Counted by STEM, shown in whichever surface form the posts use most.
+    # Counting surface forms gave labels like "Approval Approvals Chronic":
+    # one concept spelled twice, and a third of a three-word name wasted on
+    # the duplicate.
     doc_freq: dict[str, int] = {}
+    surface: dict[str, dict[str, int]] = {}
     for text in texts:
         seen = set()
         for match in _WORD_RE.findall(text or ""):
             word = match.lower()
             if word in _STOPWORDS or word in exclude or len(word) < 4:
                 continue
-            seen.add(word)
-        for word in seen:
-            doc_freq[word] = doc_freq.get(word, 0) + 1
+            root = stem(word)
+            seen.add(root)
+            forms = surface.setdefault(root, {})
+            forms[word] = forms.get(word, 0) + 1
+        for root in seen:
+            doc_freq[root] = doc_freq.get(root, 0) + 1
 
     if not doc_freq:
         return "Unlabelled coverage", ""
-    ranked = sorted(doc_freq.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+
+    # One document has no document frequencies worth the name — every word
+    # in it occurs in exactly one of one, so "ranking" them is alphabetical
+    # order wearing a statistic's clothes. It produced "Authority Cover
+    # Does" for a headline about registration passing 4.2 million members.
+    # A single item is named by what it says.
+    if len(texts) == 1:
+        return short_label(texts[0]), (
+            "A single item, named from its own opening rather than from word "
+            "frequency, which over one document measures nothing.")
+    # Only words the cluster actually shares, when it shares any.
+    #
+    # Ranking by document frequency and taking three is right for a cluster
+    # of twenty and wrong for a cluster of two, where one word appears in
+    # both and every other word appears in exactly one — so the second and
+    # third slots are filled alphabetically and the label reads "Approval
+    # Chronic Dates", two thirds of which name nothing. A short true label
+    # beats a long arbitrary one; the strongest item's own headline is
+    # shown underneath it either way.
+    shared = {root: n for root, n in doc_freq.items() if n > 1}
+    pool = shared or doc_freq
+    ranked = [
+        (max(surface[root].items(), key=lambda kv: (kv[1], -len(kv[0])))[0], count)
+        for root, count in sorted(pool.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
+    ]
     label = " ".join(word.capitalize() for word, _ in ranked)
     description = (
         f"Recurring coverage around {', '.join(w for w, _ in ranked)} "

@@ -38,6 +38,18 @@ EMERGENT_WINDOW_HOURS = 72
 MAX_CURRENT_ISSUES = 3  # "we can stick to 3 maximum"
 MAX_EMERGENT_ITEMS = 10
 
+#: The client's instruction, in their words: "we kept at top three, but you
+#: can also combine some... group two that are similar so that you still get
+#: the top three, but you still get all the information." Three is therefore
+#: a cap on THEMES, not on items — grouping is the mechanism by which three
+#: slots carry a whole window.
+MAX_EMERGENT_THEMES = 3
+
+#: How many distinctive terms two items must share to be called the same
+#: thing. Two, deliberately: in a corpus about one subject every item says
+#: the subject's name, so a single shared word groups nothing.
+GROUP_SHARED_TERMS = 2
+
 # Channel-promotion boilerplate. These phrases are an advertisement for the
 # uploader, not coverage of the subject, and the items carrying them are
 # reliably the highest-engagement things in a Kenyan political corpus:
@@ -588,7 +600,8 @@ def build_current_issues(payload: dict) -> dict:
     }
 
 
-def build_emergent_issues(mentions: list[dict], now: datetime | None = None) -> dict:
+def build_emergent_issues(mentions: list[dict], now: datetime | None = None,
+                          narratives: list[dict] | None = None) -> dict:
     """5.0 — high-impact coverage in the 72 hours before the reporting date.
 
     The framework sets a concrete bar for social (engagement over ~100) and
@@ -616,6 +629,10 @@ def build_emergent_issues(mentions: list[dict], now: datetime | None = None) -> 
             continue
         emergent.append(
             {
+                # Carried so a group can be formed from the narrative the
+                # mention already belongs to, which is exact, rather than
+                # from guessing at its words.
+                "mention_id": str(mention.get("id")) if mention.get("id") is not None else None,
                 "headline": (mention.get("text") or "")[:200],
                 "platform": mention.get("platform"),
                 "outlet_type": segment,
@@ -626,17 +643,202 @@ def build_emergent_issues(mentions: list[dict], now: datetime | None = None) -> 
             }
         )
 
+    ranked = rank_emergent(emergent, MAX_EMERGENT_ITEMS)
     return {
         "window_hours": EMERGENT_WINDOW_HOURS,
         "engagement_threshold": HIGH_ENGAGEMENT_THRESHOLD,
         "count": len(emergent),
-        "items": rank_emergent(emergent, MAX_EMERGENT_ITEMS),
+        "items": ranked,
+        # The same window, grouped. The flat list stays because it is what
+        # the count and the threshold describe; the grouping is what a
+        # reader is actually given.
+        **group_emergent(ranked, narratives),
         "note": (
             f"Social items qualify above {HIGH_ENGAGEMENT_THRESHOLD} engagements; "
             "editorial coverage in the window qualifies on publication. Ranked "
             "within each outlet type and interleaved, so one platform's view "
             "counts cannot take every slot."
         ),
+    }
+
+
+def _distinctive_terms(text: str) -> set[str]:
+    """The words in an item that could tell it apart from another one.
+
+    The stopword list is borrowed wholesale from the narrative labeller
+    rather than re-listed here. A second copy is a second thing to keep
+    current, and the place this codebase keeps paying for the same bug
+    twice is precisely where it wrote the rule down twice.
+    """
+    from engine.intelligence.narratives import _STOPWORDS, _WORD_RE, stem
+
+    return {
+        stem(match.lower())
+        for match in _WORD_RE.findall(text or "")
+        if len(match) >= 4 and match.lower() not in _STOPWORDS
+    }
+
+
+def group_emergent(items: list[dict], narratives: list[dict] | None = None,
+                   limit: int = MAX_EMERGENT_THEMES) -> dict:
+    """Ten headlines become three things that are happening.
+
+    The section was a feed: up to ten items, each with its outlet type and
+    its engagement count, in rank order. Read quickly it said nothing,
+    because three of those items were the same story told by three outlets
+    and the reader had to notice that themselves. The client's instruction
+    was to keep three slots and group similar items into them, so that
+    three lines still carry the whole window.
+
+    Grouping is done the exact way first and the approximate way second.
+
+    **Exact**: an emergent item is a mention, and the mentions have already
+    been clustered into narratives elsewhere in this report. If the item
+    belongs to one, that narrative names the group — and the same name then
+    appears in Share of Voice and the theme mix, so a reader moving between
+    sections sees one vocabulary instead of three.
+
+    **Approximate**: anything left over is grouped on shared distinctive
+    terms and named from its own words, with `labelled_by` saying so. A
+    derived name is a description of what the items are about, which beats
+    a number, and marking it lets the page be honest that nothing authored
+    it.
+
+    What does not fit in `limit` themes is RETURNED, not dropped. Three
+    themes and a stated count of what else was in the window is a summary;
+    three themes and silence about the rest is a claim that the window held
+    three things.
+    """
+    buckets: list[dict] = []
+    by_label: dict[str, dict] = {}
+
+    # Which narrative each mention belongs to. Built once; `mention_ids` are
+    # stringified because an id arrives as an int from the database and as a
+    # str from the corpus builders, and matching those two was a bug here
+    # before.
+    narrative_of: dict[str, str] = {}
+    for narrative in narratives or []:
+        label = narrative.get("label")
+        if not label:
+            continue
+        for mention_id in narrative.get("mention_ids") or []:
+            narrative_of.setdefault(str(mention_id), label)
+
+    def _bucket(label: str, how: str) -> dict:
+        existing = by_label.get(label)
+        if existing is None:
+            existing = {"label": label, "labelled_by": how, "items": [],
+                        "terms": set(), "common": None}
+            by_label[label] = existing
+            buckets.append(existing)
+        return existing
+
+    # How many items in this window use each term. A term that appears in
+    # most of them groups nothing — in a corpus about one subject that is
+    # every item — while a term in two of twelve is a real link between
+    # exactly those two.
+    term_sets = {id(item): _distinctive_terms(item.get("headline")) for item in items}
+    window_freq: dict[str, int] = {}
+    for terms in term_sets.values():
+        for term in terms:
+            window_freq[term] = window_freq.get(term, 0) + 1
+    rare_ceiling = max(1, len(items) // 3)
+
+    # Items the narratives already name go straight to their group. The rest
+    # start as a group of one and are merged below.
+    loose: list[dict] = []
+    for item in items:
+        label = narrative_of.get(str(item.get("mention_id")))
+        if label:
+            _bucket(label, "narrative")["items"].append(item)
+            continue
+        terms = term_sets[id(item)]
+        loose.append({"label": None, "labelled_by": "derived", "items": [item],
+                      "terms": set(terms), "common": set(terms)})
+
+    def _overlap(a: dict, b: dict) -> tuple[float, float]:
+        """How strongly two groups are the same thing.
+
+        Measured against what each group's items ALL share, not their union.
+        Against the union, A joins B over one word, C joins A over a
+        different word, D joins C, and five unrelated headlines end up in
+        one group named after none of them — single-link chaining, which
+        here produced a theme called "Facilities Members Advocacy" holding
+        five items out of six.
+
+        A shared term that is rare in this window counts fully; a term half
+        the window uses counts half. One rare shared word is the story; one
+        common shared word is a coincidence.
+        """
+        shared = a["common"] & b["common"]
+        if not shared:
+            return (0.0, 0.0)
+        score = sum(1.0 if window_freq.get(term, 0) <= rare_ceiling else 0.5
+                    for term in shared)
+        union = len(a["common"] | b["common"]) or 1
+        return (score, len(shared) / union)
+
+    # Merged best-first rather than first-fit.
+    #
+    # First-fit depends on the order items arrive in, and the order here is
+    # engagement: the loudest item absorbs whatever it happens to touch
+    # first, and a genuinely tighter pair further down the list is then too
+    # late to form. Measured on one window, "approval delays" and "waiting
+    # on approvals" were split because the first of them had already been
+    # taken by a louder headline they shared one weaker word with. With ten
+    # items at most, comparing every pair costs nothing.
+    while len(loose) > 1:
+        best, pair = (0.0, 0.0), None
+        for i in range(len(loose)):
+            for j in range(i + 1, len(loose)):
+                rank = _overlap(loose[i], loose[j])
+                if rank > best:
+                    best, pair = rank, (i, j)
+        if pair is None or best[0] < 1.0:
+            break
+        i, j = pair
+        a, b = loose[i], loose[j]
+        a["items"].extend(b["items"])
+        a["terms"] |= b["terms"]
+        a["common"] &= b["common"]
+        loose.pop(j)
+
+    buckets.extend(loose)
+
+    from engine.intelligence.narratives import derived_label
+
+    for bucket in buckets:
+        if bucket["label"] is None:
+            bucket["label"] = derived_label(
+                [i.get("headline") or "" for i in bucket["items"]])[0]
+        bucket["engagement"] = sum(int(i.get("engagement") or 0)
+                                   for i in bucket["items"])
+        bucket["count"] = len(bucket["items"])
+        bucket["platforms"] = sorted({i.get("platform") for i in bucket["items"]
+                                      if i.get("platform")})
+        # Why these are together, for the derived ones. A group a reader
+        # cannot see the reason for is a group they have to take on trust.
+        bucket["shared_terms"] = (
+            sorted(bucket["common"] or ())[:4]
+            if bucket["labelled_by"] == "derived" and len(bucket["items"]) > 1
+            else [])
+        bucket.pop("terms", None)
+        bucket.pop("common", None)
+
+    # Ranked on engagement, which is the client's own measure of what
+    # mattered in the window, with the item count as the tie-break.
+    buckets.sort(key=lambda b: (b["engagement"], b["count"]), reverse=True)
+    top, rest = buckets[:limit], buckets[limit:]
+
+    window_engagement = sum(b["engagement"] for b in buckets) or 1
+    for bucket in top:
+        bucket["share"] = round(100 * bucket["engagement"] / window_engagement, 1)
+
+    return {
+        "themes": top,
+        "other_themes": rest,
+        "other_item_count": sum(b["count"] for b in rest),
+        "window_engagement": window_engagement,
     }
 
 
@@ -848,6 +1050,7 @@ def build(politician, payload: dict, mentions: list[dict], previous: dict | None
         "overall_mentions": build_overall_mentions(payload, mentions, previous, sentiments),
         "sentiment": build_sentiment_section(payload, sentiments),
         "current_issues": current_issues,
-        "emergent_issues": build_emergent_issues(mentions, now=now),
+        "emergent_issues": build_emergent_issues(
+            mentions, now=now, narratives=payload.get("narratives")),
         "strategic_implications": build_strategic_implications(payload, current_issues),
     }

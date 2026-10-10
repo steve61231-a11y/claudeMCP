@@ -1575,6 +1575,25 @@
     return box;
   }
 
+  /** Emergent items, as rows. One renderer, used by the themes, by the
+      leftovers, and by the flat-list fallback for reports generated before
+      grouping existed — three call sites that previously would have been
+      three slightly different rows. */
+  function emergentItems(host,items){
+    (items||[]).forEach(item=>{
+      const row=el('div','mentr');
+      const when=item.posted_at?ukDate(item.posted_at):'';
+      row.innerHTML=`<div style="font-size:13.5px">${esc(item.headline||'')}</div>
+        <div class="muted" style="font-size:12px;margin-top:5px">
+          ${esc(item.platform||'')}${when?' · '+esc(when):''}
+          ${item.engagement?' · '+fmt(item.engagement)+' engagements':''}
+        </div>
+        ${item.url?`<div style="margin-top:5px"><a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" class="src-link">open the original ↗</a></div>`
+                  :'<div class="muted" style="font-size:12px;margin-top:5px">no link captured for this item</div>'}`;
+      host.appendChild(row);
+    });
+  }
+
   /* ---- Sentiment Analysis Framework V1.0 ---- */
   function renderSentimentFramework(out,fw,name){
     resetSections();
@@ -1725,21 +1744,74 @@
     s4.appendChild(g4);
     out.appendChild(s4);
 
-    // 5.0 Emergent issues
+    // 5.0 Emergent issues — three things that are happening, not ten headlines.
+    //
+    // This was a feed: up to ten items, each tagged "international media" or
+    // "social media", in rank order. Read at speed it said nothing, because
+    // three of those items were one story told by three outlets and the
+    // reader had to spot that themselves. The outlet tag was the loudest
+    // thing on each row and the least useful — it answered a question
+    // nobody asks of an alert.
+    //
+    // So: the engine groups the window into themes (exactly, from the
+    // narratives the mentions already belong to; approximately, from shared
+    // distinctive terms, and it says which). Three themes, each a bar
+    // showing its share of the window's engagement and its strongest
+    // headline, with every item folded underneath. Nothing is dropped —
+    // what did not fit in three is stated and listed, because three themes
+    // and silence about the rest is a claim that the window held three
+    // things.
     const em=fw.emergent_issues||{};
+    const emThemes=(em.themes||[]).filter(t=>t&&(t.items||[]).length);
     const s5=numberedCard('Emergent issues',
-      `High-impact coverage in the ${em.window_hours||72}h before reporting`);
-    if(!(em.items||[]).length){s5.appendChild(fwEmpty('nothing crossed the threshold in the window'));}
-    (em.items||[]).forEach(item=>{
-      const row=el('div','mentr');
-      row.innerHTML=`<div class="row" style="justify-content:space-between">
-          <span class="pill amber">${esc(item.outlet_type||'')}</span>
-          <span class="chip">${fmt(item.engagement)} engagements · ${esc(item.qualified_by||'')}</span>
-        </div>
-        <div style="margin-top:8px">${esc(item.headline||'')}</div>
-        ${item.url?`<a href="${esc(item.url)}" target="_blank" rel="noopener" style="font-size:12px">source ↗</a>`:''}`;
-      s5.appendChild(row);
-    });
+      `What broke in the ${em.window_hours||72}h before reporting`, {open:true});
+    if(!emThemes.length && !(em.items||[]).length){
+      s5.appendChild(fwEmpty('nothing crossed the threshold in the window'));
+    } else if(!emThemes.length){
+      // An older report, generated before the grouping existed. Show the
+      // flat list rather than nothing: a section that cannot group is not a
+      // section with nothing to say.
+      s5.appendChild(el('div','muted chart-note',
+        'This report was generated before emergent coverage was grouped; the items are listed individually.'));
+      emergentItems(s5,em.items||[]);
+    } else {
+      // The visual: one bar per theme, scaled to the window's whole
+      // engagement so the three can be compared with each other and with
+      // every other chart in the report.
+      s5.appendChild(hBars(emThemes.map((t,i)=>({
+        label:t.label, value:t.engagement||0, color:SERIES[i%SERIES.length],
+        display:(t.share!=null?t.share:0)+'%',
+        note:`${t.count} item(s) · ${fmt(t.engagement||0)} engagements`,
+      })),{total:em.window_engagement||0}));
+      emThemes.forEach((t,i)=>{
+        const top=(t.items||[])[0]||{};
+        const row=el('div','');row.style.marginTop='16px';
+        row.appendChild(el('div','',
+          `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+             <b style="font-size:14.5px;color:${SERIES[i%SERIES.length]}">${esc(t.label||'')}</b>
+             <div class="row" style="gap:6px;flex-shrink:0">
+               <span class="chip">${t.share!=null?t.share+'% of the reaction':''}</span>
+               ${t.labelled_by==='derived'?'<span class="chip">named from the text</span>':''}
+             </div></div>`));
+        // The strongest headline stands in for the theme, because a theme
+        // name alone does not tell a reader what was actually said.
+        if(top.headline)row.appendChild(el('div','qt',
+          `<div style="font-style:normal">${esc(top.headline)}</div>`));
+        if((t.shared_terms||[]).length)row.appendChild(el('div','muted',
+          `<div style="font-size:12px;margin-top:4px">Grouped on: ${t.shared_terms.map(esc).join(', ')}</div>`));
+        const f=foldBlock(`All ${t.count} item(s) in this theme`,
+                          (t.platforms||[]).join(' · '));
+        emergentItems(f,t.items||[]);
+        row.appendChild(f);
+        s5.appendChild(row);
+      });
+      if(em.other_item_count){
+        const rest=foldBlock(`${em.other_item_count} further item(s) in the window`,
+                             'did not group with the three above');
+        (em.other_themes||[]).forEach(t=>emergentItems(rest,t.items||[]));
+        s5.appendChild(rest);
+      }
+    }
     if(em.note)s5.appendChild(el('div','muted chart-note',esc(em.note)));
     out.appendChild(s5);
 
@@ -4525,14 +4597,37 @@
                        {ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}},
             {issue:'The levy reads as a tax',description:'Deduction is visible monthly and the benefit is not, so a service failure is voiced in cost-of-living terms — which attaches health financing to the budget argument it would otherwise be separate from.',mentions:151,strength:98.1,growth:-0.14,
              evidence:{quotes:[{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}}]},
-        emergent_issues:{window_hours:72,
+        // Grouped exactly as the engine groups it: the first three items
+        // belong to a narrative, so that narrative names the theme; the
+        // next two share a distinctive term and are named from the text,
+        // which the page says out loud; the last is its own. Produced by
+        // running the real grouper over these items rather than written by
+        // hand, so the demo cannot flatter the output.
+        emergent_issues:{window_hours:72,engagement_threshold:100,count:6,
+          window_engagement:15110,other_item_count:0,other_themes:[],
+          themes:[
+            {label:'SHA rollout pain',labelled_by:'narrative',count:3,engagement:8950,share:59.2,
+             platforms:['news'],shared_terms:[],
+             items:[
+               {headline:'Patient advocacy groups publish a county-by-county list of facilities turning away registered members',platform:'news',engagement:4120,posted_at:'2026-07-11T09:00:00',url:'https://nation.africa/sha-county-list'},
+               {headline:'Two counties confirm facilities were asking for cash, blame a reimbursement backlog',platform:'news',engagement:2870,posted_at:'2026-07-12T09:00:00',url:'https://standardmedia.co.ke/sha-backlog'},
+               {headline:'Health ministry says a circular on point-of-care charges is "being finalised"',platform:'news',engagement:1960,posted_at:'2026-07-12T09:00:00',url:'https://nation.africa/sha-circular'}]},
+            {label:'Approval',labelled_by:'derived',count:2,engagement:5520,share:36.5,
+             platforms:['twitter'],shared_terms:['approval'],
+             items:[
+               {headline:'Chronic illness patients describe rationing medication while waiting on approvals',platform:'twitter',engagement:3340,posted_at:'2026-07-11T09:00:00',url:''},
+               {headline:'Oncology unit says approval delays have pushed treatment dates by weeks',platform:'twitter',engagement:2180,posted_at:'2026-07-13T09:00:00',url:''}]},
+            {label:'Registration passes 4.2 million members',labelled_by:'derived',count:1,engagement:640,share:4.2,
+             platforms:['twitter'],shared_terms:[],
+             items:[
+               {headline:'Registration passes 4.2 million members, authority says cover does not expire',platform:'twitter',engagement:640,posted_at:'2026-07-12T09:00:00',url:''}]}],
           items:[
-            {headline:'Patient advocacy groups publish a county-by-county list of facilities turning away registered members',outlet_type:'international media',engagement:4120,qualified_by:'engagement threshold',url:'https://nation.africa/sha-county-list',posted_at:'2026-07-11',sentiment:'negative',theme:'Cash demanded at the point of care'},
-            {headline:'Two counties confirm facilities were asking for cash, blame a reimbursement backlog',outlet_type:'national media',engagement:2870,qualified_by:'engagement threshold',url:'https://standardmedia.co.ke/sha-backlog',posted_at:'2026-07-12',sentiment:'negative',theme:'Cash demanded at the point of care'},
-            {headline:'Health ministry says a circular on point-of-care charges is "being finalised"',outlet_type:'national media',engagement:1960,qualified_by:'engagement threshold',url:'https://nation.africa/sha-circular',posted_at:'2026-07-12',sentiment:'neutral',theme:'Cash demanded at the point of care'},
-            {headline:'Chronic illness patients describe rationing medication while waiting on approvals',outlet_type:'social media',engagement:3340,qualified_by:'engagement threshold',url:'',posted_at:'2026-07-11',sentiment:'negative',theme:'Chronic and long-term cover'},
-            {headline:'Oncology unit says approval delays have pushed treatment dates by weeks',outlet_type:'social media',engagement:2180,qualified_by:'engagement threshold',url:'',posted_at:'2026-07-13',sentiment:'negative',theme:'Chronic and long-term cover'},
-            {headline:'Registration passes 4.2 million members, authority says cover does not expire',outlet_type:'social media',engagement:640,qualified_by:'reach threshold',url:'',posted_at:'2026-07-10',sentiment:'positive',theme:'Registration milestones'}],
+            {headline:'Patient advocacy groups publish a county-by-county list of facilities turning away registered members',platform:'news',engagement:4120,posted_at:'2026-07-11T09:00:00',url:'https://nation.africa/sha-county-list'},
+            {headline:'Chronic illness patients describe rationing medication while waiting on approvals',platform:'twitter',engagement:3340,posted_at:'2026-07-11T09:00:00',url:''},
+            {headline:'Two counties confirm facilities were asking for cash, blame a reimbursement backlog',platform:'news',engagement:2870,posted_at:'2026-07-12T09:00:00',url:'https://standardmedia.co.ke/sha-backlog'},
+            {headline:'Oncology unit says approval delays have pushed treatment dates by weeks',platform:'twitter',engagement:2180,posted_at:'2026-07-13T09:00:00',url:''},
+            {headline:'Health ministry says a circular on point-of-care charges is "being finalised"',platform:'news',engagement:1960,posted_at:'2026-07-12T09:00:00',url:'https://nation.africa/sha-circular'},
+            {headline:'Registration passes 4.2 million members, authority says cover does not expire',platform:'twitter',engagement:640,posted_at:'2026-07-12T09:00:00',url:''}],
           note:'Qualified on engagement within the window, not on volume — a single item carrying more reaction than a week of routine coverage is the thing worth knowing about today.'},
         strategic_implications:{
           issue:'Health financing: the levy is collected reliably and the service is described as unreliable',
