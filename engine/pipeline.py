@@ -707,14 +707,30 @@ def run_analysis(
                 .order_by(IntelligenceReport.generated_at.desc())
                 .first()
             )
+            prior = previous_report.payload if previous_report else None
             payload["sentiment_framework"] = sentiment_framework.build(
                 politician,
                 payload,
                 corpus,
-                previous=(previous_report.payload if previous_report else None),
+                previous=prior,
                 sentiments=sentiments_by_mention,
             )
             publish("sentiment_framework", payload["sentiment_framework"])
+
+            # The worklist. The dashboard has read `payload["actions"]`
+            # since it was built and nothing had ever written it, so the
+            # section that tells a client what to do rendered "no actions
+            # recorded for this period" on every report this engine has
+            # produced — a section that was never wired up, reading as a
+            # quiet week.
+            #
+            # Built from the previous report as well as this one, because
+            # "in progress" has to mean something: it was on the list last
+            # time, and here is what the issue it addresses has done since.
+            from engine.reports import actions as actions_module
+
+            payload["actions"] = actions_module.build(payload, prior)
+            publish("actions", payload["actions"])
         except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
             # The client deliverable. Silently absent, this tab simply never
             # appeared and nobody could tell whether it was empty or broken.

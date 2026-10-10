@@ -74,12 +74,27 @@ def test_the_dashboard_finds_something_for_every_field_it_reads():
     #: Group the reads by the `||` chain they sit in: `r.actions||r.recommendations`
     #: is satisfied by either, and demanding both would be demanding the demo
     #: carry two spellings of one thing.
+    # Local aliases count as reads of what they alias. The dashboard opens
+    # with `const act=r.actions||{}` and then reads `act.items`, so a scan
+    # for `r.<key>` alone cannot see that the fallback chain two lines
+    # later is already satisfied — and demanded the demo carry a legacy key
+    # that exists only for reports generated before this feature.
+    aliases = dict(re.findall(r"const\s+(\w+)\s*=\s*r\.(\w+)", body))
+
     missing = []
-    for line in body.splitlines():
-        keys = [k for k in re.findall(r"\br\.(\w+)", line) if k not in _NOT_DATA]
+    # Grouped per STATEMENT, not per line. `const x = r.actions
+    # || r.recommendations || …;` is one fallback chain however it happens
+    # to be wrapped, and a line-based reading of it demanded that the demo
+    # carry every spelling of one thing.
+    for statement in re.split(r";", body):
+        keys = [k for k in re.findall(r"\br\.(\w+)", statement)
+                if k not in _NOT_DATA]
+        for local, key in aliases.items():
+            if re.search(r"\b" + local + r"\.", statement):
+                keys.append(key)
         if not keys:
             continue
-        groups = [keys] if "||" in line else [[k] for k in keys]
+        groups = [keys] if "||" in statement else [[k] for k in keys]
         for group in groups:
             if not any(report.get(k) not in (None, [], {}, "") for k in group):
                 missing.append(" || ".join("r." + k for k in group))

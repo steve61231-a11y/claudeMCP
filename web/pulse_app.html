@@ -2422,25 +2422,93 @@
     }
     out.appendChild(c1);
 
-    /* 2 — Actions in Progress. */
-    const c2=dashCard('Actions in Progress','What is being acted on, and how far it has moved');
-    const actions=(r.actions||r.recommendations||(fw.strategic_implications&&fw.strategic_implications.recommended_actions)||[])
-      .map(a=>typeof a==='string'?{label:a}:a);
+    /* 2 — Actions in Progress.
+       ------------------------------------------------------------------
+       The client, on this section: "this is a good section, we need to
+       think how the client would use it." Two things had to change before
+       that question could even be asked.
+
+       It had no data. It read `r.actions`, then `r.recommendations`, then
+       the framework's `recommended_actions`, and the engine wrote none of
+       the three — so on every live report it said "no actions recorded for
+       this period", which reads as a quiet week and was a section nobody
+       had finished. The engine now builds a worklist from the analysts'
+       own risks and openings, each matched to the narrative it concerns.
+
+       And it invented a number. The bar drew 50% for anything marked
+       "in_progress" and 15% for everything else: a measurement with no
+       referent, in a product whose whole argument is that its figures can
+       be checked. There is no completion figure here. There is a state —
+       new, or carried for n reports — and a movement in the share of the
+       conversation the action addresses, which is two stored numbers
+       subtracted. Where there is no previous report, it says so instead of
+       reporting nought.
+
+       Ordered by the size of the thing being addressed, so the first row
+       is the one worth doing.
+    */
+    const act=r.actions||{};
+    const actions=(act.items||[]).length?act.items
+      :(r.recommendations||(fw.strategic_implications&&fw.strategic_implications.recommended_actions)||[])
+        .map(a=>typeof a==='string'?{action:a,why:a}:a);
+    const c2=dashCard('Actions in Progress','What to act on, what it is about, and whether it is moving');
     if(actions.length){
-      const list=el('div','');
-      actions.slice(0,8).forEach((a,i)=>{
-        const done=a.progress!=null?a.progress:(a.status==='done'?100:a.status==='in_progress'?50:15);
+      const MOVE={growing:['▲','neg'],shrinking:['▼','pos'],steady:['→','']};
+      // Why a movement is missing is as useful as the movement. "No
+      // previous report" and "this issue is new" and "too small to call"
+      // are three different findings and the engine keeps them apart.
+      const BASIS={unknown:'no previous report to compare with',
+                   new_issue:'this issue was not in the last report',
+                   too_small:'too small a share to call a movement',
+                   no_issue_matched:'not tied to a single narrative'};
+      actions.forEach(a=>{
         const row=el('div','mentr');
-        row.innerHTML=`<div class="row" style="justify-content:space-between">
-            <b style="font-size:14.5px;max-width:75%">${esc(a.label||a.action||a.title||'')}</b>
-            <span class="pill ${done>=100?'pos':done>=50?'sky':''}">${esc(String(a.status||(done>=100?'complete':'in progress')).replace(/_/g,' '))}</span></div>
-          ${a.owner?`<div class="muted" style="font-size:13px;margin-top:4px">Owner: ${esc(a.owner)}</div>`:''}
-          <div class="bar" style="margin-top:8px"><i style="background:var(--sky)"></i></div>`;
-        list.appendChild(row);
-        const fill=row.querySelector('.bar i');
-        animate(700+i*70,p=>{fill.style.width=(done*p)+'%';});
+        const [arrow,tone]=MOVE[a.movement_direction]||['',''];
+        row.appendChild(el('div','',
+          `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+             <b style="font-size:14.5px;max-width:70%">${esc(a.action||a.label||'')}</b>
+             <div class="row" style="gap:6px;flex-shrink:0">
+               ${a.kind?`<span class="chip">${a.kind==='defend'?'defend':'advance'}</span>`:''}
+               ${a.status?`<span class="pill ${a.status==='carried'?'sky':''}">${a.status==='carried'?`carried · ${a.runs} report(s)`:'new'}</span>`:''}
+             </div></div>
+           <div class="muted" style="font-size:12.5px;margin-top:5px">
+             ${a.issue?`On <b>${esc(a.issue)}</b>${a.issue_share!=null?` · ${a.issue_share}% of the conversation`:''}`
+                      :'Not tied to a single narrative'}
+             ${a.movement!=null
+               ? ` · <span class="${tone==='neg'?'neg':tone==='pos'?'pos':''}">${arrow} ${Math.abs(a.movement)} pts since the last report</span>`
+               : ` · ${esc(BASIS[a.movement_basis]||'no movement recorded')}`}
+           </div>`));
+        // The analyst's full reasoning, folded. It is two to four sentences
+        // and it is why the action exists, but it is not what a reader
+        // scanning a worklist is looking for.
+        if(a.why&&a.why!==(a.action||a.label)){
+          const f=foldBlock('Why this is on the list','the analyst’s reading, in full');
+          f.appendChild(prose(a.why,{lead:false,open:1}));
+          row.appendChild(f);
+        }
+        c2.appendChild(row);
       });
-      c2.appendChild(list);
+      if((act.deferred||[]).length){
+        const d=foldBlock(`${act.deferred.length} more, below the line`,
+                          'smaller issues, same ordering');
+        act.deferred.forEach(a=>d.appendChild(el('div','mentr',
+          `<div style="font-size:13.5px">${esc(a.action||'')}</div>
+           <div class="muted" style="font-size:12px;margin-top:4px">
+             ${a.issue?esc(a.issue):'not tied to a single narrative'}
+             ${a.issue_share!=null?` · ${a.issue_share}%`:''}</div>`)));
+        c2.appendChild(d);
+      }
+      // What was on the list and is not any more. In silence, an action
+      // that dropped off because the issue was settled and one that
+      // dropped off because the model forgot look the same.
+      if((act.closed||[]).length){
+        const cl=foldBlock(`${act.closed.length} no longer on the list`,
+                           'on the previous report and not on this one');
+        act.closed.forEach(label=>cl.appendChild(el('div','mentr',
+          `<div style="font-size:13.5px">${esc(label)}</div>`)));
+        c2.appendChild(cl);
+      }
+      if(act.note)c2.appendChild(el('div','muted chart-note',esc(act.note)));
     } else c2.appendChild(fwEmpty('no actions recorded for this period'));
     out.appendChild(c2);
 
@@ -2668,24 +2736,61 @@
     out.appendChild(c10);
 
     /* 11 — Press Relations. */
-    /* 12 — Key Questions / Key Insights. */
-    const c12=dashCard('Key Questions / Key Insights','What we now know, and what is still open');
-    const insights=(di.insights||[]).slice(0,5);
-    const questionSrc=r.open_questions||r.investigation_leads||di.open_questions||[];
-    const questions=Array.isArray(questionSrc)?questionSrc.slice(0,6):[];
-    const g12=el('div','grid');g12.style.gridTemplateColumns='repeat(auto-fit,minmax(280px,1fr))';
-    const ins=el('div','');ins.appendChild(el('div','lbl','Key insights'));
-    if(insights.length)insights.forEach(i=>ins.appendChild(el('div','mentr',
-      `<b style="font-size:14.5px">${esc(i.headline||i)}</b>
-       <div class="muted" style="font-size:13px;margin-top:4px">${esc(i.reasoning||'')}</div>`)));
-    else ins.appendChild(fwEmpty('no insights surfaced'));
-    const qs=el('div','');qs.appendChild(el('div','lbl','Key questions'));
-    if(questions.length)questions.forEach(q=>qs.appendChild(el('div','mentr',
-      esc(typeof q==='string'?q:(q.question||q.lead||q.query||'')))));
-    else qs.appendChild(fwEmpty('no open questions recorded'));
-    g12.appendChild(ins);g12.appendChild(qs);
-    c12.appendChild(g12);
-    out.appendChild(c12);
+    /* 7 — What this report cannot answer yet.
+       ------------------------------------------------------------------
+       This was "Key Questions / Key Insights", and the client's note on it
+       was a question: "do we need this section? I think it's covered in
+       the sentiment analysis section." Half right, and the half that was
+       right is the half that is gone.
+
+       The insights column WAS a duplicate. The same `deep_insights`
+       entries are the "Beneath the surface" section in the Overview, and
+       the same reading drives Current issues and Strategic implications in
+       the framework — three presentations of one list, and this was the
+       one with the least room to say it in.
+
+       The questions were not duplicated anywhere. They are the
+       investigator's agenda: what the corpus still cannot answer and what
+       the next run should go and ask. That is the one thing in this
+       section that exists nowhere else in the report, and in a
+       due-diligence product it is close to the most valuable line on the
+       page — a client who knows what is NOT established knows what not to
+       say in public.
+
+       So the section keeps that and drops the rest, under a title that
+       says what it is rather than naming two things at once.
+    */
+    const questionSrc=r.open_questions||di.open_questions||[];
+    const questions=(Array.isArray(questionSrc)?questionSrc:[]).slice(0,8);
+    const leads=(r.investigation_leads||[]).slice(0,8);
+    if(questions.length||leads.length){
+      const c12=dashCard('What this report cannot answer yet',
+        'The gaps in the record, and what the next run should go and ask');
+      questions.forEach(q=>{
+        const text=typeof q==='string'?q:(q.question||q.lead||q.query||'');
+        if(!text)return;
+        const why=typeof q==='object'?(q.why||q.reason||''):'';
+        const priority=typeof q==='object'?(q.priority||''):'';
+        c12.appendChild(el('div','mentr',
+          `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+             <div style="font-size:14px;max-width:78%">${esc(text)}</div>
+             ${priority?`<span class="pill ${priority==='high'?'neg':''}">${esc(priority)}</span>`:''}
+           </div>
+           ${why?`<div class="muted" style="font-size:12.5px;margin-top:5px">${esc(why)}</div>`:''}`));
+      });
+      if(!questions.length)c12.appendChild(fwEmpty('no open questions recorded'));
+      // The queries themselves. A client does not run them, but the fact
+      // that the next run already knows what to ask is the thing that
+      // makes a second report worth more than the first.
+      if(leads.length){
+        const lf=foldBlock(`${leads.length} queries queued for the next run`,
+                           'what the engine will go and look for');
+        lf.appendChild(el('div','row',leads.map(l=>
+          `<span class="chip">${esc(typeof l==='string'?l:(l.query||l.lead||''))}</span>`).join('')));
+        c12.appendChild(lf);
+      }
+      out.appendChild(c12);
+    }
   }
 
   /* ---------------- SEARCH / REPORT ---------------- */
@@ -4854,10 +4959,33 @@
         {rank:4,who:'standardmedia.co.ke',platform:'news',score:38.1,sentiment:-1.2,impact:9.8,band:'medium',coverage_share:11.2,engagement_share:8.4,note:'68 mention(s)'},
         {rank:5,who:'patient_voice_ke',platform:'twitter',score:24.9,sentiment:-14.0,impact:7.1,band:'medium',coverage_share:4.8,engagement_share:9.3,note:'29 mention(s)'},
         {rank:6,who:'sha_kenya',platform:'twitter',score:19.4,sentiment:6.2,impact:5.2,band:'low',coverage_share:6.1,engagement_share:4.2,note:'37 mention(s)'}],
-      actions:[
-        {label:'Publish facility-level SHA readiness by county, weekly',status:'in_progress',progress:60,owner:'Ministry of Health',why:'The dominant critical claim is facility-level, and no source names a directive behind it.'},
-        {label:'Answer the cash-at-the-counter claim with a named directive',status:'in_progress',progress:25,owner:'SHA Authority',why:'Every critical account describes it; a rebuttal with no document attached has not moved it.'},
-        {label:'Separate the levy from the rollout in all messaging',status:'done',progress:100,owner:'Communications',why:'Conflating them let a service complaint be read as a tax complaint.'}],
+      // The worklist in the shape the engine now produces: each action
+      // matched to the narrative it is about, so the list can be ordered by
+      // the size of the thing being addressed; a state rather than an
+      // invented completion percentage; and a movement that is two stored
+      // numbers subtracted, with the reason stated where there is none.
+      actions:{comparable:true,closed:['Rebut the registration backlog claim directly'],
+        note:'Ordered by the share of the conversation each action addresses. There is no completion figure: a status and a movement in the underlying issue are the two things that can be checked.',
+        items:[
+          {action:'Answer the cash-at-the-counter claim with a named directive',kind:'defend',posture:'Answer',
+           issue:'SHA rollout pain',issue_share:46.2,issue_mentions:214,status:'carried',runs:3,
+           movement:11.2,movement_basis:'measured',movement_direction:'growing',
+           why:'The single most repeated claim in the corpus, reported across counties and platforms, and unanswered by any named directive. It has survived three rebuttals because each one argued the policy rather than the counter. Registered members describe being asked for cash at the point of care, which is specific and checkable.'},
+          {action:'Separate the levy from the rollout in all messaging',kind:'defend',posture:'Answer',
+           issue:'Taxation & cost of living',issue_share:32.6,issue_mentions:151,status:'carried',runs:2,
+           movement:-9.9,movement_basis:'measured',movement_direction:'shrinking',
+           why:'Deduction is visible monthly and the benefit is not, so a service failure is voiced in cost-of-living terms. That attaches health financing to the budget argument it would otherwise be separate from, and doubles the audience for both.'},
+          {action:'Reach the ambivalent middle on delivery, not on principle',kind:'advance',posture:'Act on',
+           issue:'Reform defense',issue_share:21.2,issue_mentions:98,status:'new',runs:1,
+           movement:-1.3,movement_basis:'measured',movement_direction:'steady',
+           why:'A third of scored mentions explicitly separate the design of the scheme from its rollout. They are arguing about delivery rather than principle, which is a far narrower thing to answer, and they are larger than either camp.'},
+          {action:'Publish facility-level readiness by county, weekly',kind:'advance',posture:'Act on',
+           issue:null,issue_share:null,issue_mentions:null,status:'new',runs:1,
+           movement:null,movement_basis:'no_issue_matched',
+           why:'The dominant critical claim is facility-level and no source in the corpus names a circular or directive behind it. A weekly county list converts an unanswerable mood into a checkable record.'}],
+        deferred:[
+          {action:'Name the people now covered who were not before',issue:'Reform defense',issue_share:21.2},
+          {action:'Brief oncology and chronic-care units ahead of the 90-day date',issue:null,issue_share:null}]},
       grounding:{checked:41,ungrounded:[],rate:0,method:'capitalised-names'},
       publicVoice:{
         supportive:[{theme:'Universal cover is worth the disruption',summary:'A minority argue the transition pain is the price of ending NHIF\u2019s exclusions, and point to people now covered who were not before.',quotes:[{ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'},{ref:'e5f6a7b8',text:'Every reform hurts in year one. Judge it in year three.'}]}],

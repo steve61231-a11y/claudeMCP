@@ -540,6 +540,10 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "sentimentScoring": payload.get("sentiment_scoring", {}),
         # Period-over-period series behind the client's dashboard charts.
         "periodSeries": payload.get("period_series", {}),
+        # The worklist: what to act on, what it is about, and whether the
+        # thing it addresses has moved since the last report. The dashboard
+        # has read this key since it was built; nothing wrote it until now.
+        "actions": payload.get("actions"),
         "verification": payload.get("verification", {}),
         "evidence_gate": payload.get("evidence_gate", {}),
         # Every factual claim in the prose, with the sources that back it and

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 
+from engine.reports import prose
+
 # Every one of these SHOULD be structurally impossible after the house-style
 # instruction in GROUNDING_RULES — this exists because "should be impossible"
 # and "is impossible" are not the same claim, and only one of them is checked.
@@ -138,7 +140,13 @@ _ATTRIBUTION = re.compile(
     r"testimony|testified|witness\w*|ruled|found|concluded|established|determined|"
     r"under investigation|faces charges|was named in)\b", re.IGNORECASE)
 
-_SENTENCE = re.compile(r"[^.!?]+[.!?]|[^.!?]+$")
+# Sentence splitting lives in `prose.py`. The pattern that used to be here,
+# `[^.!?]+[.!?]|[^.!?]+$`, split inside numbers: "Sh4.8 trillion" became two
+# sentences, one of them four characters long. That is not cosmetic for this
+# file, because the check below looks for an accusation and its attribution
+# WITHIN ONE SENTENCE — a split through the middle of a figure can leave the
+# allegation in one fragment and the "police said" that attributes it in the
+# next, and the check then passes a sentence it should have flagged.
 
 
 def accusations(text: str) -> list[dict]:
@@ -147,8 +155,7 @@ def accusations(text: str) -> list[dict]:
     A due-diligence file may report any allegation. It may not make one.
     """
     hits: list[dict] = []
-    for match in _SENTENCE.finditer(text or ""):
-        sentence = match.group(0).strip()
+    for sentence in prose.sentences(text):
         found = _ACCUSATION.search(sentence)
         if found and not _ATTRIBUTION.search(sentence):
             hits.append({"kind": "unattributed_allegation",
