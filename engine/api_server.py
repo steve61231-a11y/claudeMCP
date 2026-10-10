@@ -382,6 +382,15 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
             "platform": "",
             "note": f"{item['volume']} mention(s)",
             "sentiment": round(item["sentiment_contribution"], 1),
+            # Impact as the client defines it: coverage plus engagement, each
+            # as a share of the run's own total. `score` is a weighted sum of
+            # raw counts and is not comparable between two subjects, two
+            # windows or even two accounts — so it cannot be used to rank
+            # anything for a reader.
+            "impact": item.get("impact"),
+            "band": item.get("impact_band"),
+            "coverage_share": item.get("coverage_share"),
+            "engagement_share": item.get("engagement_share"),
         }
         for i, item in enumerate((payload.get("influence_summary") or [])[:10])
     ]

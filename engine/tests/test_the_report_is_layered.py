@@ -44,6 +44,38 @@ def test_a_printed_report_has_every_section_open():
         "folded sections will print as headings with no content")
 
 
+def test_a_printed_report_has_every_FOLD_open_too():
+    """The blocks inside a section fold with <details>, and a closed
+    <details> is hidden on paper exactly as it is on screen.
+
+    That is not obvious, and this file's own `foldBlock` comment asserted
+    the opposite for a while — so the first version of the folded blocks
+    printed their headings with nothing underneath. Of the two ways to
+    force one open, only `::details-content` works in a current Chromium;
+    `display`/`visibility` on the children does nothing, because what hides
+    them is `content-visibility` on the content slot, which is not a style
+    they inherit."""
+    assert "details.fold::details-content" in PRINT_BLOCK, (
+        "a folded block will print its heading and none of its content")
+    assert "content-visibility:visible!important" in PRINT_BLOCK
+
+
+def test_printed_headings_are_still_searchable_text():
+    """A heading tracked at .14em extracts from the PDF as
+    "B E N E AT H T H E S U R FA C E" — every reader does this, because the
+    glyph gaps are wide enough to look like word breaks.
+
+    So a client searching the delivered file for a section heading finds
+    nothing, and anyone quoting the report copies gibberish. The file IS
+    the product, so this is a defect in the deliverable. Paper takes its
+    separation from weight and size instead."""
+    assert re.search(r"letter-spacing:0!important", PRINT_BLOCK), (
+        "printed headings are letter-spaced and will not survive text extraction")
+    for selector in (r"#zenith \.lbl", r"#zenith \.zone-n", r"#zenith \.eyebrow"):
+        assert re.search(selector + r"[,{]", PRINT_BLOCK), (
+            f"{selector} still carries screen tracking into the PDF")
+
+
 def test_the_section_headings_survive_print():
     """`.sect-head` is a <button> because it toggles. The print block hides
     every button, which would have printed twenty bodies of text with no

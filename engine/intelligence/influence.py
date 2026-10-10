@@ -37,5 +37,35 @@ def score_influence(mentions: list[dict], sentiments: dict[str, dict]) -> list[d
             }
         )
 
-    scored.sort(key=lambda x: x["score"], reverse=True)
+    # Impact: how much of the conversation this account actually accounts for.
+    #
+    # `score` above is a weighted sum of raw counts, so it is unbounded and
+    # means nothing on its own — "influence 15.0" is not comparable between
+    # two subjects, two windows, or even two accounts without knowing the
+    # totals. A reader asked to rank by it has to be told what good looks
+    # like, which defeats ranking.
+    #
+    # Impact is defined as the client defines it: coverage plus engagement.
+    # Each as a SHARE of the run's own total, so the pair are on one scale
+    # and add to something meaningful — an account with 40% of the coverage
+    # and 60% of the engagement has an impact of 50, and that number means
+    # the same thing in every report.
+    total_volume = sum(row["volume"] for row in scored) or 1
+    total_cascade = sum(row["cascade_size"] for row in scored) or 1
+    for row in scored:
+        coverage_share = 100 * row["volume"] / total_volume
+        engagement_share = 100 * row["cascade_size"] / total_cascade
+        row["coverage_share"] = round(coverage_share, 1)
+        row["engagement_share"] = round(engagement_share, 1)
+        row["impact"] = round((coverage_share + engagement_share) / 2, 1)
+        # Bands for grouping. A ranked list of ten is still ten things to
+        # read; three groups is a glance. The thresholds are shares of the
+        # conversation, not percentiles — a run where nobody dominates
+        # should show nobody in the top band rather than promoting whoever
+        # came first.
+        row["impact_band"] = ("high" if row["impact"] >= 20
+                              else "medium" if row["impact"] >= 7
+                              else "low")
+
+    scored.sort(key=lambda x: (x["impact"], x["score"]), reverse=True)
     return scored[:10]

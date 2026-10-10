@@ -208,6 +208,20 @@
    away. The one thing this must never do is make an absent section and a
    folded one look alike, which is why every head carries its own count.
 --------------------------------------------------------------------------- */
+/* A section's number badge, and the fold blocks inside it. */
+#zenith .sect-no{flex-shrink:0;margin-right:2px}
+#zenith .fold{margin-top:12px;border-top:1px solid var(--line2);padding-top:10px}
+#zenith .fold-summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:6px}
+#zenith .fold-summary::-webkit-details-marker{display:none}
+#zenith .fold-summary::before{content:'▸';color:var(--sky2);font-size:10px;transition:transform .15s}
+#zenith .fold[open] .fold-summary::before{content:'▾'}
+#zenith .fold-summary:hover{color:var(--sky2)}
+#zenith .fold-note{text-transform:none;letter-spacing:0;font-size:12px}
+/* Section titles carry the weight that separates one section from the next.
+   They were the same size as the labels inside them, so the page read as one
+   long column rather than a set of answers. */
+#zenith .sect .sect-head .lbl{font-size:13px;letter-spacing:.14em;color:var(--txt)}
+
 #zenith .zone{display:flex;align-items:baseline;gap:10px;margin:26px 2px 2px}
 #zenith .zone-n{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--sky2)}
 #zenith .zone-t{font-size:12.5px;color:var(--mut)}
@@ -263,6 +277,45 @@
      a reader. Everything is open on paper; layering is for the screen. */
   #zenith .sect-body{display:block!important}
   #zenith .sect-chev,#zenith .sect-count{display:none!important}
+
+  /* The same rule, one level down, for the <details> blocks inside a
+     section — the methodology note, the per-source dossier, the evidence
+     behind a storyline.
+     -------------------------------------------------------------------
+     A closed <details> is hidden on paper exactly as it is on screen.
+     That is not obvious and it was assumed otherwise here, so the first
+     version of the folded blocks printed their headings with nothing
+     underneath: the product's one forbidden failure, shipped by a
+     comment that claimed the opposite.
+     Measured against this repository's own Chromium (141), of the two
+     ways to force one open only the first works; `display`/`visibility`
+     on the children does nothing, because what hides them is
+     `content-visibility` on the content slot, not a style they inherit.
+     The legacy rule is kept for engines that predate the pseudo-element
+     and did it the old way — it costs nothing and is correct there. */
+  #zenith details.fold::details-content{
+    content-visibility:visible!important;display:block!important;
+    block-size:auto!important}
+  #zenith details.fold:not([open]) > *{display:block!important}
+  #zenith .fold-summary::before{display:none!important}
+  #zenith .fold{border-top:1px solid #ddd}
+
+  /* Tracking is a screen device. In a PDF it is worse than ugly.
+     -------------------------------------------------------------------
+     Wide letter-spacing on a small-caps heading makes the text extract as
+     "B E N E AT H T H E S U R FA C E" — every PDF reader does this,
+     because the glyph gaps are wide enough to look like word breaks. So a
+     client who searches the delivered file for a section heading finds
+     nothing, and anyone quoting the report copies gibberish. That is a
+     defect in the deliverable, not a rendering quirk: the file is the
+     product.
+     Paper gets the separation from weight and size instead, which is what
+     it should have been using anyway. */
+  #zenith .lbl,#zenith .eyebrow,#zenith .zone-n,#zenith .stance-col h4,
+  #zenith th,#zenith .chart-lane,#zenith .chart-ring-label,
+  #zenith .tl-date,#zenith .fw-num,#zenith .qt .qt-ref,
+  #zenith .sect .sect-head .lbl{letter-spacing:0!important}
+  #zenith .sect .sect-head .lbl{font-size:14px;font-weight:700}
   #zenith .sect-head{padding:0 0 6px;cursor:auto}
   #zenith .sect-body{padding:0}
   #zenith .sect{padding:12px 14px}
@@ -884,7 +937,12 @@
     wrap.appendChild(s);
 
     const centre=el('div','chart-ring-centre');
-    centre.appendChild(el('div','chart-ring-value',fmt(total)));
+    // The centre used to always print the sum of the slices. For a tone
+    // wheel built from percentages that is 100, every time, on every report
+    // — a number that cannot vary and therefore says nothing. Callers pass
+    // the figure the wheel is actually about.
+    centre.appendChild(el('div','chart-ring-value',
+      opts.value!=null?esc(String(opts.value)):fmt(total)));
     centre.appendChild(el('div','chart-ring-label',esc(opts.label||'total')));
     wrap.appendChild(centre);
 
@@ -985,9 +1043,23 @@
   }
 
   /** Horizontal bars — outlet segmentation, influence rankings. */
+  /** Horizontal bars.
+      -----------------------------------------------------------------
+      Two options worth knowing about, both added because every chart on
+      the dashboard was lying about proportion in the same way.
+
+      `opts.total` — scale the bars to the whole corpus rather than to the
+      largest bar present. Without it the top bar is always full width, so
+      a source with 60% of the coverage and a source with 6% of it draw
+      identically whenever they happen to lead their own section. That is
+      how three channel charts on one page could not be compared.
+
+      `item.display` — what to print at the end of the bar. The share goes
+      there; the raw count goes in the tooltip, same as everywhere else. */
   function hBars(items,opts){
     opts=opts||{};
     const max=Math.max(1,...items.map(i=>i.value));
+    const scale=opts.total&&Number(opts.total)>0?Number(opts.total):max;
     const wrap=el('div','chart-hbars');
     items.forEach((item,idx)=>{
       const row=el('div','hbar');
@@ -997,11 +1069,12 @@
       fill.style.background=item.color||SERIES[idx%SERIES.length];
       fill.style.width='0%';
       track.appendChild(fill);row.appendChild(track);
-      row.appendChild(el('div','hbar-value',(opts.suffix?item.value+opts.suffix:fmt(item.value))));
+      row.appendChild(el('div','hbar-value',
+        item.display!=null?item.display:(opts.suffix?item.value+opts.suffix:fmt(item.value))));
       row.addEventListener('mousemove',e=>showTip(e,`<b>${esc(item.label)}</b><br>${fmt(item.value)}${item.note?'<br>'+esc(item.note):''}`));
       row.addEventListener('mouseleave',hideTip);
       wrap.appendChild(row);
-      setTimeout(()=>{fill.style.transition='width .9s cubic-bezier(.2,.8,.2,1)';fill.style.width=(100*item.value/max)+'%';},40+idx*70);
+      setTimeout(()=>{fill.style.transition='width .9s cubic-bezier(.2,.8,.2,1)';fill.style.width=Math.min(100,100*item.value/scale)+'%';},40+idx*70);
     });
     return wrap;
   }
@@ -1437,12 +1510,13 @@
   }
 
   /* ---- Sentiment Analysis Framework V1.0 ---- */
-  function renderSentimentFramework(out,fw){
+  function renderSentimentFramework(out,fw,name){
+    resetSections();
     if(!fw){out.appendChild(noteCard('Sentiment framework','Not present in this report.'));return;}
 
     // 1.0 Summary of subject
-    const s1=el('div','card glow');
-    s1.appendChild(fwSection('1.0','Summary of subject','Who they are, position, and an executive summary of parameters 3–5'));
+    const s1=numberedCard(name?`Summary — ${name}`:'Summary of subject',
+      'Who they are, and what the numbers below add up to', {open:true});
     const sub=fw.summary_of_subject||{};
     s1.appendChild(el('div','',`<div class="hero-one">${esc(sub.who_they_are||sub.name||'')}</div>`));
     if(sub.position)s1.appendChild(el('div','row',`<span class="pill sky">${esc(sub.position)}</span><span class="chip">${esc(sub.subject_type||'')}</span>`));
@@ -1450,8 +1524,7 @@
     out.appendChild(s1);
 
     // 2.0 Sentiment score + overall mentions
-    const s2=el('div','card');
-    s2.appendChild(fwSection('2.0','Sentiment score','The headline number, and how it moved'));
+    const s2=numberedCard('Sentiment score','The headline number, and how it moved', {open:true});
     const score=fw.sentiment_score||{}, vol=fw.overall_mentions||{};
     const grid2=el('div','grid');grid2.style.gridTemplateColumns='auto 1fr';grid2.style.alignItems='center';grid2.style.gap='24px';
     const ringWrap=el('div','');
@@ -1484,16 +1557,18 @@
     const reading=score.reading||[];
     if(reading.length){
       const rd=el('div','');rd.style.marginTop='18px';
-      rd.appendChild(el('div','lbl','How to read this number'));
-      reading.forEach(par=>rd.appendChild(el('div','',
+      // A page of methodology between the score and the next finding.
+      // Present for anyone checking the work, folded for everyone else.
+      const rdFold=foldBlock('How to read this number','what the score is, and is not');
+      rd.appendChild(rdFold);
+      reading.forEach(par=>rdFold.appendChild(el('div','',
         `<div style="font-size:13.5px;margin-top:9px;line-height:1.62">${esc(par)}</div>`)));
       s2.appendChild(rd);
     }
     out.appendChild(s2);
 
     // 2.0 Overall mentions
-    const s2b=el('div','card');
-    s2b.appendChild(fwSection('2.0','Overall mentions','Total, change on the previous period, and outlet segmentation'));
+    const s2b=numberedCard('Overall mentions','Total, change on the previous period, and outlet segmentation');
     const mg=el('div','grid');mg.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';
     mg.appendChild(deltaStat('Total mentions',vol.total||0,vol.difference_pct));
     const segs=(vol.segmentation||[]).map((sgm,i)=>({label:sgm.label,value:sgm.count,color:SERIES[i%SERIES.length],
@@ -1512,7 +1587,8 @@
     const covered=vol.sources_covered||{};
     if(detail.length){
       const sc=el('div','');sc.style.marginTop='16px';
-      sc.appendChild(el('div','lbl',`Sources covered (${detail.length}) — what each of them was actually saying`));
+      const scFold=foldBlock(`Sources covered (${detail.length})`,'what each of them was actually saying');
+      sc.appendChild(scFold);
       detail.slice(0,40).forEach(src=>{
         const lean=src.lean;
         const pill=lean==='positive'?'pos':lean==='negative'?'neg':lean?'sky':'';
@@ -1525,7 +1601,7 @@
           ${fmt(src.positive)} positive / ${fmt(src.neutral)} neutral / ${fmt(src.negative)} negative
           ${src.unscored?` · ${fmt(src.unscored)} unscored`:''}${src.scored<3?' · too few scored to call a lean':''}</div>`));
         row.appendChild(receipts(src.top_mentions,{empty:'no items carried for this source'}));
-        sc.appendChild(row);
+        scFold.appendChild(row);
       });
       s2b.appendChild(sc);
     } else {
@@ -1540,8 +1616,7 @@
     out.appendChild(s2b);
 
     // 3.0 Sentiment (pie, per the framework)
-    const s3=el('div','card');
-    s3.appendChild(fwSection('3.0','Sentiment','Positive, negative and neutral totals'));
+    const s3=numberedCard('Sentiment','Positive, negative and neutral totals', {open:true});
     const sent=fw.sentiment||{};
     const g3=el('div','grid');g3.style.gridTemplateColumns='auto 1fr';g3.style.gap='24px';g3.style.alignItems='center';
     g3.appendChild(donut([
@@ -1558,8 +1633,7 @@
     out.appendChild(s3);
 
     // 4.0 Current issues — levers and barriers
-    const s4=el('div','card');
-    s4.appendChild(fwSection('4.0','Current issues','Potential levers and potential barriers (max 3 each)'));
+    const s4=numberedCard('Current issues','Potential levers and potential barriers');
     const ci=fw.current_issues||{};
     const g4=el('div','grid');g4.style.gridTemplateColumns='repeat(auto-fit,minmax(260px,1fr))';
     [['Potential levers',ci.potential_levers,TONE.positive],
@@ -1586,10 +1660,9 @@
     out.appendChild(s4);
 
     // 5.0 Emergent issues
-    const s5=el('div','card');
     const em=fw.emergent_issues||{};
-    s5.appendChild(fwSection('5.0','Emergent issues',
-      `High-impact coverage in the ${em.window_hours||72}h before reporting`));
+    const s5=numberedCard('Emergent issues',
+      `High-impact coverage in the ${em.window_hours||72}h before reporting`);
     if(!(em.items||[]).length){s5.appendChild(fwEmpty('nothing crossed the threshold in the window'));}
     (em.items||[]).forEach(item=>{
       const row=el('div','mentr');
@@ -1605,8 +1678,7 @@
     out.appendChild(s5);
 
     // 6.0 Strategic implications
-    const s6=el('div','card glow');
-    s6.appendChild(fwSection('6.0','Strategic implications','The most important issue: outline, status, trajectory'));
+    const s6=numberedCard('Strategic implications','The most important issue: outline, status, trajectory', {open:true});
     const si=fw.strategic_implications||{};
     if(!si.issue){s6.appendChild(fwEmpty(si.outline||'no dominant issue identified'));}
     else{
@@ -1641,7 +1713,8 @@
         s6.appendChild(receipts(si.narrative_evidence));
       }
       const ev6=fwEvidence(si.evidence);
-      if(ev6){s6.appendChild(el('div','lbl','The evidence'));s6.appendChild(ev6);}
+      if(ev6){const f=foldBlock('The evidence','every item the storyline rests on');
+              f.appendChild(ev6);s6.appendChild(f);}
     }
     out.appendChild(s6);
   }
@@ -1843,15 +1916,35 @@
   }
 
   /* =================================================================
-     WEEKLY DASHBOARD — the twelve standing sections
+     WEEKLY DASHBOARD
      -----------------------------------------------------------------
-     The structure is fixed and is not ours to edit: 1 Weekly Dashboard,
-     2 Actions in Progress, 3 Tone (Sentiment), 4 Share of Voice, 5 Media,
-     6 Digital, 7 Others, 8 Subject, 9 Mission, 10 Status, 11 Press Relations,
-     12 Key Questions / Key Insights. Every section is always rendered, in
-     order, whether or not it has data — an empty standing section is a finding.
-     What changed is only how each one is drawn: rings, donuts, stacked areas
-     and timelines that animate from zero, instead of static blocks of colour.
+     This was twelve standing sections, described here as "fixed and not
+     ours to edit". Shown to its reader, four of them earned their place
+     and several actively cost it:
+
+       Subject       restated who the report is about, on page eight of a
+                     report that opens with their name — and it was the
+                     section that answered with "Alma mater is an
+                     allegorical Latin phrase meaning 'nourishing mother'".
+       Mission       stated the objective of the reporting. The reader
+                     commissioned it.
+       Press Rel.    ranked outlets by influence, which the channel section
+                     above already does from the same numbers. Two rankings
+                     of one thing invite the reader to reconcile them.
+       Media/Digital/Others
+                     three bar charts of the same measurement on three
+                     different scales, so a bar in one could not be compared
+                     with a bar in another. Now one section, one
+                     denominator, shares of the whole corpus.
+       Personalities a stacked area of name occurrences per period. It
+                     showed that five names existed. The question is who is
+                     driving this and whether it is worth answering, which
+                     is what Drivers answers.
+
+     Every remaining section is still always rendered, in order, whether or
+     not it has data — an empty standing section is a finding. They are
+     numbered by a counter rather than by hand, which is how this shipped
+     with two sections both labelled "2.0" and a stray "4b".
      ================================================================= */
 
   const DASH_SOCIAL=['twitter','x','facebook','instagram','tiktok','youtube','reddit','linkedin','telegram','threads'];
@@ -1872,6 +1965,49 @@
     return {media:media.sort(byCount),digital:digital.sort(byCount),others:others.sort(byCount),all:list};
   }
 
+  /** Who the conversation is ABOUT, and whether they are getting louder.
+      -----------------------------------------------------------------
+      Two different questions sit under "drivers" and the old dashboard
+      answered neither cleanly. `r.influence` ranks the ACCOUNTS doing the
+      talking — handles, with coverage and engagement. This ranks the
+      NAMES being talked about, counted by occurrence in the text, which
+      is the engine's `period_series.personalities`.
+
+      That series was computed on every run and plotted as a stacked area
+      of five names, which told a reader those five names existed and
+      nothing else. The question is movement: a name at 8% of the
+      conversation and falling is a different brief from the same name
+      rising, and the series already holds exactly that.
+
+      Direction is deliberately coarse and has a floor. A name going from
+      one occurrence to two is a 100% rise and means nothing, so anything
+      under `MOVE_FLOOR` in the latest period is reported as steady
+      rather than as a trend — inventing movement out of small numbers is
+      the same failure as inventing it out of a sine wave. */
+  const MOVE_FLOOR=3;
+
+  function namesInPlay(series){
+    const keys=(series&&series.keys)||[], periods=(series&&series.periods)||[];
+    if(!keys.length||!periods.length)return [];
+    const rows=keys.map(name=>{
+      const values=periods.map(p=>((p&&p.values)||{})[name]||0);
+      const total=values.reduce((a,b)=>a+b,0);
+      const latest=values[values.length-1];
+      const before=values.slice(0,-1);
+      const earlier=before.length?before.reduce((a,b)=>a+b,0)/before.length:latest;
+      let direction='steady';
+      if(latest>=MOVE_FLOOR||earlier>=MOVE_FLOOR){
+        if(latest>earlier*1.25)direction='rising';
+        else if(latest<earlier*0.75)direction='fading';
+      }
+      return {name:name,values:values,total:total,latest:latest,direction:direction};
+    }).filter(row=>row.total>0);
+    const grand=rows.reduce((a,row)=>a+row.total,0)||1;
+    rows.forEach(row=>{row.share=Math.round(1000*row.total/grand)/10;});
+    rows.sort((a,b)=>b.total-a.total);
+    return rows;
+  }
+
   /** Periods for the movement charts, derived from whatever the report carries. */
   function dashPeriods(r){
     const tl=(r.timeline||[]).filter(t=>t&&(t.date||t.day));
@@ -1883,11 +2019,50 @@
     }));
   }
 
-  const dashCard=(number,title,subtitle)=>{
-    const c=el('div','card');
-    c.appendChild(fwSection(number,title,subtitle));
+  /* A numbered section of a framework view.
+     --------------------------------------------------------------------
+     The number used to be passed in by hand, which is how one report
+     shipped with two sections both labelled "2.0" and a stray "4b". A
+     counter cannot do that, and deleting a section now renumbers the rest
+     instead of leaving a hole.
+
+     Plain integers, not "1.0" — the decimal implied a sub-numbering scheme
+     that never existed.
+
+     Collapsible for the same reason the Search report's sections are: this
+     is read by executives who need the shape of the week in thirty seconds,
+     and twelve open sections is not that. */
+  let _sectionNo = 0;
+  const resetSections = () => { _sectionNo = 0; };
+
+  /** A labelled block inside a section that folds away.
+      -----------------------------------------------------------------
+      For the parts a reader needs available and almost never needs open:
+      the methodology note under a score, the per-source dossier, the
+      evidence behind a storyline. Each is a page of text sitting between
+      the finding and the next finding, and leaving them open is most of
+      why a report runs to sixty pages.
+
+      It is a <details>, and that is NOT enough on its own to make the
+      content print. A closed <details> is hidden on paper too, so the
+      print block has to force it open — see `::details-content` there.
+      A folded block on paper is a missing one. */
+  function foldBlock(title, note){
+    const d = el('details', 'fold');
+    d.innerHTML = `<summary class="lbl fold-summary">${esc(title)}`
+      + `${note?`<span class="muted fold-note"> — ${esc(note)}</span>`:''}</summary>`;
+    return d;
+  }
+
+  function numberedCard(title, subtitle, opts){
+    const c = deepCard(title, subtitle, opts);
+    const head = c.querySelector('.sect-head');
+    const badge = el('span', 'fw-num sect-no', String(++_sectionNo));
+    head.insertBefore(badge, head.firstChild);
     return c;
-  };
+  }
+
+  const dashCard = (title, subtitle, opts) => numberedCard(title, subtitle, opts);
 
   function renderWeeklyDashboard(out,r,meta){
     const fw=r.sentiment_framework||{};
@@ -1904,7 +2079,12 @@
                     {key:'negative',label:'Negative',color:TONE.negative}];
 
     /* 1 — Weekly Dashboard: the whole week in one glance. */
-    const c1=dashCard('1','Weekly Dashboard','Where the week stands, at a glance');
+    resetSections();
+    useRefIndex(r);
+    // Whose week this is. It said "Weekly Dashboard" and nothing else, so a
+    // screenshot of it named nobody — which is most of how these get shared.
+    const c1=dashCard(r.name?`Weekly Dashboard — ${r.name}`:'Weekly Dashboard',
+                      'Where the week stands, at a glance', {open:true});
     const g1=el('div','grid');g1.style.gridTemplateColumns='repeat(auto-fit,minmax(180px,1fr))';
     g1.style.alignItems='center';
     const scoreVal=score.score!=null?score.score:(s.positive||0);
@@ -1912,7 +2092,12 @@
       color:scoreVal>=50?TONE.positive:scoreVal>=30?'#fbbf24':TONE.negative,
       glow:scoreVal>=50?'rgba(74,222,128,.5)':'rgba(251,113,133,.45)',size:150}));
     g1.appendChild(deltaStat('Total mentions',vol.total!=null?vol.total:(v.total||0),vol.difference_pct));
-    g1.appendChild(kpiCard('Channels covered',fmt(ch.all.length),(v.platforms||ch.all.length)+' sources'));
+    // One number, one source for it. The headline read `ch.all.length` and
+    // the sub-label read `v.platforms`, so a report printed "0" above
+    // "5 sources" — a card contradicting itself on two lines.
+    const channelCount = ch.all.length || v.platforms || 0;
+    g1.appendChild(kpiCard('Channels covered', fmt(channelCount),
+      channelCount === 1 ? '1 source' : fmt(channelCount)+' sources'));
     // Two different numbers were both labelled "Analysed" on one page: how many
     // mentions the digest READ (every item, documents included) and how many
     // were SCORED for sentiment (a much smaller set). Shown together they
@@ -1941,7 +2126,7 @@
     out.appendChild(c1);
 
     /* 2 — Actions in Progress. */
-    const c2=dashCard('2','Actions in Progress','What is being acted on, and how far it has moved');
+    const c2=dashCard('Actions in Progress','What is being acted on, and how far it has moved');
     const actions=(r.actions||r.recommendations||(fw.strategic_implications&&fw.strategic_implications.recommended_actions)||[])
       .map(a=>typeof a==='string'?{label:a}:a);
     if(actions.length){
@@ -1963,18 +2148,42 @@
     out.appendChild(c2);
 
     /* 3 — Tone (Sentiment). */
-    const c3=dashCard('3','Tone (Sentiment)','The split now, and how the split moved');
+    const c3=dashCard('Tone (Sentiment)','The split now, and how the split moved', {open:true});
     const g3=el('div','grid');g3.style.gridTemplateColumns='repeat(auto-fit,minmax(240px,1fr))';
     g3.style.alignItems='center';
     const slices=[{label:'Positive',value:s.positive||0,color:TONE.positive},
                   {label:'Neutral',value:s.neutral||0,color:TONE.neutral},
                   {label:'Negative',value:s.negative||0,color:TONE.negative}];
-    g3.appendChild(slices.some(x=>x.value)?donut(slices,{label:'Tone',size:190}):fwEmpty('no sentiment scored yet'));
+    const tonePeriods=(ps.tone||[]).filter(t=>t&&t.values);
+    // The wheel shows the LATEST period where there is one, not the whole
+    // window: a dashboard headed "Weekly" that draws three months of
+    // averaged tone is answering a different question from the one it asks.
+    const lastTone=tonePeriods.length?tonePeriods[tonePeriods.length-1].values:null;
+    const wheel=lastTone
+      ? [{label:'Positive',value:lastTone.positive||0,color:TONE.positive},
+         {label:'Neutral', value:lastTone.neutral||0, color:TONE.neutral},
+         {label:'Negative',value:lastTone.negative||0,color:TONE.negative}]
+      : slices;
+    g3.appendChild(wheel.some(x=>x.value)
+      ? donut(wheel,{
+          label:lastTone?'latest period':'whole window',
+          // The centre carries the sentiment score. With no score there is
+          // still no sense in printing the sum of three percentages, which
+          // is 100 on every report ever generated — fall back to the share
+          // the wheel is mostly made of, which at least varies.
+          value:score.score!=null
+            ? score.score+'%'
+            : (()=>{ const t=wheel.reduce((a,x)=>a+x.value,0);
+                     if(!t) return null;
+                     const top=wheel.slice().sort((a,b)=>b.value-a.value)[0];
+                     return Math.round(100*top.value/t)+'%'; })(),
+          size:190})
+      : fwEmpty('no sentiment scored yet'));
     // Tone per reporting period — the reference dashboard's
     // "Tonalité des articles sur <subject>". This used to read
     // payload.timeline, which is the ANALYST's dated event list and carries no
     // sentiment fields at all, so it plotted zeros on every report.
-    const tone=(ps.tone||[]).filter(t=>t&&t.values);
+    const tone=tonePeriods;
     g3.appendChild(tone.length
       ? stackedBars(tone,sentKeys,{width:600,height:230})
       : fwEmpty('no scored mentions to chart movement between periods'));
@@ -1982,11 +2191,19 @@
     out.appendChild(c3);
 
     /* 4 — Share of Voice. */
-    const c4=dashCard('4','Share of Voice','Which narratives own the conversation');
+    const c4=dashCard('Share of Voice','Which narratives own the conversation', {open:true});
     const narr=(r.narratives||[]).slice(0,6);
     if(narr.length){
-      c4.appendChild(hBars(narr.map((n,i)=>({label:n.label,value:n.mentions||n.strength||0,
-        color:SERIES[i%SERIES.length],note:n.description})),{}));
+      // Share of voice is a share. It was printing raw mention counts, so
+      // the one section whose entire purpose is proportion gave the reader
+      // the numerator and left them to find the denominator.
+      const svTotal=narr.reduce((a,n)=>a+(n.mentions||n.strength||0),0)||1;
+      c4.appendChild(hBars(narr.map((n,i)=>{
+        const val=n.mentions||n.strength||0;
+        return {label:n.label, value:val, color:SERIES[i%SERIES.length],
+                note:`${Math.round(100*val/svTotal)}% of the conversation · ${n.description||''}`,
+                display:Math.round(100*val/svTotal)+'%'};
+      }),{total:svTotal}));
       // Each bar is openable. A bar chart of narrative names answers "how big"
       // and nothing else; the reader's next question is always "big saying
       // WHAT?", and the answer is the posts themselves.
@@ -2013,56 +2230,130 @@
     }
     out.appendChild(c4);
 
-    /* 4b — Personalities: who owns the conversation, period by period. */
-    const pers=ps.personalities||{};
-    if((pers.keys||[]).length && (pers.periods||[]).length>1){
-      const cP=dashCard('4b','Personalities','Who owns the conversation, period by period');
-      cP.appendChild(stackedArea(pers.periods,
-        pers.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
-        {width:640,height:230}));
-      cP.appendChild(el('div','muted chart-note',
-        'Occurrences of each name in the collected text, by period.'));
-      out.appendChild(cP);
+    /* Drivers — who is actually pushing this, ranked and grouped by impact.
+       ------------------------------------------------------------------
+       This was "Personalities", a stacked area chart of name occurrences
+       per period. It showed that five names existed and roughly how often,
+       which is not the question. The question a reader has here is: who is
+       driving this, how much of it is them, and is it worth answering.
+
+       Impact is coverage plus engagement, each as a share of the run's own
+       total — the client's definition, and the only form in which the two
+       can be added. The old "influence 15.0" was a weighted sum of raw
+       counts: unbounded, not comparable between runs, and impossible to
+       rank by without being told what good looks like.
+
+       Grouped into three bands because a ranked list of ten is still ten
+       things to read. The bands are shares of the conversation, not
+       percentiles, so a run where nobody dominates shows an empty top band
+       rather than promoting whoever happened to come first.
+    */
+    const drivers=(r.influence||[]).filter(d=>d&&(d.who||d.name));
+    const named=namesInPlay(ps.personalities);
+    if(drivers.length||named.length){
+      const cD=dashCard('Drivers','Who is pushing this — ranked by impact (coverage + engagement)', {open:true});
+      const BANDS=[['high','Driving the conversation','neg'],
+                   ['medium','Contributing','amber'],
+                   ['low','Present but marginal','']];
+      let shown=0;
+      BANDS.forEach(([band,label,tone])=>{
+        const rows=drivers.filter(d=>(d.band||'low')===band);
+        if(!rows.length)return;
+        shown+=rows.length;
+        cD.appendChild(el('div','lbl',label));
+        rows.forEach(d=>{
+          const who=d.who||d.name||'';
+          cD.appendChild(el('div','mentr',
+            `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+               <b style="font-size:14.5px">${handle(who)}</b>
+               <div class="row" style="gap:6px;flex-shrink:0">
+                 ${d.impact!=null?`<span class="pill ${tone}" title="coverage ${d.coverage_share}% + engagement ${d.engagement_share}%, halved">${d.impact}% impact</span>`:''}
+                 ${d.sentiment!=null?`<span class="chip">${d.sentiment>0?'+':''}${d.sentiment} tone</span>`:''}
+               </div></div>
+             <div class="muted" style="font-size:12.5px;margin-top:4px">
+               ${d.coverage_share!=null?`${d.coverage_share}% of coverage`:''}
+               ${d.engagement_share!=null?` · ${d.engagement_share}% of engagement`:''}
+               ${d.platform?` · ${esc(d.platform)}`:''}</div>`));
+        });
+      });
+      if(!shown&&drivers.length)cD.appendChild(fwEmpty('no account accounts for a measurable share'));
+      if(!drivers.length)cD.appendChild(fwEmpty('no account could be attributed a share of this coverage'));
+      // Who the conversation is ABOUT. Folded, because the accounts above
+      // are the answer to "who is driving this" and this is the answer to
+      // the question after it.
+      if(named.length){
+        const nf=foldBlock(`Names in the conversation (${named.length})`,
+                           'who is being talked about, and whether they are getting louder');
+        const MOVE={rising:['rising','neg'],fading:['fading',''],steady:['steady','']};
+        named.forEach((n,i)=>{
+          const [word,tone]=MOVE[n.direction]||MOVE.steady;
+          const row=el('div','mentr');
+          row.appendChild(el('div','',
+            `<div class="row" style="justify-content:space-between;align-items:center;gap:10px">
+               <b style="font-size:14px">${esc(n.name)}</b>
+               <div class="row" style="gap:6px;flex-shrink:0;align-items:center">
+                 <span class="chip">${n.share}% of names mentioned</span>
+                 <span class="pill ${tone}">${word}</span>
+               </div></div>`));
+          // The series itself, so "rising" can be checked rather than taken
+          // on trust. Three numbers is a sparkline, not a chart.
+          const spark=el('div','row');spark.style.cssText='gap:8px;align-items:center;margin-top:4px';
+          spark.appendChild(sparkline(n.values,{width:110,height:26,color:SERIES[i%SERIES.length]}));
+          spark.appendChild(el('div','muted',
+            `<span style="font-size:12px">${n.values.join(' → ')} mentions across the reporting periods</span>`));
+          row.appendChild(spark);
+          nf.appendChild(row);
+        });
+        cD.appendChild(nf);
+      }
+      out.appendChild(cD);
     }
 
-    /* 5 / 6 / 7 — Media, Digital, Others: the corpus, partitioned. */
-    const channelSection=(num,title,sub,rows,empty)=>{
-      const c=dashCard(num,title,sub);
-      c.appendChild(rows.length?hBars(rows.slice(0,10).map((p,i)=>({label:p.name,value:p.count,
-        color:SERIES[i%SERIES.length]})),{}):fwEmpty(empty));
-      if(rows.length)c.appendChild(el('div','muted chart-note',
+    /* One Channels section, three groups.
+       ------------------------------------------------------------------
+       These were three numbered sections — Media, Digital, Others — each
+       with its own bar chart on its own scale. Three charts of the same
+       measurement, side by side, that could not be compared with each
+       other: a bar in "Digital" and a bar in "Media" were the same length
+       for different numbers. The reader had to do the division.
+
+       One section, one denominator, bars as a share of the whole corpus.
+       Now a glance says where the coverage actually is. */
+    const channelGroup=(host,title,rows,empty)=>{
+      host.appendChild(el('div','lbl',title));
+      if(!rows.length){host.appendChild(fwEmpty(empty));return;}
+      const denom=CORPUS_TOTAL||rows.reduce((a,p)=>a+p.count,0);
+      host.appendChild(hBars(rows.slice(0,10).map((p,i)=>({
+        label:p.name, value:p.count, color:SERIES[i%SERIES.length],
+        display:denom?Math.round(100*p.count/denom)+'%':fmt(p.count),
+        note:denom?`${fmt(p.count)} of ${fmt(denom)} mentions`:''})),{total:denom}));
+      host.appendChild(el('div','muted chart-note',
         fmt(rows.reduce((a,p)=>a+p.count,0))+' items across '+rows.length+' source(s)'));
-      out.appendChild(c);
     };
-    channelSection('5','Media','Editorial coverage — local and international outlets',ch.media,
-      'no editorial coverage in this period');
-    channelSection('6','Digital','Social and video platforms',ch.digital,
-      'no social coverage in this period');
-    channelSection('7','Others','Everything else in the corpus — forums, archives, filings',ch.others,
-      'no other sources in this period');
+    const cCh=dashCard('Channels','Where the coverage sits — share of all mentions');
+    channelGroup(cCh,'Traditional media',ch.media,'no editorial coverage in this period');
+    channelGroup(cCh,'Social media',ch.digital,'no social coverage in this period');
+    channelGroup(cCh,'Other sources',ch.others,'no other sources in this period');
+    out.appendChild(cCh);
 
     /* 8 — Subject. */
-    const c8=dashCard('8','Subject','Who this report is about');
-    const sub=fw.summary_of_subject||{};
-    c8.appendChild(el('div','',`<div class="hero-one">${esc(sub.who_they_are||r.name||'')}</div>`));
-    const row8=el('div','row');row8.style.marginTop='10px';
-    if(sub.position)row8.appendChild(el('span','pill sky',esc(sub.position)));
-    if(sub.subject_type)row8.appendChild(el('span','chip',esc(sub.subject_type)));
-    row8.appendChild(el('span','chip','window '+esc(ukWindow(r.window)||'—')));
-    c8.appendChild(row8);
-    if(r.executiveBrief||sub.executive_summary)
-      c8.appendChild(el('p','muted',esc(sub.executive_summary||r.executiveBrief)));
-    out.appendChild(c8);
+    /* Subject, Mission and Press Relations are gone.
+       ---------------------------------------------------------------
+       "Subject" restated who the report is about, under a heading, on
+       page eight of a report that opens with their name — and it was the
+       section that printed "Alma mater is an allegorical Latin phrase
+       meaning 'nourishing mother'" as the answer.
 
-    /* 9 — Mission. */
-    const c9=dashCard('9','Mission','The objective this reporting serves');
-    const mission=r.mission||(r.issue_framework&&r.issue_framework.input_2_desired_outcome
-      &&r.issue_framework.input_2_desired_outcome.desired_outcome)||di.the_one_thing;
-    c9.appendChild(mission?el('div','hero-one',esc(mission)):fwEmpty('no stated mission for this period'));
-    out.appendChild(c9);
+       "Mission" stated the objective of the reporting. The reader
+       commissioned it; they know.
 
+       "Press Relations" ranked outlets by influence, which is what the
+       channel section immediately above already does from the same
+       numbers. Two rankings of the same thing on one page invite the
+       reader to reconcile them.
+    */
     /* 10 — Status. */
-    const c10=dashCard('10','Status','Pipeline health behind these numbers');
+    const c10=dashCard('Status','Pipeline health behind these numbers');
     const ver=r.verification||{}, gate=r.evidence_gate||{};
     const g10=el('div','grid');g10.style.gridTemplateColumns='repeat(auto-fit,minmax(160px,1fr))';
     g10.appendChild(kpiCard('Evidence examined',fmt(gate.examined),(gate.on_topic!=null?gate.on_topic+' on topic':'')));
@@ -2073,15 +2364,8 @@
     out.appendChild(c10);
 
     /* 11 — Press Relations. */
-    const c11=dashCard('11','Press Relations','Outlets and voices carrying the story');
-    const infl=(r.influence||[]).slice(0,10);
-    c11.appendChild(infl.length?hBars(infl.map((p,i)=>({label:p.who||p.name||p.handle||'',
-      value:p.reach||p.mentions||p.score||0,color:SERIES[i%SERIES.length],note:p.platform})),{})
-      :fwEmpty('no press or influencer signal yet'));
-    out.appendChild(c11);
-
     /* 12 — Key Questions / Key Insights. */
-    const c12=dashCard('12','Key Questions / Key Insights','What we now know, and what is still open');
+    const c12=dashCard('Key Questions / Key Insights','What we now know, and what is still open');
     const insights=(di.insights||[]).slice(0,5);
     const questionSrc=r.open_questions||r.investigation_leads||di.open_questions||[];
     const questions=Array.isArray(questionSrc)?questionSrc.slice(0,6):[];
@@ -2106,7 +2390,7 @@
     const w=el('div','grid');
     w.appendChild(el('div','',`<div class="eyebrow">Intelligence report</div>
       <h1>Read anyone's public signal.</h1>
-      <div class="sub">A person, politician, organization, ministry or business. Mũũgĩ pulls live news, Reddit, YouTube, Wikipedia and X, reads every mention, and surfaces the one thing that matters.</div>`));
+      <div class="sub">A person, politician, organization, ministry or business. Mũũgĩ pulls live news, Reddit, YouTube and X, reads every mention, and surfaces the one thing that matters.</div>`));
     const form=el('div','card glow');
     form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 170px 160px;gap:12px">
       <div><label class="fl">Subject</label><input id="q" placeholder="e.g. William Ruto" autocomplete="off"></div>
@@ -3179,7 +3463,7 @@
       ['weekly','Weekly Dashboard',host=>renderWeeklyDashboard(host,r,meta)],
     ];
     if(r.sentiment_framework)
-      modes.push(['sentiment','Sentiment Framework V1.0',host=>renderSentimentFramework(host,r.sentiment_framework)]);
+      modes.push(['sentiment','Sentiment Framework V1.0',host=>renderSentimentFramework(host,r.sentiment_framework,r.name)]);
 
     const bar=el('div','row');bar.style.margin='18px 0 4px';
     const host=el('div','grid');host.style.marginTop='12px';
@@ -4081,6 +4365,57 @@
       coverage:{mentions_analyzed:612,mentions_total:612,chunks:5,complete:true},
       volume:{total:612,platforms:5,topMentions:[{platform:'news',author:'nation.africa',text:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'},{platform:'reddit',author:'r/Kenya',text:'The SHA transition has been rough for anyone with a chronic condition — clinics still asking for cash.'},{platform:'youtube',author:'Citizen TV',text:'Ruto: "No Kenyan will be turned away" — full address on health financing.'}]},
       narratives:[{label:'SHA rollout pain',mentions:214,description:'Facilities allegedly still charging; delays in registration.'},{label:'Taxation & cost of living',mentions:151,description:'New levies framed against household budgets.'},{label:'Reform defense',mentions:98,description:'Official framing of long-term gains.'}],
+      // --- the dashboard's own data -------------------------------------
+      // Every key below was missing, so the demo — which is the thing a
+      // prospective client is actually shown — opened on a page of "no
+      // sentiment scored yet" and "no narratives identified". An empty
+      // demo is the product's own forbidden failure aimed at the buyer:
+      // a dashboard that works and a dashboard that was never wired up
+      // looked identical.
+      //
+      // The numbers reconcile with the corpus above deliberately. Tone
+      // sums to 612 across the three periods and to the 31/34/35 split;
+      // each theme's periods sum to that narrative's own mention count;
+      // every impact is (coverage + engagement) / 2. Anyone who checks
+      // the arithmetic in a sales meeting finds that it holds.
+      sentimentScoring:{eligible:612,scored:612},
+      sentiment_framework:{
+        sentiment_score:{score:47.3,change:-6.1},
+        overall_mentions:{total:612,difference_pct:18.4},
+        strategic_implications:{recommended_actions:[
+          'Publish facility-level SHA readiness by county, weekly.',
+          'Answer the cash-at-the-counter claim with a named directive.',
+          'Separate the levy from the rollout in all messaging.']}},
+      periodSeries:{
+        labels:['01 Aug-15 Nov','15 Nov-01 Apr','01 Apr-13 Jul'],buckets:3,
+        tone:[
+          {label:'01 Aug-15 Nov',values:{positive:72,neutral:66,negative:42},scored:180,mentions:180},
+          {label:'15 Nov-01 Apr',values:{positive:62,neutral:68,negative:64},scored:194,mentions:194},
+          {label:'01 Apr-13 Jul',values:{positive:56,neutral:74,negative:108},scored:238,mentions:238}],
+        personalities:{
+          keys:['Ministry of Health','Patient advocates','SHA Authority','Opposition','County governments'],
+          periods:[
+            {label:'01 Aug-15 Nov',values:{'Ministry of Health':34,'Patient advocates':9,'SHA Authority':21,'Opposition':18,'County governments':12}},
+            {label:'15 Nov-01 Apr',values:{'Ministry of Health':41,'Patient advocates':23,'SHA Authority':26,'Opposition':22,'County governments':10}},
+            {label:'01 Apr-13 Jul',values:{'Ministry of Health':38,'Patient advocates':57,'SHA Authority':24,'Opposition':31,'County governments':7}}]},
+        themes:{
+          keys:['SHA rollout pain','Taxation & cost of living','Reform defense'],
+          periods:[
+            {label:'01 Aug-15 Nov',values:{'SHA rollout pain':48,'Taxation & cost of living':61,'Reform defense':30}},
+            {label:'15 Nov-01 Apr',values:{'SHA rollout pain':62,'Taxation & cost of living':52,'Reform defense':34}},
+            {label:'01 Apr-13 Jul',values:{'SHA rollout pain':104,'Taxation & cost of living':38,'Reform defense':34}}]}},
+      influence:[
+        {rank:1,who:'r/Kenya',platform:'reddit',score:84.2,sentiment:-18.4,impact:27.4,band:'high',coverage_share:23.4,engagement_share:31.4,note:'143 mention(s)'},
+        {rank:2,who:'nation.africa',platform:'news',score:79.6,sentiment:-3.1,impact:24.4,band:'high',coverage_share:30.6,engagement_share:18.2,note:'187 mention(s)'},
+        {rank:3,who:'Citizen TV',platform:'youtube',score:61.3,sentiment:-9.7,impact:18.9,band:'medium',coverage_share:15.7,engagement_share:22.1,note:'96 mention(s)'},
+        {rank:4,who:'standardmedia.co.ke',platform:'news',score:38.1,sentiment:-1.2,impact:9.8,band:'medium',coverage_share:11.2,engagement_share:8.4,note:'68 mention(s)'},
+        {rank:5,who:'patient_voice_ke',platform:'twitter',score:24.9,sentiment:-14.0,impact:7.1,band:'medium',coverage_share:4.8,engagement_share:9.3,note:'29 mention(s)'},
+        {rank:6,who:'sha_kenya',platform:'twitter',score:19.4,sentiment:6.2,impact:5.2,band:'low',coverage_share:6.1,engagement_share:4.2,note:'37 mention(s)'}],
+      actions:[
+        {label:'Publish facility-level SHA readiness by county, weekly',status:'in_progress',progress:60,owner:'Ministry of Health',why:'The dominant critical claim is facility-level, and no source names a directive behind it.'},
+        {label:'Answer the cash-at-the-counter claim with a named directive',status:'in_progress',progress:25,owner:'SHA Authority',why:'Every critical account describes it; a rebuttal with no document attached has not moved it.'},
+        {label:'Separate the levy from the rollout in all messaging',status:'done',progress:100,owner:'Communications',why:'Conflating them let a service complaint be read as a tax complaint.'}],
+      grounding:{checked:41,ungrounded:[],rate:0,method:'capitalised-names'},
       publicVoice:{
         supportive:[{theme:'Universal cover is worth the disruption',summary:'A minority argue the transition pain is the price of ending NHIF\u2019s exclusions, and point to people now covered who were not before.',quotes:[{ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'},{ref:'e5f6a7b8',text:'Every reform hurts in year one. Judge it in year three.'}]}],
         critical:[{theme:'Facilities still demand cash',summary:'The dominant critical theme: registration is done, the card exists, and the clinic still asks for money at the counter \u2014 reported across counties and platforms.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},
