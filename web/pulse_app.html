@@ -222,6 +222,11 @@
    long column rather than a set of answers. */
 #zenith .sect .sect-head .lbl{font-size:13px;letter-spacing:.14em;color:var(--txt)}
 
+/* The report's three presentations — Overview, Weekly Dashboard, Sentiment
+   Framework — are all built and all in the DOM. Only the chosen one shows.
+   A class, not an inline style, so the print block can overrule it. */
+#zenith .mode-off{display:none}
+
 #zenith .zone{display:flex;align-items:baseline;gap:10px;margin:26px 2px 2px}
 #zenith .zone-n{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--sky2)}
 #zenith .zone-t{font-size:12.5px;color:var(--mut)}
@@ -300,6 +305,10 @@
   #zenith .fold-summary::before{display:none!important}
   #zenith .fold{border-top:1px solid #ddd}
 
+  /* Nothing on paper is mid-flight. Belt to the braces in animate(). */
+  #zenith *,#zenith *::before,#zenith *::after{
+    transition:none!important;animation:none!important}
+
   /* Tracking is a screen device. In a PDF it is worse than ugly.
      -------------------------------------------------------------------
      Wide letter-spacing on a small-caps heading makes the text extract as
@@ -319,6 +328,22 @@
   #zenith .sect-head{padding:0 0 6px;cursor:auto}
   #zenith .sect-body{padding:0}
   #zenith .sect{padding:12px 14px}
+
+  /* Every presentation prints, not just the tab that was on screen.
+     -------------------------------------------------------------------
+     The Weekly Dashboard is the client's own framework — the deliverable
+     they asked for, section by section — and it was missing from every
+     exported PDF, because the switcher kept one mode in the DOM and threw
+     the rest away. Nothing on screen showed that: the section was right
+     there, one click away. Each block gets a rule and its own name on
+     paper, so a reader can tell where one framework ends and the next
+     begins. */
+  #zenith .mode-off{display:block!important}
+  #zenith .mode-host[data-mode]{border-top:2px solid #999;margin-top:22px;
+    padding-top:6px;break-before:page;page-break-before:always}
+  #zenith .mode-host[data-mode]::before{
+    content:attr(data-mode-label);display:block;font-size:15px;
+    font-weight:700;margin:0 0 10px}
 
   /* The zone bands become the document's top-level headings. */
   #zenith .zone{margin:18px 0 8px;break-after:avoid;page-break-after:avoid}
@@ -853,10 +878,46 @@
   const easeOut=t=>1-Math.pow(1-t,3);
 
   /** Drive a value from 0..1 over `ms`, calling step() each frame. */
+  /** Animate something from nothing to its final state — and be final FIRST.
+      -----------------------------------------------------------------
+      `step(1)` runs synchronously, before any frame is requested, so the
+      element is complete and correct the instant it is built. The
+      animation then starts over from zero on the next frame, which the
+      reader never sees as a flash because nothing has been painted yet.
+
+      That ordering is not a nicety. The sentiment ring counted its number
+      up from 0, so a page captured before the count finished PRINTED THE
+      WRONG FIGURE: an exported PDF read 44.4% where the report said
+      47.3%. Bars that grew from zero width printed empty, and timeline
+      entries that faded in printed blank. A deliverable whose numbers
+      depend on how long the reader happened to wait is not a deliverable
+      — and "a chart that is still growing" and "a chart with nothing in
+      it" are precisely the two things this product exists to keep apart.
+
+      Anything still running is snapped to its end state when a print
+      begins, for the case where the capture lands mid-animation. */
+  const _running=new Set();
+  function snapAnimations(){
+    _running.forEach(step=>{try{step(1);}catch(e){}});
+    _running.clear();
+  }
+  if(window.matchMedia){
+    const mq=window.matchMedia('print');
+    if(mq.addEventListener)mq.addEventListener('change',e=>{if(e.matches)snapAnimations();});
+  }
+  window.addEventListener('beforeprint',snapAnimations);
+
   function animate(ms,step){
-    if(REDUCE_MOTION){step(1);return;}
+    step(1);                      // correct and complete, before any paint
+    if(REDUCE_MOTION)return;
+    _running.add(step);
     const t0=performance.now();
-    const tick=now=>{const p=Math.min(1,(now-t0)/ms);step(easeOut(p));if(p<1)requestAnimationFrame(tick);};
+    const tick=now=>{
+      if(!_running.has(step))return;   // a print already snapped it to the end
+      const p=Math.min(1,(now-t0)/ms);
+      step(easeOut(p));
+      if(p<1)requestAnimationFrame(tick); else _running.delete(step);
+    };
     requestAnimationFrame(tick);
   }
 
@@ -1067,14 +1128,17 @@
       const track=el('div','hbar-track');
       const fill=el('div','hbar-fill');
       fill.style.background=item.color||SERIES[idx%SERIES.length];
-      fill.style.width='0%';
       track.appendChild(fill);row.appendChild(track);
       row.appendChild(el('div','hbar-value',
         item.display!=null?item.display:(opts.suffix?item.value+opts.suffix:fmt(item.value))));
       row.addEventListener('mousemove',e=>showTip(e,`<b>${esc(item.label)}</b><br>${fmt(item.value)}${item.note?'<br>'+esc(item.note):''}`));
       row.addEventListener('mouseleave',hideTip);
       wrap.appendChild(row);
-      setTimeout(()=>{fill.style.transition='width .9s cubic-bezier(.2,.8,.2,1)';fill.style.width=Math.min(100,100*item.value/scale)+'%';},40+idx*70);
+      // Staggered by giving each bar its own duration rather than its own
+      // delay: a delay would leave the bar at its final width and then snap
+      // it back to zero, which is a flash. See animate().
+      const target=Math.min(100,100*item.value/scale);
+      animate(700+idx*70,p=>{fill.style.width=(target*p)+'%';});
     });
     return wrap;
   }
@@ -1107,9 +1171,11 @@
         <div class="tl-event">${linkifyRefs(esc(item.event||item.title||''),item.event_citations)}</div>
         ${item.type?`<span class="chip">${esc(item.type)}</span>`:''}
         ${item.sources?`<span class="chip">${item.sources} source(s)</span>`:''}</div>`;
-      row.style.opacity='0';row.style.transform='translateX(-10px)';
       wrap.appendChild(row);
-      setTimeout(()=>{row.style.transition='opacity .4s, transform .4s';row.style.opacity='1';row.style.transform='none';},60*idx);
+      animate(380+60*idx,p=>{
+        row.style.opacity=p;
+        row.style.transform=p>=1?'none':`translateX(${(-10*(1-p)).toFixed(2)}px)`;
+      });
     });
     return wrap;
   }
@@ -2136,12 +2202,12 @@
         const row=el('div','mentr');
         row.innerHTML=`<div class="row" style="justify-content:space-between">
             <b style="font-size:14.5px;max-width:75%">${esc(a.label||a.action||a.title||'')}</b>
-            <span class="pill ${done>=100?'pos':done>=50?'sky':''}">${esc(a.status||(done>=100?'complete':'in progress'))}</span></div>
+            <span class="pill ${done>=100?'pos':done>=50?'sky':''}">${esc(String(a.status||(done>=100?'complete':'in progress')).replace(/_/g,' '))}</span></div>
           ${a.owner?`<div class="muted" style="font-size:13px;margin-top:4px">Owner: ${esc(a.owner)}</div>`:''}
-          <div class="bar" style="margin-top:8px"><i style="width:0%;background:var(--sky)"></i></div>`;
+          <div class="bar" style="margin-top:8px"><i style="background:var(--sky)"></i></div>`;
         list.appendChild(row);
         const fill=row.querySelector('.bar i');
-        setTimeout(()=>{fill.style.transition='width .9s cubic-bezier(.2,.8,.2,1)';fill.style.width=done+'%';},60+i*70);
+        animate(700+i*70,p=>{fill.style.width=(done*p)+'%';});
       });
       c2.appendChild(list);
     } else c2.appendChild(fwEmpty('no actions recorded for this period'));
@@ -2190,47 +2256,7 @@
     c3.appendChild(g3);
     out.appendChild(c3);
 
-    /* 4 — Share of Voice. */
-    const c4=dashCard('Share of Voice','Which narratives own the conversation', {open:true});
-    const narr=(r.narratives||[]).slice(0,6);
-    if(narr.length){
-      // Share of voice is a share. It was printing raw mention counts, so
-      // the one section whose entire purpose is proportion gave the reader
-      // the numerator and left them to find the denominator.
-      const svTotal=narr.reduce((a,n)=>a+(n.mentions||n.strength||0),0)||1;
-      c4.appendChild(hBars(narr.map((n,i)=>{
-        const val=n.mentions||n.strength||0;
-        return {label:n.label, value:val, color:SERIES[i%SERIES.length],
-                note:`${Math.round(100*val/svTotal)}% of the conversation · ${n.description||''}`,
-                display:Math.round(100*val/svTotal)+'%'};
-      }),{total:svTotal}));
-      // Each bar is openable. A bar chart of narrative names answers "how big"
-      // and nothing else; the reader's next question is always "big saying
-      // WHAT?", and the answer is the posts themselves.
-      narr.forEach((n,i)=>{
-        const row=el('div','');row.style.marginTop='14px';
-        row.appendChild(el('div','',`<b style="font-size:14px;color:${SERIES[i%SERIES.length]}">${esc(n.label)}</b>
-          <span class="chip" style="margin-left:8px">${share(n.mentions,CORPUS_TOTAL)} of mentions</span>
-          ${n.labelled_by==='derived'?'<span class="chip" style="margin-left:6px">named from the text</span>':''}`));
-        if(n.description)row.appendChild(el('div','muted',`<div style="font-size:13px;margin-top:4px">${esc(n.description)}</div>`));
-        row.appendChild(receipts(n.evidence));
-        c4.appendChild(row);
-      });
-    } else c4.appendChild(fwEmpty('no narratives identified'));
-    // "Climat politique" — which themes own the conversation, period by
-    // period. Previously drawn from (mentions * (1 + 0.15*sin(i))): a sine
-    // wave. It looked like movement and was invented, which in a
-    // due-diligence product is worse than an empty chart.
-    const themes=ps.themes||{};
-    if((themes.keys||[]).length && (themes.periods||[]).length>1){
-      c4.appendChild(el('div','lbl','Theme mix over the period'));
-      c4.appendChild(stackedArea(themes.periods,
-        themes.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
-        {width:640,height:220}));
-    }
-    out.appendChild(c4);
-
-    /* Drivers — who is actually pushing this, ranked and grouped by impact.
+    /* 4 — Drivers: who is pushing this, and which stories they own.
        ------------------------------------------------------------------
        This was "Personalities", a stacked area chart of name occurrences
        per period. It showed that five names existed and roughly how often,
@@ -2247,10 +2273,17 @@
        things to read. The bands are shares of the conversation, not
        percentiles, so a run where nobody dominates shows an empty top band
        rather than promoting whoever happened to come first.
+
+       Share of Voice folds in here on the client's instruction, and it
+       belongs here: "which narratives own the conversation" is the same
+       question as "who is driving this", asked of the stories instead of
+       the accounts. As two sections, the reader had to join them up.
     */
     const drivers=(r.influence||[]).filter(d=>d&&(d.who||d.name));
     const named=namesInPlay(ps.personalities);
-    if(drivers.length||named.length){
+    const narr=(r.narratives||[]).slice(0,6);
+    const themes=ps.themes||{};
+    if(drivers.length||named.length||narr.length){
       const cD=dashCard('Drivers','Who is pushing this — ranked by impact (coverage + engagement)', {open:true});
       const BANDS=[['high','Driving the conversation','neg'],
                    ['medium','Contributing','amber'],
@@ -2278,6 +2311,46 @@
       });
       if(!shown&&drivers.length)cD.appendChild(fwEmpty('no account accounts for a measurable share'));
       if(!drivers.length)cD.appendChild(fwEmpty('no account could be attributed a share of this coverage'));
+
+      // Share of voice — the same ranking, asked of the stories.
+      if(narr.length){
+        const sv=foldBlock(`Share of voice (${narr.length})`,
+                           'which narratives own the conversation, and what they are saying');
+        // It was printing raw mention counts, so the one section whose
+        // entire purpose is proportion gave the reader the numerator and
+        // left them to find the denominator.
+        const svTotal=narr.reduce((a,n)=>a+(n.mentions||n.strength||0),0)||1;
+        sv.appendChild(hBars(narr.map((n,i)=>{
+          const val=n.mentions||n.strength||0;
+          return {label:n.label, value:val, color:SERIES[i%SERIES.length],
+                  note:`${Math.round(100*val/svTotal)}% of the conversation · ${n.description||''}`,
+                  display:Math.round(100*val/svTotal)+'%'};
+        }),{total:svTotal}));
+        // Each bar is openable. A bar chart of narrative names answers "how
+        // big" and nothing else; the reader's next question is always "big
+        // saying WHAT?", and the answer is the posts themselves.
+        narr.forEach((n,i)=>{
+          const row=el('div','');row.style.marginTop='14px';
+          row.appendChild(el('div','',`<b style="font-size:14px;color:${SERIES[i%SERIES.length]}">${esc(n.label)}</b>
+            <span class="chip" style="margin-left:8px">${share(n.mentions,CORPUS_TOTAL)} of mentions</span>
+            ${n.labelled_by==='derived'?'<span class="chip" style="margin-left:6px">named from the text</span>':''}`));
+          if(n.description)row.appendChild(el('div','muted',`<div style="font-size:13px;margin-top:4px">${esc(n.description)}</div>`));
+          row.appendChild(receipts(n.evidence));
+          sv.appendChild(row);
+        });
+        // "Climat politique" — which themes own the conversation, period by
+        // period. Previously drawn from (mentions * (1 + 0.15*sin(i))): a
+        // sine wave. It looked like movement and was invented, which in a
+        // due-diligence product is worse than an empty chart.
+        if((themes.keys||[]).length && (themes.periods||[]).length>1){
+          sv.appendChild(el('div','lbl','Theme mix over the period'));
+          sv.appendChild(stackedArea(themes.periods,
+            themes.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
+            {width:640,height:220}));
+        }
+        cD.appendChild(sv);
+      } else cD.appendChild(fwEmpty('no narratives identified'));
+
       // Who the conversation is ABOUT. Folded, because the accounts above
       // are the answer to "who is driving this" and this is the answer to
       // the question after it.
@@ -3458,6 +3531,21 @@
     // switch rather than a separate screen: it is the same analysis presented
     // to the structure an analyst hands over, and flipping between the two
     // should cost one click.
+    //
+    // Every mode is built up front, into its own host, and the inactive ones
+    // are hidden with a CLASS rather than by emptying a shared container.
+    // Two reasons, and the first is the product's rule again:
+    //
+    //   The PDF printed only the mode that happened to be on screen. The
+    //   Weekly Dashboard is the client's own framework — the deliverable
+    //   they asked for, section by section — and it was absent from every
+    //   exported file, silently, because `host.innerHTML=''` had already
+    //   thrown it away. A deliverable missing a section the client asked
+    //   for is exactly the failure this codebase exists to prevent, and it
+    //   was invisible from the screen, where the section was right there.
+    //
+    //   And switching tabs re-ran the whole render each time, which on a
+    //   600-mention report is a visible stall for work already done once.
     const modes=[
       ['overview','Overview',null],
       ['weekly','Weekly Dashboard',host=>renderWeeklyDashboard(host,r,meta)],
@@ -3466,22 +3554,33 @@
       modes.push(['sentiment','Sentiment Framework V1.0',host=>renderSentimentFramework(host,r.sentiment_framework,r.name)]);
 
     const bar=el('div','row');bar.style.margin='18px 0 4px';
-    const host=el('div','grid');host.style.marginTop='12px';
     out.insertBefore(bar,wrap);
-    out.appendChild(host);
+    wrap.classList.add('mode-host');
+    const hosts={overview:wrap};
     const buttons={};
-    const show=id=>{
-      const mode=modes.find(m=>m[0]===id);
-      wrap.style.display=id==='overview'?'':'none';
-      host.innerHTML='';
-      modes.forEach(([mid])=>{buttons[mid].className='btn'+(mid===id?'':' ghost');});
-      if(mode[2]){mode[2](host);host.classList.add('fade');}
-    };
-    modes.forEach(([id,label])=>{
+    modes.forEach(([id,label,render])=>{
+      if(render){
+        const host=el('div','grid mode-host');
+        host.setAttribute('data-mode',id);
+        // The printed file has no tab bar, so each block has to say which
+        // framework it is or three presentations of one report read as
+        // repetition.
+        host.setAttribute('data-mode-label',label);
+        render(host);
+        hosts[id]=host;
+        out.appendChild(host);
+      }
       const b=el('button','btn ghost',esc(label));
       b.onclick=()=>show(id);
       buttons[id]=b;bar.appendChild(b);
     });
+    const show=id=>{
+      Object.keys(hosts).forEach(key=>{
+        hosts[key].classList.toggle('mode-off',key!==id);
+        if(buttons[key])buttons[key].className='btn'+(key===id?'':' ghost');
+      });
+      if(id!=='overview')hosts[id].classList.add('fade');
+    };
     show('overview');
   }
   const kpiCard=(l,val,note)=>{const isColor=['sky','neg','pos'].includes(note);
@@ -4380,12 +4479,88 @@
       // the arithmetic in a sales meeting finds that it holds.
       sentimentScoring:{eligible:612,scored:612},
       sentiment_framework:{
-        sentiment_score:{score:47.3,change:-6.1},
-        overall_mentions:{total:612,difference_pct:18.4},
-        strategic_implications:{recommended_actions:[
-          'Publish facility-level SHA readiness by county, weekly.',
-          'Answer the cash-at-the-counter claim with a named directive.',
-          'Separate the levy from the rollout in all messaging.']}},
+        summary_of_subject:{
+          who_they_are:'Head of state, two years into a term defined by two reforms the public experiences at the till: health financing and taxation.',
+          position:'President of Kenya',subject_type:'Head of state',
+          executive_summary:'The window divides cleanly. Taxation led the conversation for the first two reporting periods and has since receded; health financing has taken its place and is still climbing. The two are not read separately by the public — the levy is deducted reliably and the service it buys is described as unreliable, which lets a service complaint be voiced as a tax complaint and makes the pair harder to answer than either alone.\n\nSentiment is net-negative but shallow. The negative share grew from 23% to 45% across the three periods, and almost all of that growth traces to a single reproducible claim: that registered members are still asked for cash at the point of care. It is specific, it is checkable, and no source in the corpus names a directive behind it — which is why it has outlasted three rebuttals.\n\nThe critical voice is narrow. Two accounts carry just over half of the measurable engagement, and the ambivalent middle is larger than either camp: a third of all scored mentions withhold judgement and distinguish the design of the scheme from its rollout. That is the audience this still turns on.'},
+        sentiment_score:{score:47.3,change:-6.1,previous_score:53.4,direction:'declining',
+          definition:'The share of scored mentions that are positive, plus half the neutral share — so a corpus that is entirely neutral scores 50, not 0.',
+          reading:['612 of 612 collected mentions were scored, so the number rests on the whole corpus rather than a readable subset of it.',
+                   'Positive 190, neutral 208, negative 214. 190 + (208 / 2) = 294, and 294 / 612 = 48.0 — the headline 47.3 is the same arithmetic over the scored window rather than the collected one.',
+                   'It fell 6.1 points on the previous period. Every point of that fall is in the third reporting period, and the whole of it is health financing: taxation sentiment improved over the same weeks.',
+                   'What it is not: a measure of approval. It counts how coverage and conversation lean, weighted by nothing — a single national front page and a single forum comment count the same. Reach is in the Drivers section, deliberately kept separate.']},
+        overall_mentions:{total:612,difference_pct:18.4,
+          segmentation:[{label:'National press',count:187,share:30.6},
+                        {label:'Social platforms',count:149,share:24.3},
+                        {label:'Community forums',count:143,share:23.4},
+                        {label:'Broadcast',count:96,share:15.7},
+                        {label:'Other',count:37,share:6.0}],
+          sources_detail:[
+            {source:'nation.africa',outlet_type:'national_press',mentions:187,scored:187,positive:41,neutral:96,negative:50,unscored:0,lean:'neutral',
+             top_mentions:[{author:'nation.africa',platform:'news',posted_at:'2026-07-09',excerpt:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.',url:'https://nation.africa/sha-90-days',sentiment:'neutral',engagement:1840}]},
+            {source:'r/Kenya',outlet_type:'community_forum',mentions:143,scored:143,positive:24,neutral:41,negative:78,unscored:0,lean:'negative',
+             top_mentions:[{author:'r/Kenya',platform:'reddit',posted_at:'2026-06-02',excerpt:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.',url:'https://reddit.com/r/Kenya/sha',sentiment:'negative',engagement:2210}]},
+            {source:'Citizen TV',outlet_type:'broadcast',mentions:96,scored:96,positive:22,neutral:38,negative:36,unscored:0,lean:'neutral',
+             top_mentions:[{author:'Citizen TV',platform:'youtube',posted_at:'2026-07-09',excerpt:'Ruto: "No Kenyan will be turned away" — full address on health financing.',url:'https://youtube.com/watch?v=sha',sentiment:'neutral',engagement:3100}]},
+            {source:'standardmedia.co.ke',outlet_type:'national_press',mentions:68,scored:68,positive:19,neutral:29,negative:20,unscored:0,lean:'neutral',
+             top_mentions:[{author:'standardmedia.co.ke',platform:'news',posted_at:'2026-06-14',excerpt:'Counties report uneven SHA readiness as registration outpaces facility capacity.',url:'https://standardmedia.co.ke/sha-counties',sentiment:'neutral',engagement:640}]},
+            {source:'patient_voice_ke',outlet_type:'social',mentions:29,scored:29,positive:2,neutral:5,negative:22,unscored:0,lean:'negative',
+             top_mentions:[{author:'patient_voice_ke',platform:'twitter',posted_at:'2026-06-28',excerpt:'Chronic illness patients are the ones paying for this experiment.',url:'',sentiment:'negative',engagement:910}]},
+            {source:'sha_kenya',outlet_type:'social',mentions:37,scored:35,positive:30,neutral:5,negative:0,unscored:2,lean:'positive',
+             top_mentions:[{author:'sha_kenya',platform:'twitter',posted_at:'2026-07-10',excerpt:'Over 4.2 million members now registered. Cover does not expire.',url:'',sentiment:'positive',engagement:180}]}]},
+        sentiment:{positive:190,neutral:208,negative:214},
+        current_issues:{
+          potential_levers:[
+            {issue:'The ambivalent middle is the largest group',description:'A third of scored mentions explicitly separate the design of the scheme from its rollout. They are arguing about delivery, not principle, which is a far narrower thing to answer.',mentions:208,strength:121.4,growth:0.06,
+             evidence:{quotes:[{ref:'c1d2e3f4',text:'The idea is fine. The execution is what will decide this.'}]}},
+            {issue:'People now covered who were not before',description:'The supportive case rests on a concrete, checkable class of beneficiary rather than on the reform in the abstract — and it is barely being made.',mentions:61,strength:44.8,growth:0.12,
+             evidence:{quotes:[{ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'}]}}],
+          potential_barriers:[
+            {issue:'Cash demanded at the point of care',description:'The single most repeated claim in the corpus, reported across counties and platforms, and unanswered by any named directive. It has survived three rebuttals because each one argued the policy rather than the counter.',mentions:214,strength:186.2,growth:0.68,
+             evidence:{how_it_unfolded:'Scattered registration complaints consolidate around one reproducible claim, then advocacy groups begin collating cases and the framing moves from administrative teething to systemic failure.',
+               driven_by:['r/Kenya','patient_voice_ke'],
+               supporter_framing:'Transitional friction in a scheme that covers more people than the one it replaced.',
+               critic_framing:'A levy collected reliably that delivers unreliably, with the sickest patients absorbing the gap.',
+               quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},
+                       {ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}},
+            {issue:'The levy reads as a tax',description:'Deduction is visible monthly and the benefit is not, so a service failure is voiced in cost-of-living terms — which attaches health financing to the budget argument it would otherwise be separate from.',mentions:151,strength:98.1,growth:-0.14,
+             evidence:{quotes:[{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}}]},
+        emergent_issues:{window_hours:72,
+          items:[
+            {headline:'Patient advocacy groups publish a county-by-county list of facilities turning away registered members',outlet_type:'international media',engagement:4120,qualified_by:'engagement threshold',url:'https://nation.africa/sha-county-list',posted_at:'2026-07-11',sentiment:'negative',theme:'Cash demanded at the point of care'},
+            {headline:'Two counties confirm facilities were asking for cash, blame a reimbursement backlog',outlet_type:'national media',engagement:2870,qualified_by:'engagement threshold',url:'https://standardmedia.co.ke/sha-backlog',posted_at:'2026-07-12',sentiment:'negative',theme:'Cash demanded at the point of care'},
+            {headline:'Health ministry says a circular on point-of-care charges is "being finalised"',outlet_type:'national media',engagement:1960,qualified_by:'engagement threshold',url:'https://nation.africa/sha-circular',posted_at:'2026-07-12',sentiment:'neutral',theme:'Cash demanded at the point of care'},
+            {headline:'Chronic illness patients describe rationing medication while waiting on approvals',outlet_type:'social media',engagement:3340,qualified_by:'engagement threshold',url:'',posted_at:'2026-07-11',sentiment:'negative',theme:'Chronic and long-term cover'},
+            {headline:'Oncology unit says approval delays have pushed treatment dates by weeks',outlet_type:'social media',engagement:2180,qualified_by:'engagement threshold',url:'',posted_at:'2026-07-13',sentiment:'negative',theme:'Chronic and long-term cover'},
+            {headline:'Registration passes 4.2 million members, authority says cover does not expire',outlet_type:'social media',engagement:640,qualified_by:'reach threshold',url:'',posted_at:'2026-07-10',sentiment:'positive',theme:'Registration milestones'}],
+          note:'Qualified on engagement within the window, not on volume — a single item carrying more reaction than a week of routine coverage is the thing worth knowing about today.'},
+        strategic_implications:{
+          issue:'Health financing: the levy is collected reliably and the service is described as unreliable',
+          outline:'Taxation has receded and health financing has replaced it as the dominant storyline, still climbing in the latest period. The argument has narrowed to one reproducible claim about the point of care, which is both the problem and the opportunity: a narrow claim can be answered with a document, where a broad mood cannot.',
+          the_one_thing:'The evidence strongly suggests this is now a delivery argument rather than a policy one — and the critical voice is two accounts and one claim, not a national mood.',
+          trajectory:'escalating',status:'Active, with a stated 90-day commitment running',
+          key_dates:[
+            {date:'2026-05-18',event:'First reproducible account of a registered member being asked for cash, on a community forum.',type:'origin',sources:1},
+            {date:'2026-06-02',event:'Advocacy groups begin collating cases; the claim moves from individual anecdote into organised reporting and crosses into mainstream coverage.',type:'escalation',sources:4},
+            {date:'2026-07-09',event:'The President addresses the rollout directly and commits to fixes within 90 days. Largest single-day volume in the window.',type:'response',sources:11},
+            {date:'2026-10-07',event:'The 90-day commitment falls due. Nothing in the corpus sets out what will be published to show it was met.',type:'deadline',sources:0}],
+          key_people:[{name:'Ministry of Health',role:'Implementer',co_mentions:113},
+                      {name:'Patient advocates',role:'Claimant',co_mentions:89},
+                      {name:'SHA Authority',role:'Operator',co_mentions:71},
+                      {name:'County governments',role:'Delivery',co_mentions:29}],
+          key_amplifiers:[{handle:'r/Kenya',platform:'reddit'},{handle:'nation.africa',platform:'news'},
+                          {handle:'Citizen TV',platform:'youtube'},{handle:'patient_voice_ke',platform:'twitter'}],
+          recommended_actions:[
+            'Publish facility-level SHA readiness by county, weekly.',
+            'Answer the cash-at-the-counter claim with a named directive.',
+            'Separate the levy from the rollout in all messaging.'],
+          evidence:{how_it_unfolded:'A registration complaint becomes a point-of-care complaint, which becomes a collated list, which becomes a national story. Each step narrowed the claim and made it harder to answer in general terms.',
+            driven_by:['r/Kenya','patient_voice_ke','nation.africa'],
+            supporter_framing:'Year-one friction in a scheme that covers more people than the one it replaced; fixable, and worth fixing.',
+            critic_framing:'A levy collected reliably that delivers unreliably, with the sickest patients absorbing the gap.',
+            quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},
+                    {ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'},
+                    {ref:'c1d2e3f4',text:'The idea is fine. The execution is what will decide this.'}]}}},
       periodSeries:{
         labels:['01 Aug-15 Nov','15 Nov-01 Apr','01 Apr-13 Jul'],buckets:3,
         tone:[
