@@ -212,3 +212,32 @@ def test_the_page_renders_the_take_and_not_just_the_label():
     assert "rowOf(" in PAGE
     assert "item.issue || item.take" in PAGE
     assert "item.reaction" in PAGE
+
+
+def test_every_date_on_the_page_goes_through_a_formatter():
+    """The truncation check above catches one spelling of the bug. This
+    catches the category.
+
+    Three render sites drew `item.date` straight out of the payload, so the
+    same moment read "9th Jul 2026" in the detail panel and "2026-07-09" in
+    the hover tooltip and in the screen-reader label beside it. The client
+    asked for British dates once; an ISO date surviving in a tooltip is the
+    same defect as an ISO date in a heading, only somewhere nobody looked.
+
+    `asWritten` is the one permitted exception and says so at its
+    definition: an analyst's own "Q1 2026" is not a date to reformat.
+    """
+    formatters = ("ukDate", "ukWindow", "whenLabel", "shortDate", "whenOf",
+                  "asWritten")
+    leaks = sorted({
+        m.group(0)
+        for m in re.finditer(r"\$\{[^{}]*\}", PAGE)
+        # The date-bearing token must be the LAST property in the chain:
+        # `o.first_seen.platform` is a platform, not a date, and a check
+        # that flags it is a check somebody will start ignoring.
+        if re.search(r"\.(date|when|posted_at|published_at|generatedAt"
+                     r"|first_seen|newestMentionAt)\b(?!\s*\.)", m.group(0))
+        and not any(f in m.group(0) for f in formatters)
+    })
+    assert not leaks, (
+        "these render a date straight from the payload: " + "; ".join(leaks))

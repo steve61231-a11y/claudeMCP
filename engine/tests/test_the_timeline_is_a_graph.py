@@ -187,11 +187,18 @@ def test_the_graph_renders_and_opens_a_moment(tmp_path):
                   {date:'undated',event:'no date here'}];
       window.ZENITH.renderReport(document.getElementById('view'),r,{live:false});
       document.querySelectorAll('.sect').forEach(s=>s.setAttribute('open',''));
-      var xs=[...document.querySelectorAll('.tl-strip-node circle')]
+      // Scoped to the OVERVIEW presentation. There is more than one strip on
+      // the page now — "Key dates" in the Sentiment Framework is a hover
+      // timeline too — and every mode is rendered up front so that the PDF
+      // contains all of them. A page-wide query was counting both and
+      // reading as "7 markers where 3 were expected", which is a test
+      // breaking on an unrelated feature rather than on a defect.
+      var own=document.querySelector('.mode-host:not([data-mode])');
+      var xs=[...own.querySelectorAll('.tl-strip-node circle')]
               .map(c=>Math.round(+c.getAttribute('cx')));
       document.title=JSON.stringify({xs:xs,
-        detail:!!document.querySelector('.tl-detail'),
-        hints:[...document.querySelectorAll('.tl-strip-hint')].map(h=>h.textContent).join(' | ')});
+        detail:!!own.querySelector('.tl-detail'),
+        hints:[...own.querySelectorAll('.tl-strip-hint')].map(h=>h.textContent).join(' | ')});
     });</script>"""
     cut = PAGE.rfind("</body>")
     src = tmp_path / "g.html"

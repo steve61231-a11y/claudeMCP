@@ -227,6 +227,14 @@
    A class, not an inline style, so the print block can overrule it. */
 #zenith .mode-off{display:none}
 
+/* Analyst prose. The opening sentence is the finding; the rest is how they
+   got there, and setting both at caption size said neither. */
+#zenith .prose-lead{font-size:16px;line-height:1.6;color:var(--txt);
+  margin:12px 0 0;text-wrap:pretty}
+#zenith .prose-p{font-size:14px;line-height:1.68;color:var(--mut);
+  margin:12px 0 0;text-wrap:pretty}
+#zenith .prose .fold{margin-top:14px}
+
 #zenith .zone{display:flex;align-items:baseline;gap:10px;margin:26px 2px 2px}
 #zenith .zone-n{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--sky2)}
 #zenith .zone-t{font-size:12.5px;color:var(--mut)}
@@ -1167,7 +1175,7 @@
     items.forEach((item,idx)=>{
       const row=el('div','tl-item');
       row.innerHTML=`<div class="tl-dot"></div>
-        <div class="tl-body"><div class="tl-date">${esc(item.date||'')}</div>
+        <div class="tl-body"><div class="tl-date">${esc(item.date?whenLabel(item):'')}</div>
         <div class="tl-event">${linkifyRefs(esc(item.event||item.title||''),item.event_citations)}</div>
         ${item.type?`<span class="chip">${esc(item.type)}</span>`:''}
         ${item.sources?`<span class="chip">${item.sources} source(s)</span>`:''}</div>`;
@@ -1201,6 +1209,29 @@
 
   const DAY=86400000;
   const shortDate=ms=>ukDate(new Date(ms).toISOString());
+
+  /** A dated moment's date, as a reader should see it.
+      -----------------------------------------------------------------
+      Three places drew `item.date` straight out of the payload, so the
+      same moment read "9th Jul 2026" in the panel and "2026-07-09" in the
+      hover tooltip and the screen-reader label beside it. The client asked
+      for British dates once; an ISO date surviving in a tooltip is the
+      same bug as an ISO date in a heading, just somewhere nobody looked. */
+  /** A moment's own words for when it happened, left exactly as written.
+      -----------------------------------------------------------------
+      An analyst writes "Q1 2026", "mid-2024" or "during the campaign"
+      alongside a parsed date, and those are not dates to reformat — a date
+      formatter turns them into nonsense or into a precision nobody
+      claimed. Identity, deliberately: it marks the one place a raw value
+      SHOULD reach the page, so the rule that every other date goes
+      through ukDate can be checked mechanically without this one looking
+      like a leak. */
+  const asWritten=v=>v==null?'':String(v);
+
+  const whenLabel=t=>{
+    const raw=t&&(t.date||t.when||t.posted_at);
+    return raw?ukDate(raw):'undated';
+  };
 
   /** The timeline, as one graph you can read the window off in a glance.
       ------------------------------------------------------------------
@@ -1305,7 +1336,7 @@
       const g=mk('g',{class:'tl-strip-node','data-idx':p.idx,tabindex:'0',
                       role:'button'});
       g.setAttribute('aria-label',
-        `${(p.t&&(p.t.date||p.t.when))||'undated'}: `
+        `${whenLabel(p.t)}: `
         +String((p.t&&p.t.event)||'').slice(0,80));
       const c=mk('circle',{cx:x,cy:base,r:6,
         class:'tl-node-dot '+(tc?(tc.confirmed?'is-confirmed':'is-single'):'is-plain')});
@@ -1313,7 +1344,7 @@
       svg.appendChild(g);
       const show=()=>{
         tip.style.display='block';
-        tip.innerHTML=`<div class="tl-tip-date">${esc((p.t&&(p.t.date||p.t.when))||'undated')}</div>
+        tip.innerHTML=`<div class="tl-tip-date">${esc(whenLabel(p.t))}</div>
           <div>${esc(String((p.t&&p.t.event)||'').slice(0,180))}${String((p.t&&p.t.event)||'').length>180?'…':''}</div>
           ${p.t&&p.t.mentions_that_day?`<div class="muted" style="margin-top:4px">${fmt(p.t.mentions_that_day)} mentions that day</div>`:''}
           ${tc?`<div class="muted" style="margin-top:4px">${esc(tc.label)}</div>`:''}`;
@@ -1375,7 +1406,7 @@
     const tc=t.corroboration;
     const tone=tc?(tc.confirmed?'pos':'amber'):'';
     return `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
-        <b style="font-size:15px;color:var(--sky2)">${esc(t.date||t.when?ukDate(t.date||t.when):'undated')}</b>
+        <b style="font-size:15px;color:var(--sky2)">${esc(whenLabel(t))}</b>
         <div class="row" style="gap:6px">
           ${t.mentions_that_day?`<span class="chip">${share(t.mentions_that_day,CORPUS_TOTAL,"mentions that day")} of mentions</span>`:''}
           ${tc?`<span class="pill ${tone}" title="${esc((tc.outlets||[]).join(', '))}">${esc(tc.label)}</span>`:''}
@@ -1521,7 +1552,7 @@
     }
     const o=ev.origin||{};
     if(o.first_seen&&o.first_seen.date)box.appendChild(el('div','',
-      `<div class="muted" style="font-size:12px;margin-top:10px">First seen ${esc(o.first_seen.date)} on ${esc(o.first_seen.platform||'—')}${o.peak?` · peaked ${esc(o.peak.date)}`:''}${o.platforms_reached?` · reached ${o.platforms_reached} platform(s)`:''}</div>`));
+      `<div class="muted" style="font-size:12px;margin-top:10px">First seen ${esc(ukDate(o.first_seen.date))} on ${esc(o.first_seen.platform||'—')}${o.peak?` · peaked ${esc(ukDate(o.peak.date))}`:''}${o.platforms_reached?` · reached ${o.platforms_reached} platform(s)`:''}</div>`));
     return box.children.length?box:null;
   }
 
@@ -1605,7 +1636,9 @@
     const sub=fw.summary_of_subject||{};
     s1.appendChild(el('div','',`<div class="hero-one">${esc(sub.who_they_are||sub.name||'')}</div>`));
     if(sub.position)s1.appendChild(el('div','row',`<span class="pill sky">${esc(sub.position)}</span><span class="chip">${esc(sub.subject_type||'')}</span>`));
-    if(sub.executive_summary)s1.appendChild(el('div','muted',`<div style="margin-top:12px;white-space:pre-wrap">${esc(sub.executive_summary)}</div>`));
+    if(sub.executive_summary)s1.appendChild(prose(sub.executive_summary,{
+      cites:sub.executive_summary_citations,
+      foldTitle:'The rest of the summary'}));
     out.appendChild(s1);
 
     // 2.0 Sentiment score + overall mentions
@@ -1831,7 +1864,20 @@
         <span class="chip">${esc(si.status||'')}</span>`));
       if((si.key_dates||[]).length){
         s6.appendChild(el('div','lbl','Key dates'));
-        s6.appendChild(timelineChart(si.key_dates));
+        // A hover timeline, on the client's instruction — and it is the
+        // right shape for this data. These are four or five dated moments
+        // spread across a year, and a vertical list of them hid the only
+        // thing that matters about such a set: how far apart they are. The
+        // strip spaces by real date, so a quiet year and then three things
+        // in a fortnight looks like what it is.
+        s6.appendChild(interactiveTimelineStrip(si.key_dates,null,{}));
+        // The same dates in full, folded. A hover is a screen affordance
+        // and paper has no cursor, so without this the printed report
+        // would carry a graph of five dots and none of their text.
+        const kd=foldBlock(`All ${si.key_dates.length} key date(s)`,
+                           'each moment in full, in order');
+        kd.appendChild(timelineChart(si.key_dates));
+        s6.appendChild(kd);
       }
       // People named in the coverage. These used to be the top influence
       // handles — YouTube channels — presented as the people in the story.
@@ -1883,7 +1929,7 @@
         s1.appendChild(el('div','lbl',label));
         // "not yet established from the evidence" blamed the corpus for a
         // section the model never wrote. Those are opposite findings.
-        s1.appendChild(text?el('div','muted',`<div style="margin:6px 0 14px;white-space:pre-wrap">${linkifyRefs(esc(text),cites)}</div>`)
+        s1.appendChild(text?prose(text,{cites:cites,lead:false})
                            :fwEmpty(bg.unavailable||'not yet established from the evidence'));
       });
     s1.appendChild(el('div','lbl','Timeline of major developments'));
@@ -2185,6 +2231,119 @@
       content print. A closed <details> is hidden on paper too, so the
       print block has to force it open — see `::details-content` there.
       A folded block on paper is a missing one. */
+  /** A long piece of analyst prose, broken up so that it can be read.
+      -----------------------------------------------------------------
+      The subject summary arrived as one block of `white-space:pre-wrap`:
+      nine sentences, no paragraph breaks, well over a thousand characters,
+      set in the muted grey this page uses for captions. The client's note
+      on it was three words — "break up this section" — and they were right
+      for a reason worth writing down. This is the paragraph a Cabinet
+      Secretary reads standing up, and the page was asking them to find the
+      point in it themselves.
+
+      Three things, in the order they matter.
+
+      **The opening is promoted.** An analyst's first sentence is the
+      finding and the rest is how they got there. Setting both at caption
+      size told the reader nothing about which was which.
+
+      **A paragraph that is really nine sentences gets split.** Models
+      frequently emit no blank lines at all, so honouring the breaks the
+      text happens to contain means honouring none of them. Grouped into
+      threes, which is a paragraph.
+
+      **The tail folds.** Everything past the first two paragraphs stays
+      available and is almost never what someone reads first. It prints
+      open, as every fold here does.
+
+      Nothing is summarised, shortened or reworded — every sentence the
+      model produced reaches the page. This decides where the sentences go,
+      never which ones. */
+  const PROSE_LONG=420;      // characters past which one paragraph is a wall
+  const PROSE_SENTENCES=3;   // sentences to a derived paragraph
+  const PROSE_OPEN=2;        // paragraphs before the fold
+
+  /** Sentences, by SPLITTING the text — never by matching sentences in it.
+      -----------------------------------------------------------------
+      The first version used
+      `text.match(/[^.!?]+[.!?]+(?=\s|$)|[^.!?]+$/g)` and silently lost
+      words. At "A levy of 2.75% is deducted every month", no alternative
+      can match starting at "A", because the only full stop there is
+      followed by a digit rather than a space; the engine therefore
+      advances the start position one character at a time until something
+      does match, and the rendered sentence began "75% is deducted".
+
+      `match` keeps what matched and throws the gaps away, which for prose
+      is exactly backwards. A summary quietly shortened is
+      indistinguishable from a model that wrote less — the product's own
+      rule, reached through a regex. A split cannot lose anything: the
+      pieces are the whole string by construction.
+
+      A boundary is a terminator, then whitespace, then something that
+      starts a sentence. That one test handles "2.75%", "nation.africa",
+      "No. 3" and "e.g. the" without a list of exceptions to maintain. */
+  const _TERMINATOR='.!?';
+  const _CLOSERS='"\u2019\u201d\')]';
+  const _SENTENCE_START=/[A-Z"'\u201c(\[\u2018]/;
+
+  function splitSentences(text){
+    const body=String(text==null?'':text);
+    const out=[];
+    let start=0;
+    for(let i=0;i<body.length;i++){
+      if(_TERMINATOR.indexOf(body[i])<0)continue;
+      // The whole run of terminators, plus any closing quote or bracket:
+      // "…unreliable." and "…really?!" both end where the punctuation does.
+      let end=i;
+      while(end+1<body.length&&_TERMINATOR.indexOf(body[end+1])>=0)end++;
+      while(end+1<body.length&&_CLOSERS.indexOf(body[end+1])>=0)end++;
+      const gap=/^\s+/.exec(body.slice(end+1));
+      if(!gap){i=end;continue;}
+      const next=body[end+1+gap[0].length];
+      if(!next||!_SENTENCE_START.test(next)){i=end;continue;}
+      out.push(body.slice(start,end+1));
+      start=end+1+gap[0].length;
+      i=start-1;
+    }
+    if(start<body.length)out.push(body.slice(start));
+    return out.map(s=>s.trim()).filter(Boolean);
+  }
+
+  function proseParagraphs(text){
+    const body=String(text==null?'':text).trim();
+    if(!body)return [];
+    let paras=body.split(/\n\s*\n+/).map(s=>s.trim()).filter(Boolean);
+    if(paras.length===1&&paras[0].length>PROSE_LONG){
+      const sentences=splitSentences(paras[0]);
+      paras=[];
+      for(let i=0;i<sentences.length;i+=PROSE_SENTENCES)
+        paras.push(sentences.slice(i,i+PROSE_SENTENCES).join(' ').trim());
+    }
+    return paras.filter(Boolean);
+  }
+
+  /** opts: {cites, lead:false, open:<n>, foldTitle} */
+  function prose(text,opts){
+    opts=opts||{};
+    const paras=proseParagraphs(text);
+    const box=el('div','prose');
+    if(!paras.length)return box;
+    const mark=p=>opts.cites?linkifyRefs(esc(p),opts.cites):esc(p);
+    const open=opts.open!=null?opts.open:PROSE_OPEN;
+    paras.forEach((para,i)=>{
+      const node=el('div',i===0&&opts.lead!==false?'prose-lead':'prose-p',mark(para));
+      if(i<open){box.appendChild(node);return;}
+      if(!box._tail){
+        box._tail=foldBlock(
+          opts.foldTitle||`The rest of it (${paras.length-open} paragraph(s))`,
+          'the reasoning behind the opening');
+        box.appendChild(box._tail);
+      }
+      box._tail.appendChild(node);
+    });
+    return box;
+  }
+
   function foldBlock(title, note){
     const d = el('details', 'fold');
     d.innerHTML = `<summary class="lbl fold-summary">${esc(title)}`
@@ -3557,7 +3716,12 @@
     }
     // exec brief
     if(r.executiveBrief||r.summary){
-      const b=el('div','card');b.innerHTML=`<div class="lbl">Executive brief</div><p style="margin:10px 0 0;font-size:15.5px">${linkifyRefs(esc(r.executiveBrief||r.summary),r.executiveBrief?r.executiveBriefCitations:r.summaryCitations)}</p>`;wrap.appendChild(b);
+      const b=el('div','card');
+      b.appendChild(el('div','lbl','Executive brief'));
+      b.appendChild(prose(r.executiveBrief||r.summary,{
+        cites:r.executiveBrief?r.executiveBriefCitations:r.summaryCitations,
+        foldTitle:'The rest of the brief'}));
+      wrap.appendChild(b);
     }
     // KPI row
     const s=r.sentiment||{},v=r.volume||{},cov=r.coverage||{};
@@ -4069,8 +4233,12 @@
          </div>
          <p style="margin:10px 0 0;font-size:15.5px">${linkifyRefs(esc(it.verdict),it.verdict_citations)}</p>`));
     }
-    if(it.involvement)host.appendChild(el('div','card',
-      `<div class="lbl">Involvement</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${linkifyRefs(esc(it.involvement),it.involvement_citations)}</p>`));
+    if(it.involvement){
+      const inv=el('div','card',`<div class="lbl">Involvement</div>`);
+      inv.appendChild(prose(it.involvement,{cites:it.involvement_citations,
+        foldTitle:'The rest of the involvement'}));
+      host.appendChild(inv);
+    }
 
     // What the issue breaks into. An investigation that cannot name the
     // separate fights inside one headline is a map of one thing.
@@ -4201,7 +4369,7 @@
           `<div class="row" style="gap:10px;align-items:center;justify-content:space-between">
              <div class="row" style="gap:10px;align-items:center">
                <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when?ukDate(t.date||t.when):'undated')}</b>
-               ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(t.when)}</span>`:''}</div>
+               ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(asWritten(t.when))}</span>`:''}</div>
              ${tc?`<span class="pill ${tc.confirmed?'pos':'amber'}" style="font-size:11px" title="${esc(tc.outlets.join(', '))}">${esc(tc.label)}</span>`:''}</div>
            <div style="font-size:14.5px;margin-top:6px;white-space:pre-wrap">${esc(t.event||'')}</div>`);
           row.setAttribute('data-tlidx',tl.indexOf(t));
@@ -4212,8 +4380,13 @@
       host.appendChild(c);
     }
 
-    if(it.tension_or_risk)host.appendChild(el('div','card',
-      `<div class="lbl" style="color:var(--amber)">Tension / risk</div><p style="margin:8px 0 0;font-size:14.5px;white-space:pre-wrap">${linkifyRefs(esc(it.tension_or_risk),it.tension_or_risk_citations)}</p>`));
+    if(it.tension_or_risk){
+      const risk=el('div','card',
+        `<div class="lbl" style="color:var(--amber)">Tension / risk</div>`);
+      risk.appendChild(prose(it.tension_or_risk,{cites:it.tension_or_risk_citations,
+        foldTitle:'The rest of the risk'}));
+      host.appendChild(risk);
+    }
 
     if(graphCard)host.appendChild(graphCard);
 
@@ -4745,6 +4918,10 @@
 
   // Render entry points, exposed for the browser smoke test. Read-only handles;
   // the app itself never goes through them.
-  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework,renderDeepRead,renderIssue,progressCard,finishedSections,DEMO};
+  // `prose` and `namesInPlay` are exported for the same reason the render
+  // functions are: the PDF path reuses them, and a helper that decides how a
+  // client's summary is laid out needs to be testable against the real page
+  // rather than by reading the source and hoping.
+  window.ZENITH={renderReport,renderWeeklyDashboard,renderSentimentFramework,renderIssueFramework,renderDeepRead,renderIssue,progressCard,finishedSections,prose,proseParagraphs,splitSentences,namesInPlay,DEMO};
 })();
 </script>
