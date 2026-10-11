@@ -717,6 +717,48 @@
     saveBlob(new Blob([doc],{type:'text/html;charset=utf-8'}), filename+'.html');
   }
 
+  /** What this status actually means, and what to do about it.
+      -----------------------------------------------------------------
+      This used to print one paragraph whatever came back — it explained
+      what a 404 means, and the commonest failure here is a 401. An
+      operator who gets the wrong key is told to check the base URL, which
+      is correct for a different problem and sends them to change a setting
+      that was already right.
+
+      That is this codebase's standing rule reached through an error
+      message: never state a cause you have not checked. The status IS the
+      check, it is already on the error as `httpStatus`, and the paragraph
+      simply was not reading it. */
+  function httpCause(err){
+    const status = err && err.httpStatus;
+    const base = `API base is <b>${esc(CFG.base)}</b>.`;
+    if(status===401 || status===403)
+      return `The engine answered, so it is up and reachable \u2014 it rejected the key. `
+        + `Open <b>Settings</b> and set <b>API key (x-api-key)</b> to the same value as `
+        + `<b>PULSE_API_KEY</b> in your host's environment variables, then Save. `
+        + `They must match exactly, with no trailing space.`;
+    if(status===404)
+      return `${base} If that is not your M\u0169\u0169g\u0129 engine (for example a static host with `
+        + `no backend), open <b>Settings</b>, set it to your engine URL and Save. `
+        + `A 404 usually means the request hit something that is not the engine.`;
+    if(status===429)
+      return `The engine is rate-limiting report submissions from this address. `
+        + `Wait and try again; the window is an hour.`;
+    if(status===402)
+      return `The model provider refused the request for lack of credit. `
+        + `Top it up \u2014 nothing here failed for any other reason.`;
+    if(status===502 || status===503)
+      return `${base} The engine is restarting or not yet listening. Check the `
+        + `host's deployment log for <b>Uvicorn running</b>, then try again.`;
+    if(status>=500)
+      return `${base} The engine answered with an error of its own. `
+        + `Open <b>/api/health</b> on that domain \u2014 it reports the database, the `
+        + `model backend and whether the last deploy's migration ran.`;
+    return `${base} If that is not your M\u0169\u0169g\u0129 engine, open <b>Settings</b>, set it `
+      + `to your engine URL and Save. If it is, open <b>/api/health</b> on that `
+      + `domain for what the engine says about itself.`;
+  }
+
   async function api(path, opts){
     opts = opts||{};
     const h = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
@@ -2973,7 +3015,7 @@
         }
         if(!LIVE){ out.appendChild(noteCard('Demo preview','Showing a sample report. Host this file (or open Settings and point it at your API) to run this live for real.')); renderReport(out,DEMO.report,{live:false}); }
         else out.appendChild(el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>Report call failed: ${esc(e.message||e)}</span></div>
-          <div class="muted" style="font-size:13px;margin-top:10px">API base is <b>${esc(CFG.base)}</b>. If that's not your Mũũgĩ engine (e.g. it's a static host with no backend), open <b>Settings</b> and set it to your engine URL, then Save. A 404 usually means the request hit something that isn't the engine.</div>`));
+          <div class="muted" style="font-size:13px;margin-top:10px">${httpCause(e)}</div>`));
       } finally{ btn.disabled=false; }
     };
     $('#grun',form).onclick=run;
