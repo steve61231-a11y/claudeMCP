@@ -2400,7 +2400,17 @@ def health():
                             "?sslmode=require suffix.")
     import os
 
-    commit = os.environ.get("RENDER_GIT_COMMIT", "") or os.environ.get("GIT_COMMIT", "")
+    # Which commit is actually running.
+    #
+    # This read two Render-specific variables, so on Railway it reported
+    # "local" — and when a fix did not appear to work there was no way for
+    # anyone, including the person who wrote it, to tell whether it had been
+    # deployed. Diagnosing a deploy you cannot identify is guessing, which is
+    # the one thing this file keeps saying not to do.
+    commit = (os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
+              or os.environ.get("RENDER_GIT_COMMIT", "")
+              or os.environ.get("GIT_COMMIT", "")
+              or os.environ.get("SOURCE_COMMIT", ""))
     return {
         # Serving a page is not the same as working. Without a database every
         # report will fail, and saying "ok" here would hide the one fact an

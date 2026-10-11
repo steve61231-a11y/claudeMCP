@@ -60,3 +60,38 @@ def get_session():
         yield session
     finally:
         session.close()
+
+
+def release_connection(db) -> None:
+    """Give the pooled connection back before a phase that will not use it.
+
+    A session inside a transaction OWNS a connection. The two longest phases
+    in this product — scraping, and the analyst fan-out — do no database work
+    at all and take minutes, and both were entered with a read transaction
+    open from the query just before. That connection then sat idle for the
+    whole phase, serverless Postgres closed it, and the first statement
+    afterwards failed with "SSL connection has been closed unexpectedly",
+    naming a SELECT nobody had written.
+
+    `pool_pre_ping` and `pool_recycle` cannot help: both act at CHECKOUT, and
+    a held connection is never checked out again. They were correctly
+    configured and looking the other way, which is worse than their absence
+    because they read as proof the problem was handled.
+
+    So the rule is about ownership rather than configuration: **no session
+    holds a connection across a phase that does not use it.** Ending the
+    transaction returns it to the pool; the next statement checks out a fresh
+    one and pre-ping does exactly what it is for.
+
+    Commits rather than rolls back: at these seams the preceding work is
+    finished and wanted. Never raises — a connection that cannot be released
+    is already broken, and the stage that notices should not be the one that
+    reports it.
+    """
+    try:
+        db.commit()
+    except Exception:  # noqa: BLE001 — see above
+        try:
+            db.rollback()
+        except Exception:
+            pass

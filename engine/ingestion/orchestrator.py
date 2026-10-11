@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from engine.config import settings
+from engine.db.session import release_connection
 from engine.db.models import (
     AuthorProfile,
     Document,
@@ -309,6 +310,23 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
         .filter(IngestionTask.run_id == run_id, IngestionTask.status.in_(["pending", "running"]))
         .all()
     ]
+
+    # RELEASE THE CONNECTION BEFORE THE LONG PHASE.
+    #
+    # The query above opens a read transaction, which pins one pooled
+    # connection to this session. The pool below then scrapes for minutes —
+    # GDELT alone is paced at one request per five seconds — and that
+    # connection sits idle and unused for the whole of it. Serverless
+    # Postgres closes an idle connection, so the first statement after the
+    # pool died with "SSL connection has been closed unexpectedly", naming a
+    # SELECT on ingestion_runs that nobody had written: the `db.get()` below.
+    #
+    # `pool_pre_ping` cannot save that, and the fact that it is configured is
+    # what made this look handled. Pre-ping validates a connection at
+    # CHECKOUT, and a held connection is never checked out again. Ending the
+    # transaction returns it to the pool, so the read after the pool checks
+    # out a fresh one and pre-ping does exactly what it is there for.
+    release_connection(db)
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         list(pool.map(lambda t_id: _execute_task_safe(session_factory, t_id), task_ids))

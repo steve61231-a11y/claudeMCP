@@ -175,6 +175,18 @@ returns — there is no exception to catch. The analyst fan-out, the tail after
 it, and the whole run each have a ceiling now. Without one, a report hangs
 forever at "12/15 sections".
 
+**No session may hold a connection across a phase that does not use it.**
+The two long phases — scraping and the analyst fan-out — take minutes and do
+no database work, and both were entered with a read transaction open from
+the query just before. That connection sat idle, Neon closed it, and the
+first statement afterwards died naming a SELECT nobody wrote. `pool_pre_ping`
+and `pool_recycle` cannot help: both act at CHECKOUT, and a held connection
+is never checked out again — they were correctly configured and looking the
+other way, which is worse than their absence because they read as proof the
+problem was handled. `db.session.release_connection(db)` is called at both
+seams and `test_no_connection_is_held_across_a_long_phase.py` asserts the
+session's transaction state at the moment each phase starts.
+
 **A commit expires every instance, so a later attribute read is a hidden
 SELECT.** `SessionLocal` sets `expire_on_commit=False` for that reason. A
 400-second run died at the end because reading `ingestion_run.stats` — a

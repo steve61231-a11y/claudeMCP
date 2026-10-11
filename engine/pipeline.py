@@ -7,6 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from engine import health, llm, stages
 from engine.config import settings
+from engine.db.session import release_connection
 from engine.db.models import (
     Entity,
     IngestionRun,
@@ -636,6 +637,13 @@ def run_analysis(
     # scoring, linking or narratives is on the page while the analysts run.
     publish("section_status", stages.current().summary())
     publish("run_health", health.current().summary())
+
+    # The second long phase, and the same rule as collection: the analyst
+    # fan-out takes minutes and touches no database, so the connection goes
+    # back to the pool rather than sitting idle until the server closes it.
+    # Every query after this one then checks out a fresh, pre-pinged
+    # connection. See `db.session.release_connection`.
+    release_connection(db)
 
     payload = enrich_report_payload(
         politician.name,
