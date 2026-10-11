@@ -29,15 +29,27 @@ class ScweetConnector(IngestionConnector):
         self._scraper = scraper
 
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
+        """Scrape X for one query, or for name+aliases when given none.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a twelve-variant
+        expansion made twelve identical requests.
+        """
         if not settings.enable_scweet:
             return []
         scraper = self._scraper or self._build_scraper()
         if scraper is None:
             return []
 
-        terms = [politician_name, *[a for a in aliases if a]][:3]
+        # One term per task when the orchestrator planned the queries, so
+        # the probe expansion reaches X instead of the connector asking the
+        # name three ways. Falls back to its own expansion for any caller
+        # that does not plan tasks.
+        terms = [query] if query else [politician_name, *[a for a in aliases if a]][:3]
         since = window_start.strftime("%Y-%m-%d")
         until = window_end.strftime("%Y-%m-%d")
         limit = settings.scweet_max_tweets

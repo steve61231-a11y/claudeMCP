@@ -23,11 +23,26 @@ MAX_RECORDS = 250  # GDELT DOC API hard cap per call
 
 class GdeltConnector(IngestionConnector):
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
-        # Quote the primary name; OR in aliases so "CS Mbadi" etc. all match.
-        terms = [politician_name, *[a for a in aliases if a]]
-        query = " OR ".join(f'"{t}"' for t in terms[:5])
+        """Fetch one page of GDELT article results.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a twelve-variant
+        expansion made twelve identical requests.
+        """
+        if query:
+            # Already a complete phrase, including the quoting the probe
+            # expansion applies. Re-wrapping it in an OR list would ask
+            # GDELT for the name again and lose the probe.
+            search = query
+        else:
+            # Quote the primary name; OR in aliases so "CS Mbadi" etc. all match.
+            terms = [politician_name, *[a for a in aliases if a]]
+            search = " OR ".join(f'"{t}"' for t in terms[:5])
+        query = search
         params = {
             "query": query,
             "mode": "artlist",

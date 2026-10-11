@@ -29,15 +29,25 @@ class TwscrapeConnector(IngestionConnector):
         self._api = api
 
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
+        """Search X for one query, or for name+aliases when given none.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a multi-variant
+        expansion made several identical requests.
+        """
         try:
-            return asyncio.run(self._fetch_async(politician_name, aliases, window_start, window_end))
+            return asyncio.run(self._fetch_async(politician_name, aliases,
+                                                 window_start, window_end, query))
         except Exception as exc:  # noqa: BLE001
             self.last_error = f"{type(exc).__name__}: {exc}"[:200]
             return []
 
-    async def _fetch_async(self, politician_name, aliases, window_start, window_end) -> list[IngestedMention]:
+    async def _fetch_async(self, politician_name, aliases, window_start, window_end,
+                           query=None) -> list[IngestedMention]:
         api = self._api
         if api is None:
             from twscrape import API
@@ -45,7 +55,11 @@ class TwscrapeConnector(IngestionConnector):
             api = API(settings.twscrape_db or "accounts.db")
             await self._ensure_account(api)
 
-        terms = [politician_name, *[a for a in aliases if a]][:3]
+        # One term per task when the orchestrator planned the queries, so the
+        # probe expansion reaches X rather than the connector asking the name
+        # three ways. Falls back to its own expansion for any caller that
+        # does not plan tasks.
+        terms = [query] if query else [politician_name, *[a for a in aliases if a]][:3]
         mentions: list[IngestedMention] = []
         seen: set[str] = set()
         for term in terms:

@@ -245,6 +245,21 @@ SOURCE_VARIANT_BUDGET = {
     "gdelt": 6,
     "reddit": 4,
     "youtube": 3,
+    # X, through either backend. Both drive a logged-in burner account and X
+    # rate-limits scrapers hard, so this is deliberately modest — the cost of
+    # being greedy here is not a slow run, it is a locked account and no
+    # social data at all.
+    #
+    # It is still a widening: each connector previously searched the name and
+    # up to two aliases, from its OWN internal list, so X — where the
+    # political conversation actually happens — was never asked about courts,
+    # contracts or the earlier record.
+    "twscrape": 4,
+    "scweet": 4,
+    # Paid web search. Budgeted like a news source because that is what it
+    # is, and because every query is billed, which is the operator's own
+    # ceiling to raise.
+    "agentreach": 6,
 }
 
 

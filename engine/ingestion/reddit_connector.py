@@ -23,9 +23,17 @@ LIMIT = 50
 
 class RedditConnector(IngestionConnector):
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
-        query = politician_name
+        """Search Reddit for one query.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a twelve-variant
+        expansion made twelve identical requests.
+        """
+        query = query or politician_name
         mentions: list[IngestedMention] = []
         seen: set[str] = set()
 

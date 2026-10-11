@@ -27,12 +27,21 @@ MAX_ITEMS = 80
 
 class GoogleNewsRssConnector(IngestionConnector):
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
-        # One OR-query keeps it to a single request; quote the primary name so
-        # "John Mbadi" matches as a phrase, OR in the strongest aliases.
-        terms = [politician_name, *[a for a in aliases if a]][:4]
-        query = " OR ".join(f'"{t}"' for t in terms)
+        """One Google News RSS request.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a twelve-variant
+        expansion made twelve identical requests.
+        """
+        if not query:
+            # One OR-query keeps it to a single request; quote the primary name
+            # so "John Mbadi" matches as a phrase, OR in the strongest aliases.
+            terms = [politician_name, *[a for a in aliases if a]][:4]
+            query = " OR ".join(f'"{t}"' for t in terms)
         url = RSS_URL.format(query=quote_plus(query))
         try:
             resp = http.get(url, timeout=25)

@@ -165,9 +165,7 @@ def plan_run(
         )
 
     if settings.enable_agentreach:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="agentreach", platform="mixed", endpoint="web", query=politician.name)
-        )
+        _keyword_tasks("agentreach", "mixed", "web")
 
     if settings.enable_facebook_scraper:
         tasks.append(
@@ -193,15 +191,18 @@ def plan_run(
         if not social_fallback:
             run.stats["social_fallback_reason"] = "no X credentials configured (set X_USERNAME/X_PASSWORD)"
 
+    # One task per query variant, like the news sources. These two used to
+    # get a single bare-name task each and then expand internally to the name
+    # plus two aliases — so X, where the political conversation actually
+    # happens, was never asked about the court record, the contracts or the
+    # earlier career. The budget is small on purpose: both drive a logged-in
+    # burner account, and the cost of being greedy is a locked account rather
+    # than a slow run.
     if settings.enable_twscrape or social_fallback:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="twscrape", platform="twitter", endpoint="search", query=politician.name)
-        )
+        _keyword_tasks("twscrape", "twitter", "search")
 
     if settings.enable_scweet or social_fallback:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="scweet", platform="x", endpoint="search", query=politician.name)
-        )
+        _keyword_tasks("scweet", "x", "search")
 
     # Web discovery: one task carrying all metasearch variants. This is the
     # layer that reaches archived/obscure pages no fixed connector indexes.
@@ -525,54 +526,89 @@ def _execute_newsapi_task(session: Session, run: IngestionRun, task: IngestionTa
             break
 
 
-def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: IngestionTask, politician: Politician) -> None:
-    """Curated fixtures, AgentReach, and mock data have no pagination — one bulk fetch."""
+#: Connectors whose search phrase is a keyword QUERY, and which therefore
+#: have to be told which one to run.
+#:
+#: `plan_run` expands a subject into one task per query variant — twelve for
+#: Google News, six for GDELT — and the dispatch below then called
+#: `connector.fetch(politician.name, politician.aliases, ...)`, so every one
+#: of those tasks ran the identical bare-name request. Twelve requests, one
+#: question, eleven thrown away by the dedupe. The volume was already being
+#: paid for; only the coverage was missing.
+#:
+#: Membership is deliberate and not every connector qualifies. Wayback
+#: filters a CDX index over a fixed domain list by surname, Wikipedia looks
+#: up a title, Facebook reads a page list, and curated/mock read fixtures.
+#: Handing any of those a probe query would turn a working source into an
+#: empty one.
+KEYWORD_CONNECTORS = frozenset({
+    "gdelt", "google_news", "reddit", "youtube", "scweet", "twscrape",
+    "agentreach",
+})
+
+
+def _build_connector(task: IngestionTask):
+    """The connector for a task.
+
+    Lifted out of the dispatch so there is one place that names them, and so
+    a test can stand in for a connector and record what it was asked —
+    which is how the bug above went unnoticed: every test of the query
+    expansion called the expansion directly, and a helper can be perfect
+    and unused.
+    """
     if task.connector == "curated":
         from engine.ingestion.curated_source import CuratedResearchConnector
 
-        connector = CuratedResearchConnector()
-    elif task.connector == "agentreach":
+        return CuratedResearchConnector()
+    if task.connector == "agentreach":
         from engine.ingestion.agentreach_connector import AgentReachConnector
 
-        connector = AgentReachConnector()
-    elif task.connector == "facebook":
+        return AgentReachConnector()
+    if task.connector == "facebook":
         from engine.ingestion.facebook_connector import FacebookConnector
 
         pages = [p.strip() for p in settings.facebook_pages.split(",") if p.strip()] or None
-        connector = FacebookConnector(pages=pages, cookies=settings.facebook_cookies_path or None)
-    elif task.connector == "gdelt":
+        return FacebookConnector(pages=pages, cookies=settings.facebook_cookies_path or None)
+    if task.connector == "gdelt":
         from engine.ingestion.gdelt_connector import GdeltConnector
 
-        connector = GdeltConnector()
-    elif task.connector == "wayback":
+        return GdeltConnector()
+    if task.connector == "wayback":
         from engine.ingestion.wayback_connector import WaybackConnector
 
-        connector = WaybackConnector()
-    elif task.connector == "twscrape":
+        return WaybackConnector()
+    if task.connector == "twscrape":
         from engine.ingestion.twscrape_connector import TwscrapeConnector
 
-        connector = TwscrapeConnector()
-    elif task.connector == "scweet":
+        return TwscrapeConnector()
+    if task.connector == "scweet":
         from engine.ingestion.scweet_connector import ScweetConnector
 
-        connector = ScweetConnector()
-    elif task.connector == "wikipedia":
+        return ScweetConnector()
+    if task.connector == "wikipedia":
         from engine.ingestion.wikipedia_connector import WikipediaConnector
 
-        connector = WikipediaConnector()
-    elif task.connector == "google_news":
+        return WikipediaConnector()
+    if task.connector == "google_news":
         from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
 
-        connector = GoogleNewsRssConnector()
-    elif task.connector == "reddit":
+        return GoogleNewsRssConnector()
+    if task.connector == "reddit":
         from engine.ingestion.reddit_connector import RedditConnector
 
-        connector = RedditConnector()
-    elif task.connector == "youtube":
+        return RedditConnector()
+    if task.connector == "youtube":
         from engine.ingestion.youtube_connector import YouTubeConnector
 
-        connector = YouTubeConnector()
-    elif task.connector == "discovery":
+        return YouTubeConnector()
+    from engine.ingestion.mock_source import MockIngestionConnector
+
+    return MockIngestionConnector()
+
+
+def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: IngestionTask, politician: Politician) -> None:
+    """Curated fixtures, AgentReach, and mock data have no pagination — one bulk fetch."""
+    if task.connector == "discovery":
         # Discovery yields long-form DOCUMENTS (full page text), not mentions,
         # so it bypasses the mention path entirely.
         from engine.ingestion.discovery_connector import DiscoveryConnector
@@ -584,11 +620,18 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         )
         task.result_count += _store_documents(session, run, politician, documents)
         return
-    else:
-        from engine.ingestion.mock_source import MockIngestionConnector
 
-        connector = MockIngestionConnector()
-    mentions = connector.fetch(politician.name, politician.aliases or [], run.window_start, run.window_end)
+    connector = _build_connector(task)
+    # The task's own query, for the sources that search by one. Without this
+    # the whole variant expansion was dead: the queries were planned, the
+    # requests were made, and every one of them asked the same thing.
+    if task.connector in KEYWORD_CONNECTORS and task.query:
+        mentions = connector.fetch(politician.name, politician.aliases or [],
+                                   run.window_start, run.window_end,
+                                   query=task.query)
+    else:
+        mentions = connector.fetch(politician.name, politician.aliases or [],
+                                   run.window_start, run.window_end)
     # Turn headline-only article mentions into full journalism bodies before
     # they're stored, so the corpus (and the LLM digest) reads whole articles.
     if task.connector in ("gdelt", "wayback", "curated", "google_news"):

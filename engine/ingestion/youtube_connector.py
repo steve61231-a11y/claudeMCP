@@ -39,9 +39,17 @@ class YouTubeConnector(IngestionConnector):
         self.last_error: str | None = None
 
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
-        entries = self._search(politician_name)
+        """Search YouTube for one query.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a twelve-variant
+        expansion made twelve identical requests.
+        """
+        entries = self._search(query or politician_name)
         if not entries:
             return []
 

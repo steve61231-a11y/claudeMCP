@@ -45,10 +45,18 @@ class AgentReachConnector(IngestionConnector):
 
     # --- public entry point -------------------------------------------------
     def fetch(
-        self, politician_name: str, aliases: list[str], window_start: datetime, window_end: datetime
+        self, politician_name: str, aliases: list[str], window_start: datetime,
+        window_end: datetime, query: str | None = None
     ) -> list[IngestedMention]:
+        """Web search for one query, or for name+aliases when given none.
+
+        `query` is the one this task was planned to run — see
+        `orchestrator.KEYWORD_CONNECTORS`. Without it every task for this
+        source re-derived the same bare-name phrase, so a multi-variant
+        expansion made several identical requests.
+        """
         mentions: list[IngestedMention] = []
-        terms = [politician_name, *aliases]
+        terms = [query] if query else [politician_name, *aliases]
         seen_urls: set[str] = set()
         for term in terms:
             try:
