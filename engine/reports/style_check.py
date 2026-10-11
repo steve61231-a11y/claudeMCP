@@ -76,6 +76,61 @@ PLAIN_WORDS = {
     "is reflective of": "reflects", "serves to": "",
     "it is important to note that": "", "it should be noted that": "",
     "it is worth noting that": "", "needless to say": "",
+
+    # --- the guide's own "short words" table, verbatim ------------------
+    # "Use them. They are often Anglo-Saxon rather than Latin in origin.
+    # They are easy to spell and easy to understand." Several pairs above
+    # were already here from the rules second-hand; these are the rest of
+    # the list as printed.
+    "however": "but",
+    "expenditure": "spending",
+    "participate": "take part", "manufacture": "make",
+    "underdeveloped": "poor", "substantive": "real",
+    # --- and the preferences in the guide's introduction ----------------
+    # "Use the language of everyday speech, not that of spokesmen,
+    # lawyers or bureaucrats."
+    "gift": "present", "wealthy": "rich",
+    #
+    # Five of the guide's pairs are deliberately NOT here, because the
+    # replacement is wrong in the collocations this product actually
+    # writes, and a check that fires on correct prose is one its reader
+    # learns to skip:
+    #
+    #   facility → plant     "health facility" is the standard Kenyan term
+    #                        and the single commonest noun in an SHA report
+    #   exit → way out       "exit the market" is not a door
+    #   peer → colleague     "peer review", and a UK peer is a person
+    #   violate → break      nobody "breaks" human rights
+    #   following → after    "the following three issues" is correct; the
+    #                        temporal sense is handled below, where the
+    #                        context can be checked
+    #   establish → set up   "the record does not establish who initiated
+    #                        the claim" is the sentence THIS ENGINE'S OWN
+    #                        house style mandates for thin evidence, and
+    #                        the guide means the create sense ("establish a
+    #                        unit"). The engine's own prescribed phrasing
+    #                        failing its own new check is as clear a sign
+    #                        as there is that a style rule has been applied
+    #                        past the sense it was written for.
+    # --- "unnecessary words": the guide's list -------------------------
+    "strike action": "strike", "cutbacks": "cuts", "cutback": "cut",
+    "track record": "record", "large-scale": "big",
+    "policymaking process": "policymaking", "weather conditions": "weather",
+    "this time around": "this time", "any time soon": "soon",
+    "at this moment in time": "now",
+    # "Shoot off, or rather shoot, as many prepositions after verbs as
+    # possible." The guide's own examples.
+    "bought up": "bought", "sold off": "sold", "cut back": "cut",
+    "hatched up": "hatched", "headed up by": "headed by",
+    # --- "sloppy writing": phrases that say less than they appear to ---
+    "industrial action": "a strike",
+    "negative health outcomes": "illness or death",
+    "interpersonal skills": "gets on well with others",
+    "high name-recognition": "well known",
+    "reliability problems": "does not work",
+    "negative report": "critical report",
+    "courtesy call": "sales offer",
+    "substantially finished": "unfinished",
 }
 
 #: Verb inflections, so the list does not have to spell out every tense.
@@ -101,6 +156,80 @@ for _word, _plain in PLAIN_WORDS.items():
 _PLAIN = re.compile(
     r"\b(" + "|".join(sorted((re.escape(w) for w in _PLAIN_FORMS), key=len, reverse=True)) + r")\b",
     re.IGNORECASE)
+
+
+# Words the guide calls horrible, which have no single replacement.
+#
+# "No words or phrases should be banned outright from appearing in print,
+# but if you use any of the following you should be aware that they may have
+# an emetic effect on some of your readers."
+#
+# The guide's list, minus this product's own defined terms. `stakeholder`
+# and `governance` are on it, and they are also the names of a section and a
+# framework here — the Issue Map is literally built on stakeholder analysis.
+# Flagging a product's own vocabulary is how a check teaches its reader to
+# ignore it, which this codebase has written down more than once, so they are
+# left out on purpose rather than by oversight.
+HORRIBLE_WORDS = (
+    "guesstimate", "proactive", "poster child", "prestigious", "savvy",
+    "segue", "rack up", "racked up", "grow the business", "ongoing",
+    "chattering classes", "looking to", "facilitate",
+)
+
+_HORRIBLE = re.compile(
+    r"\b(" + "|".join(sorted((re.escape(w) for w in HORRIBLE_WORDS),
+                             key=len, reverse=True)) + r")\b", re.IGNORECASE)
+
+# Journalese: the ready-made phrase that reads like a wire report.
+#
+# The guide's own parody is worth keeping in mind, because it is exactly the
+# register a model reaches for when asked to write about politics: "Lazy
+# journalists are always at home in oil-rich country A, ruled by ailing
+# President B, the long-serving strongman, who is, according to the
+# chattering classes, not squeaky clean but a wily political operator —
+# hence the present uneasy peace — but, after his recent watershed (or
+# ground-breaking or landmark or sea-change) decision ... will soon face a
+# bloody uprising in the breakaway south."
+#
+# That is the single most relevant page of the guide for this product. A
+# report about Kenyan politics written in it is unsellable, and it is the
+# default voice of a model that has read a lot of news.
+JOURNALESE = (
+    "thumbs up", "thumbs down", "green light", "gravy train",
+    "salami tactics", "the likes of", "big pharma",
+    "watershed", "ground-breaking", "groundbreaking", "landmark",
+    "sea-change", "sea change", "squeaky clean", "wily political operator",
+    "uneasy peace", "honeymoon is over", "long-serving strongman",
+    "oil-rich", "hit the big time", "political operator",
+    # "breakaway" is in the guide's parody and is NOT here: a breakaway
+    # region is a fact about a map, and the stock phrase is the whole
+    # clause rather than the word.
+)
+
+_JOURNALESE = re.compile(
+    r"\b(" + "|".join(sorted((re.escape(w) for w in JOURNALESE),
+                             key=len, reverse=True)) + r")\b", re.IGNORECASE)
+
+#: "The word very is a case in point. If it occurs in a sentence you have
+#: written, try leaving it out and see whether the meaning is changed. `The
+#: omens were good` may have more force than `The omens were very good`."
+_VERY = re.compile(r"\bvery\b", re.IGNORECASE)
+
+#: Pairs where the guide is right about one sense of a word and wrong about
+#: the other, so the context decides. Kept as patterns rather than dropped,
+#: because the temporal "following the audit" is the commonest piece of
+#: Latinate padding a model produces and worth catching — while "the
+#: following three issues" is simply correct.
+_CONTEXTUAL = (
+    (re.compile(r"(?<!the )(?<!as )\bfollowing\b(?=\s+(?:the|a|an|his|her|its|their)\b)",
+                re.IGNORECASE),
+     "inflated_word", "use \u201cafter\u201d"),
+)
+
+#: "skills are turning up all over the place — in learning skills, thinking
+#: skills, teaching skills — instead of the ability to. He has the skills
+#: probably means He can."
+_SKILLS = re.compile(r"\b(\w+)\s+skills\b", re.IGNORECASE)
 
 
 # Accusation without attribution.
@@ -179,6 +308,22 @@ def check(text: str) -> list[dict]:
         plain = _PLAIN_FORMS.get(word.lower(), "")
         hits.append({"kind": "inflated_word", "phrase": word,
                      "fix": f"use \u201c{plain}\u201d" if plain else "cut it",
+                     "context": text[max(0, match.start() - 30):match.end() + 30].strip()})
+    for pattern, kind, fix in (
+        (_HORRIBLE, "horrible_word", "say what you mean plainly"),
+        (_JOURNALESE, "journalese", "say what happened instead of the stock phrase"),
+        (_VERY, "unnecessary_word", "try leaving it out and see if the meaning changes"),
+    ):
+        for match in pattern.finditer(text):
+            hits.append({"kind": kind, "phrase": match.group(0), "fix": fix,
+                         "context": text[max(0, match.start() - 30):match.end() + 30].strip()})
+    for pattern, kind, fix in _CONTEXTUAL:
+        for match in pattern.finditer(text):
+            hits.append({"kind": kind, "phrase": match.group(0), "fix": fix,
+                         "context": text[max(0, match.start() - 30):match.end() + 30].strip()})
+    for match in _SKILLS.finditer(text):
+        hits.append({"kind": "jargon", "phrase": match.group(0),
+                     "fix": "\u201chas the skills\u201d usually means \u201ccan\u201d",
                      "context": text[max(0, match.start() - 30):match.end() + 30].strip()})
     hits.extend(accusations(text))
     return hits

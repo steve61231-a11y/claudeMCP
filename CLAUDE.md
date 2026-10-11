@@ -115,6 +115,19 @@ the loop would learn that noise is the best strategy while looking from
 outside as though it worked. Where the attribution is missing — rows stored
 before `task_id` existed — it falls back to novelty and `ranked_by` says so.
 
+**A style rule applied past the sense it was written for fires on correct
+prose.** `docs/economist-style-guide.md` holds the guide's prescriptive
+sections and `reports/style_check.py` implements them — but six of its own
+pairs are deliberately not applied, because the replacement is wrong in the
+collocations this product writes: "health facility" is the standard Kenyan
+term, a UK peer is a person, firms exit markets, nobody "breaks" human
+rights, "the following three issues" is correct English, and "the record
+does not establish X" is the sentence this engine's OWN house style mandates
+for thin evidence. `stakeholder` and `governance` are on the horrible-words
+list and are also the name of a section and a framework here. Each exclusion
+is pinned by a test, because a check that fires on good writing is one its
+reader learns to skip.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

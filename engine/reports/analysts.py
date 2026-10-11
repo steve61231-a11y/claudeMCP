@@ -56,6 +56,22 @@ decision from it in minutes, not a blog post:
 - ACTIVE VOICE. "The ministry awarded the contract", not "the contract was
   awarded by the ministry". Use the passive only when who acted is genuinely
   unknown — and when it is unknown, say so.
+- NO JOURNALESE. This is the register to avoid, and it is the guide's own
+  example of lazy writing: "oil-rich country A, ruled by ailing President B,
+  the long-serving strongman, who is not squeaky clean but a wily political
+  operator — hence the present uneasy peace — after his recent watershed
+  decision". Never write: watershed, ground-breaking, landmark, sea-change,
+  squeaky clean, gravy train, green light, thumbs up/down, the likes of,
+  honeymoon is over, political operator. Say what happened instead.
+- NOT HECTORING. "Those who disagree with you are not necessarily stupid or
+  insane. Nobody needs to be described as silly: let your analysis show
+  that he is." Go easy on the oughts and shoulds.
+- NAME THE THING. "What is an ethics violation? An error of judgment? A
+  crime? A moral lapse?" A heart condition is a bad heart; industrial action
+  is a strike; someone with high name-recognition is well known. Write the
+  specific thing, not the category it belongs to.
+- No boasting. Never tell the reader that an earlier assessment was correct
+  or that this is a scoop.
 
 ATTRIBUTION — the difference between a finding and an accusation:
 - You may report ANY allegation. You may not MAKE one. Never write "X is a
