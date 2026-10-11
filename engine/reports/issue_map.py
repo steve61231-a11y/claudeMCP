@@ -25,7 +25,7 @@ from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
 from engine.ingestion.gdelt_connector import GdeltConnector
-from engine.reports import citations, decompose, issue_floor, issue_graph, relevance, style_check, triangulation
+from engine.reports import citations, decompose, grounding, issue_floor, issue_graph, relevance, style_check, triangulation
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -521,6 +521,24 @@ def build_issue_map(
     analysis = style_check.annotate(analysis)
     publish("intersection", analysis)
 
+    # Names the sources do not contain.
+    #
+    # This is the third time this codebase has run a check on one product
+    # and not the other, and the second time the map was the one left out —
+    # citations went the other way, triangulation went the other way. The
+    # grounding rules are a prompt instruction and this project's own
+    # lesson is that an instruction is not a guarantee: quotes are checked
+    # against their ref, prose never was. A map is MORE exposed than a
+    # report, not less, because its whole claim is a connection between two
+    # named things, and an invented third name in that sentence is the
+    # fastest way to lose a client.
+    #
+    # Run on the analysis after linkify so it sees the resolved prose, and
+    # reported beside it rather than inside it, so a reader can tell "we
+    # looked and found none" from "nobody looked".
+    grounding_result = grounding.check(analysis, mentions)
+    publish("grounding", grounding_result)
+
     sample = [
         {
             "platform": m.get("platform"),
@@ -538,6 +556,7 @@ def build_issue_map(
         "generated_at": datetime.utcnow(),
         "coverage": digest["coverage"],
         "intersection": analysis,
+        "grounding": grounding_result,
         "evidence_sample": sample,
         "thin": digest["coverage"]["mentions_total"] == 0,
     }

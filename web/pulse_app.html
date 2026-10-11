@@ -1488,7 +1488,8 @@
       g.appendChild(circle);g.appendChild(label);
       g.addEventListener('mousemove',e=>{
         circle.setAttribute('opacity','1');
-        showTip(e,`<b>${esc(n.id)}</b><br>${esc(n.segment||'')} · influence ${n.value||0}`+
+        showTip(e,`<b>${esc(n.id)}</b><br>${esc(n.segment||'')}`
+          +(n.share!=null?` · ${n.share}% of influence`:` · influence ${n.value||0} (unscaled)`)+
           (opts.onHoverDetail?opts.onHoverDetail(n):''));
       });
       g.addEventListener('mouseleave',()=>{circle.setAttribute('opacity','.85');hideTip();});
@@ -1575,15 +1576,56 @@
     return box.children.length?box:null;
   }
 
+  /** A framework section's head.
+      -----------------------------------------------------------------
+      `number` is either a literal marker — "INPUT 1", which is not a
+      section and is deliberately outside the sequence — or `null`, which
+      takes the next number from the counter.
+
+      Hand-typed numbers are what the client's note was about on the
+      search report: "we need to number the sections properly". That got
+      fixed there and the issue map kept its own copy of the same defect,
+      shipping with TWO sections numbered 2 and no section 3 at all. A
+      number nobody types cannot be typed twice. */
   function fwSection(number,title,subtitle){
     const head=el('div','fw-head');
-    head.appendChild(el('span','fw-num',esc(number)));
+    head.appendChild(el('span','fw-num',esc(number==null?String(++_sectionNo):number)));
     const t=el('div','');
     t.appendChild(el('div','fw-title',esc(title)));
     if(subtitle)t.appendChild(el('div','fw-sub',esc(subtitle)));
     head.appendChild(t);
     return head;
   }
+  /** An actor's weight, as a share rather than a number on a private scale.
+      -----------------------------------------------------------------
+      "influence 100" next to "influence 7" told a reader nothing they
+      could act on. The figure arrives either from a model, which picks a
+      scale it never declares, or from the derived floor, where it is a
+      percentage OF THE TOP ACTOR — so the leading actor always reads 100
+      and the number means something different in every report. Five
+      places on the page printed it bare.
+
+      It is the same defect the report's Drivers section had, and it is
+      fixed the same way: a share of the total identified in this run,
+      which is bounded, comparable between runs, and checkable by adding
+      the column up. The raw figure moves into the tooltip, since the share
+      is derived from it.
+
+      Where the engine could not compute a share there is no share to
+      show, and the figure is labelled unscaled rather than presented as a
+      measurement. An honest "we cannot compare these" beats a number that
+      looks like one and is not. */
+  function influenceChip(x){
+    if(!x)return '';
+    if(x.influence_share!=null)
+      return `<span class="chip" title="${x.influence!=null?'raw figure '+esc(String(x.influence))+' · ':''}share of all influence identified in this run">`
+        +`${x.influence_share}% of influence</span>`;
+    const raw=x.influence!=null?x.influence:(x.influence_score!=null?x.influence_score:null);
+    if(raw==null)return '';
+    return `<span class="chip" title="an unscaled figure from the analyst — nothing here totals to 100, so it cannot be read as a share">`
+      +`influence ${esc(String(raw))} · unscaled</span>`;
+  }
+
   const fwEmpty=msg=>el('div','muted','— '+msg);
 
   /* Receipts. A narrative, source or issue the reader cannot open is an
@@ -1944,6 +1986,7 @@
   /* ---- Issue Analysis & Mapping Framework V1.0 ---- */
   function renderIssueFramework(out,fw){
     if(!fw){out.appendChild(noteCard('Issue framework','Not present in this report.'));return;}
+    resetSections();
 
     // INPUT 1
     const i1=el('div','card glow');
@@ -1956,7 +1999,7 @@
     // 1 Background and context
     const bg=fw.background_and_context||{};
     const s1=el('div','card');
-    s1.appendChild(fwSection('1','Background and context',
+    s1.appendChild(fwSection(null,'Background and context',
       `Outline, international and national approaches, timeline (${bg.controls?bg.controls.year_cutoff:10}-year cut-off)`));
     // Each section carries its own resolved citations, so "[1]" becomes the
     // article it came from rather than a footnote pointing at nothing.
@@ -1981,7 +2024,7 @@
     // 2 Main contours
     const mc=fw.main_contours||{};
     const s2=el('div','card');
-    s2.appendChild(fwSection('2','Main contours',
+    s2.appendChild(fwSection(null,'Main contours',
       `Narratives and positions — max ${mc.controls?mc.controls.max_stakeholders_per_segment:5} stakeholders per segment`));
     const positions=mc.positions||{};
     const g2=el('div','grid');g2.style.gridTemplateColumns='repeat(auto-fit,minmax(220px,1fr))';
@@ -1998,7 +2041,7 @@
           const c=el('div','card');c.style.marginTop='8px';c.style.borderLeft='3px solid '+colour;
           c.innerHTML=`<div class="lbl">${esc(seg.replace('_',' '))}</div>`+
             list.map(s=>`<div class="mentr"><div style="font-weight:600">${esc(s.name)}</div>
-              <div class="muted" style="font-size:12px">influence ${s.influence!=null?s.influence:'—'}</div></div>`).join('');
+              <div class="row" style="margin-top:4px">${influenceChip(s)}</div></div>`).join('');
           col.appendChild(c);
         });
         if(!any)col.appendChild(fwEmpty('none identified'));
@@ -2010,7 +2053,7 @@
     // 2 Stakeholder networks (visualisation + hover profiles)
     const sn=fw.stakeholder_networks||{};
     const s2b=el('div','card');
-    s2b.appendChild(fwSection('2','Stakeholder networks','Champions, challengers and neutrals — hover a node for the profile'));
+    s2b.appendChild(fwSection(null,'Stakeholder networks','Champions, challengers and neutrals — hover a node for the profile'));
     const viz=sn.visualisation||{nodes:[],edges:[]};
     const profiles={};
     ['champions','challengers','neutral'].forEach(group=>(sn[group]||[]).forEach(s=>{profiles[s.name]=s;}));
@@ -2044,7 +2087,7 @@
     // 4 Strategic recommendations
     const sr=fw.strategic_recommendations||{};
     const s4=el('div','card glow');
-    s4.appendChild(fwSection('4','Strategic recommendations','Baseline probability, messaging, and who to engage'));
+    s4.appendChild(fwSection(null,'Strategic recommendations','Baseline probability, messaging, and who to engage'));
     s4.appendChild(el('div','lbl','Baseline probability of outcomes'));
     s4.appendChild(probabilityBars(sr.probability_tree||{}));
     if((sr.probability_tree||{}).major_variables){
@@ -2061,7 +2104,8 @@
       col.appendChild(el('div','lbl',label));
       if(!(list||[]).length)col.appendChild(fwEmpty('none identified'));
       (list||[]).forEach(p=>col.appendChild(el('div','mentr',
-        `<div style="font-weight:600">${esc(p.name)}</div><div class="muted" style="font-size:12px">${esc(p.segment||'')} · influence ${p.influence!=null?p.influence:'—'}</div>`)));
+        `<div style="font-weight:600">${esc(p.name)}</div>
+         <div class="row" style="margin-top:4px">${p.segment?`<span class="chip">${esc(p.segment)}</span>`:''}${influenceChip(p)}</div>`)));
       g4.appendChild(col);
     });
     s4.appendChild(g4);
@@ -2074,7 +2118,7 @@
     // 5 Sequencing
     const sq=fw.sequencing||{};
     const s5=el('div','card');
-    s5.appendChild(fwSection('5','Sequencing','When to engage, and when to build coalitions'));
+    s5.appendChild(fwSection(null,'Sequencing','When to engage, and when to build coalitions'));
     s5.appendChild(el('div','lbl','Engagement timeline'));
     s5.appendChild(timelineChart(sq.engagement_timeline||[]));
     if((sq.coalition_windows||[]).length){
@@ -2089,7 +2133,7 @@
     // 6 Data overview
     const dov=fw.data_overview||{};
     const s6=el('div','card');
-    s6.appendChild(fwSection('6','Data overview','What this rests on, the controls applied, and how to read it'));
+    s6.appendChild(fwSection(null,'Data overview','What this rests on, the controls applied, and how to read it'));
     const used=dov.data_used||{};
     const g6=el('div','grid');g6.style.gridTemplateColumns='repeat(auto-fit,minmax(130px,1fr))';
     Object.entries(used).forEach(([k,v])=>{
@@ -2126,7 +2170,7 @@
       <div class="row" style="margin-top:8px">
         <span class="pill sky">${esc(stakeholder.role||'')}</span>
         <span class="chip">${esc(stakeholder.segment||'')}</span>
-        <span class="chip">influence ${stakeholder.influence!=null?stakeholder.influence:'—'}</span>
+        ${influenceChip(stakeholder)}
       </div>
       ${['position_on_issue','history','track_record','modus_operandi'].map(k=>pr[k]?
         `<div class="lbl" style="margin-top:12px">${k.replace(/_/g,' ')}</div>
@@ -3262,7 +3306,7 @@
            <div><b style="font-size:15px">${handle(s.handle)}</b>
              <div class="muted" style="font-size:12.5px;margin-top:2px">${esc(s.account_type||'')}</div></div>
            <div class="row" style="gap:6px"><span class="pill ${tone}">${esc(s.stance||'—')}</span>
-             ${s.influence_score!=null?`<span class="chip">influence ${esc(s.influence_score)}</span>`:''}</div></div>
+             ${influenceChip(s)}</div></div>
          <div style="font-size:14px;margin-top:8px">${esc(s.what_they_say||'')}</div>
          ${quotesHTML(s.quotes)}`));
     });
@@ -3764,46 +3808,10 @@
       wrap.appendChild(bar);
     }
 
-    // Names the sources do not contain.
-    //
-    // The grounding rules are an instruction to the model, and on a cheaper
-    // backend an instruction is not a guarantee. Quotes are validated against
-    // their ref; prose never was. A reader has no way to tell a grounded
-    // report from an inventive one, and an invented name in front of a client
-    // is the fastest way to lose them — so say it here, above the findings,
-    // where it cannot be scrolled past.
-    const gr = r.grounding || {};
-    if ((gr.ungrounded || []).length) {
-      const bad = el('div','card');
-      bad.style.cssText = 'border-color:var(--neg);background:rgba(251,113,133,.14)';
-      const names = gr.ungrounded.slice(0, 12);
-      bad.innerHTML = `<div class="row" style="gap:10px;align-items:flex-start">
-        <div style="font-size:22px">⛔</div>
-        <div style="flex:1"><b style="font-size:15px">${gr.ungrounded.length}
-          name${gr.ungrounded.length === 1 ? '' : 's'} in this report ${gr.ungrounded.length === 1 ? 'does' : 'do'} not appear in any source.</b>
-        <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">
-          Checked ${fmt(gr.checked)} names against the collected corpus.
-          A name the sources do not contain was not reported — it was invented.
-          Treat every sentence naming one as unreliable, and do not send this
-          to a client until it is clean.</div>
-        <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
-          ${names.map(n => `<span class="pill neg">${esc(n)}</span>`).join('')}
-          ${gr.ungrounded.length > names.length
-            ? `<span class="chip">+${gr.ungrounded.length - names.length} more</span>` : ''}
-        </div></div></div>`;
-      wrap.appendChild(bad);
-    } else if (gr.checked) {
-      // "We looked and found none" is a different result from "nobody
-      // looked", and this codebase does not let those two render the same.
-      const ok = el('div','card');
-      ok.innerHTML = `<div class="row" style="gap:10px;align-items:center">
-        <div style="font-size:16px">✓</div>
-        <div class="muted" style="font-size:13px">All ${fmt(gr.checked)} names in this
-          report appear in the collected sources${gr.method === 'capitalised-names'
-            ? ' (checked by name pattern — set LOW_MEMORY=false for the fuller entity check)' : ''}.</div>
-      </div>`;
-      wrap.appendChild(ok);
-    }
+    // Names the sources do not contain. Said above the findings, where it
+    // cannot be scrolled past. Lifted into a helper because the issue map
+    // needs exactly the same banner — see groundingBanner().
+    groundingBanner(wrap, r.grounding, 'report');
 
     // Sections that FAILED, named. An empty section that ran is a finding; an
     // empty section that never ran is not, and the two look identical without
@@ -4274,6 +4282,10 @@
 
   function intersectionDetail(host,m){
     const it=m.intersection||{};
+    // Before the verdict, not after it. A map's entire claim is a
+    // connection between two named things, so a name from nowhere in that
+    // sentence has to be flagged above the sentence.
+    groundingBanner(host,m.grounding,'map');
     // The graph is a NAVIGATION AID over the findings, not the findings. Put
     // first, it was the first thing on the page — circles and dotted lines
     // where the answer should be. It is built here (so its listeners are
@@ -4464,7 +4476,7 @@
                <div><b style="font-size:15px">${esc(a.name)}</b>
                  ${a.entity_type?`<span class="chip" style="margin-left:8px">${esc(a.entity_type)}</span>`:''}</div>
                <div class="row" style="gap:6px"><span class="pill ${tone}">${esc(pos)}</span>
-                 ${a.influence!=null?`<span class="chip">influence ${esc(a.influence)}</span>`:''}</div></div>
+                 ${influenceChip(a)}</div></div>
              ${a.relation?`<div style="font-size:14px;margin-top:8px">${esc(a.relation)}</div>`:''}`));
         });
       };
@@ -4587,6 +4599,67 @@
       <div class="muted" style="font-size:12.5px;margin-top:6px">Tone and stance there are
       <b>not established</b>. Every item still links to the document it came from.</div>`;
     return c;
+  }
+
+  /** "Which names in this document do the sources not contain?"
+      -----------------------------------------------------------------
+      The grounding rules are an instruction to the model, and on a cheaper
+      backend an instruction is not a guarantee. Quotes are validated
+      against their ref; prose never was. A reader has no way to tell a
+      grounded document from an inventive one, and an invented name in
+      front of a client is the fastest way to lose them.
+
+      One banner, two products. It was written for the report and the issue
+      map did not have it — which is the third time a check in this
+      codebase has run on one product and not the other. A map is MORE
+      exposed, not less: its whole claim is a connection between two named
+      things, so an invented third name sits in the middle of the sentence
+      the client is paying for. */
+  function groundingBanner(host, gr, what){
+    gr = gr || {};
+    what = what || 'report';
+    if ((gr.ungrounded || []).length) {
+      const bad = el('div','card');
+      bad.style.cssText = 'border-color:var(--neg);background:rgba(251,113,133,.14)';
+      const names = gr.ungrounded.slice(0, 12);
+      bad.innerHTML = `<div class="row" style="gap:10px;align-items:flex-start">
+        <div style="font-size:22px">⛔</div>
+        <div style="flex:1"><b style="font-size:15px">${gr.ungrounded.length}
+          name${gr.ungrounded.length === 1 ? '' : 's'} in this ${esc(what)} ${gr.ungrounded.length === 1 ? 'does' : 'do'} not appear in any source.</b>
+        <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">
+          Checked ${fmt(gr.checked)} names against the collected corpus.
+          A name the sources do not contain was not reported — it was invented.
+          Treat every sentence naming one as unreliable, and do not send this
+          to a client until it is clean.</div>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+          ${names.map(n => `<span class="pill neg">${esc(n)}</span>`).join('')}
+          ${gr.ungrounded.length > names.length
+            ? `<span class="chip">+${gr.ungrounded.length - names.length} more</span>` : ''}
+        </div></div></div>`;
+      host.appendChild(bad);
+      return bad;
+    }
+    if (gr.checked) {
+      // "We looked and found none" is a different result from "nobody
+      // looked", and this codebase does not let those two render the same.
+      const ok = el('div','card');
+      ok.innerHTML = `<div class="row" style="gap:10px;align-items:center">
+        <div style="font-size:16px">✓</div>
+        <div class="muted" style="font-size:13px">All ${fmt(gr.checked)} names in this
+          ${esc(what)} appear in the collected sources${gr.method === 'capitalised-names'
+            ? ' (checked by name pattern — set LOW_MEMORY=false for the fuller entity check)' : ''}.</div>
+      </div>`;
+      host.appendChild(ok);
+      return ok;
+    }
+    // Neither branch: the check did not run. `grounding.check` says why in
+    // its own `skipped` field, and claiming a clean bill of health from an
+    // examination that never happened is the one thing not to do here.
+    if (gr.skipped) {
+      host.appendChild(el('div','muted chart-note',
+        'Names were not checked against the corpus: ' + esc(gr.skipped) + '.'));
+    }
+    return null;
   }
 
   function renderIssue(out,m){
@@ -5067,6 +5140,9 @@
           quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}],
           origin:{first_seen:{date:'2026-05-18',author:'r/Kenya',platform:'reddit'},spread_path:[{platform:'reddit',date:'2026-05-18'},{platform:'youtube',date:'2026-06-01'},{platform:'news',date:'2026-06-02'}],peak:{date:'2026-07-09',mentions:118},platforms_reached:3}}]},
     issue:{principal:'William Ruto',issue:'SHA',thin:false,coverage:{mentions_analyzed:143,mentions_total:143},
+      // The map runs the same name check the report does. It did not, for
+      // three rounds of this codebase fixing things where they were seen.
+      grounding:{checked:18,ungrounded:[],rate:0,method:'capitalised-names'},
       intersection:{verdict:'Ruto is the chief architect and public face of SHA — his political capital is directly tied to whether the rollout stabilizes.',
         involvement:'Positioned as the reform\'s owner: personally launched it, repeatedly defends it, and has staked credibility on its success.',
         linking_narratives:[{narrative:'Universal coverage promise',framing:'health as a right',pushed_by:'State House / MoH'},{narrative:'Botched rollout',framing:'implementation failure hurting the sick',pushed_by:'opposition + patient advocates'}],

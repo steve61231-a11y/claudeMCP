@@ -158,6 +158,33 @@ def build_background(payload: dict, events: list[dict], now: datetime | None = N
     }
 
 
+def with_influence_share(stakeholders: list[dict]) -> list[dict]:
+    """Give every stakeholder's influence a denominator.
+
+    `influence` arrives either from a model, which picks a number on a
+    scale it never declares, or from the derived floor, where it is a
+    percentage OF THE TOP ACTOR — so the leading actor always reads 100 and
+    the number means something different in every report.
+
+    Either way "influence 100" and "influence 7" tell a reader nothing they
+    can act on. It is the same defect the report's Drivers section had
+    ("influence 15.0", a weighted sum of raw counts) and it was fixed there
+    the same way: as a share of the total identified in this run, which is
+    bounded, comparable between runs, and checkable by adding the column
+    up. The raw figure is kept, because the share is derived from it and a
+    reader checking the arithmetic needs both.
+    """
+    rows = [dict(stakeholder) for stakeholder in stakeholders or []]
+    total = sum(float(row.get("influence") or 0) for row in rows)
+    for row in rows:
+        raw = row.get("influence")
+        row["influence_share"] = (
+            round(100 * float(raw) / total, 1)
+            if total > 0 and raw is not None else None
+        )
+    return rows
+
+
 def build_main_contours(stakeholders: list[dict]) -> dict:
     """2 — narratives and positions: for / against / neutral.
 
@@ -177,6 +204,7 @@ def build_main_contours(stakeholders: list[dict]) -> dict:
             ranked = sorted(group, key=lambda s: s.get("influence", 0), reverse=True)
             trimmed[segment] = [
                 {"name": s["name"], "influence": s.get("influence"),
+                 "influence_share": s.get("influence_share"),
                  "rationale": s.get("rationale")}
                 for s in ranked[:MAX_STAKEHOLDERS_PER_SEGMENT]
             ]
@@ -216,6 +244,7 @@ def build_stakeholder_networks(stakeholders: list[dict], relationships: list[dic
                 "segment": stakeholder.get("segment"),
                 "role": POSITION_ROLE.get(stakeholder.get("position", "neutral")),
                 "influence": stakeholder.get("influence"),
+                "influence_share": stakeholder.get("influence_share"),
                 "network": network,
                 # The hover profile the framework specifies.
                 "profile": {
@@ -233,7 +262,8 @@ def build_stakeholder_networks(stakeholders: list[dict], relationships: list[dic
         "visualisation": {
             "nodes": [
                 {"id": s["name"], "group": s.get("position", "neutral"),
-                 "segment": s.get("segment"), "value": s.get("influence", 1)}
+                 "segment": s.get("segment"), "value": s.get("influence", 1),
+                 "share": s.get("influence_share")}
                 for s in stakeholders
             ],
             "edges": [
@@ -305,6 +335,7 @@ def build_strategic_recommendations(desired: dict, contours: dict, stakeholders:
     def _top(group: list[dict], limit: int = 5) -> list[dict]:
         return [
             {"name": s["name"], "segment": s.get("segment"), "influence": s.get("influence"),
+             "influence_share": s.get("influence_share"),
              "approach": s.get("approach")}
             for s in sorted(group, key=lambda s: s.get("influence", 0), reverse=True)[:limit]
         ]
@@ -495,6 +526,9 @@ def build(issue: str, principal: str, payload: dict, stakeholders: list[dict],
           relationships: list[dict], events: list[dict],
           desired_outcome: str | None = None, now: datetime | None = None) -> dict:
     """Assemble the full framework in its documented order."""
+    # Once, here, so every section below emits the share rather than each
+    # one computing its own denominator from the slice it happens to hold.
+    stakeholders = with_influence_share(stakeholders)
     definition = build_issue_definition(issue, principal, desired_outcome)
     background = build_background(payload, events, now=now)
     contours = build_main_contours(stakeholders)
