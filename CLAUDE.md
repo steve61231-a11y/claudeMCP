@@ -107,10 +107,13 @@ questions never asked. Three rules that are easy to break: a FAILED task is
 not an empty result (a source being down is not a question being answered);
 retirement decays, because a subject with no court record this year may
 have one next year; and the exploit share is capped, because a loop that
-only repeats what worked stops discovering. It learns novelty, not quality
-— `RawMention` cannot yet attribute a relevance verdict back to the query
-that fetched it, and the module says so rather than letting a reader assume
-otherwise.
+only repeats what worked stops discovering. It ranks on mentions
+entity linking tied to THIS subject (`RawMention.task_id` → `MentionEntity`),
+not on row count: a query returning 120 rows nobody can connect to the
+subject would otherwise outscore one returning 6 that are about them, and
+the loop would learn that noise is the best strategy while looking from
+outside as though it worked. Where the attribution is missing — rows stored
+before `task_id` existed — it falls back to novelty and `ranked_by` says so.
 
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for

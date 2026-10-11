@@ -119,7 +119,7 @@ def plan_run(
         budget = queries.SOURCE_VARIANT_BUDGET.get(connector, 0)
         candidates = queries.connector_variants(politician, connector,
                                                 rotation=prior_runs)
-        memory = learning.recall(db, politician.id, connector)
+        memory = learning.recall(db, politician, connector)
         decision = learning.plan(candidates, memory,
                                  budget=max(budget, len(candidates)) if budget else len(candidates),
                                  always_first=politician.name)
@@ -738,6 +738,10 @@ def _store_mentions(
                 "content_hash": item["content_hash"],
                 "is_spam": 1 if item.get("is_spam") else 0,
                 "run_id": run.id,
+                # Which query fetched it. The learning loop joins on this to
+                # find out how much of what a query returned was actually
+                # about the subject — novelty alone rewards a noisy query.
+                "task_id": task.id,
                 "source_endpoint": task.endpoint,
                 "source_url": _source_url(raw),
                 "fetched_at": now,

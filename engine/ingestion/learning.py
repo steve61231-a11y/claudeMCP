@@ -38,20 +38,30 @@ question permanently would guarantee we never find out. Retirement lifts
 after `RETIREMENT_RUNS`, so the question is asked again periodically for as
 long as the subject is tracked.
 
-## What this does NOT learn
+## Novelty is not quality, so both are measured
 
-Whether the material was any good. `result_count` measures novelty, not
-relevance — a query returning fifty off-topic rows outscores one returning
-three on-topic ones. Attributing the relevance verdict back to the query
-that fetched it needs `RawMention` to carry its task, which it does not.
-Said plainly here rather than left for a reader to assume, because a
-learning loop that quietly optimises for the wrong thing is worse than one
-that does not learn.
+`result_count` counts rows, and a query returning fifty off-topic rows
+would outscore one returning three on-topic ones. So the loop also asks how
+much of what a query brought back turned out to be **about the subject** —
+which is answerable, because entity linking writes a `MentionEntity` row
+joining a mention to the subject's entity, and a mention now records the
+task that fetched it.
+
+Ranking is on linked mentions, with novelty as the tie-break. A query that
+reliably returns material nobody can connect to the subject is a query that
+wastes a slot, however much of it there is.
+
+For subjects whose history predates mention-level task provenance the
+linked count is unknown, not zero — `ranked_by` says which signal was
+actually used, because a loop silently falling back to the weaker one while
+appearing to use the stronger one is the kind of thing this codebase makes
+a point of refusing to do.
 """
 
 from __future__ import annotations
 
-from engine.db.models import IngestionRun, IngestionTask
+from engine.db.models import (Entity, IngestionRun, IngestionTask,
+                              MentionEntity, RawMention)
 
 #: How many of this subject's past runs to look at. Far enough back to see a
 #: pattern, near enough that a question answered a year ago does not hold a
@@ -73,7 +83,7 @@ EMPTY_BEFORE_RETIRED = 2
 RETIREMENT_RUNS = 6
 
 
-def recall(db, politician_id, source: str, lookback: int = LOOKBACK_RUNS) -> dict[str, dict]:
+def recall(db, politician, source: str, lookback: int = LOOKBACK_RUNS) -> dict[str, dict]:
     """What previous runs found out about each query for this source.
 
     Keyed by the query exactly as it was asked, so the memory is joinable
@@ -82,7 +92,7 @@ def recall(db, politician_id, source: str, lookback: int = LOOKBACK_RUNS) -> dic
     recent_runs = [
         row.id for row in (
             db.query(IngestionRun.id)
-            .filter(IngestionRun.politician_id == politician_id)
+            .filter(IngestionRun.politician_id == politician.id)
             .order_by(IngestionRun.started_at.desc().nullslast(),
                       IngestionRun.id.desc())
             .limit(lookback)
@@ -123,13 +133,66 @@ def recall(db, politician_id, source: str, lookback: int = LOOKBACK_RUNS) -> dic
         entry["empty_in_a_row"] = 0 if yielded else entry["empty_in_a_row"] + 1
         entry["runs_ago"] = min(entry["runs_ago"], order.get(task.run_id, 0))
 
-    for entry in memory.values():
+    # How much of what each query returned was actually about the subject.
+    #
+    # Entity linking writes a MentionEntity row joining a mention to the
+    # subject's own entity, and a mention records the task that fetched it,
+    # so this is one join. It is the difference between learning "this query
+    # returns rows" and "this query returns material we can use".
+    linked = _linked_by_query(db, politician, recent_runs, source)
+
+    for query, entry in memory.items():
         entry["average"] = round(entry["new_mentions"] / entry["asked"], 2)
+        entry["linked"] = linked.get(query)
         entry["retired"] = (
             entry["empty_in_a_row"] >= EMPTY_BEFORE_RETIRED
             and entry["runs_ago"] < RETIREMENT_RUNS
         )
     return memory
+
+
+def _linked_by_query(db, politician, run_ids: list[str], source: str) -> dict[str, int]:
+    """Mentions per query that entity linking tied to THIS SUBJECT.
+
+    The subject's own entity, not any entity. A mention linked to "Ministry
+    of Health" is not evidence that a query about Mudavadi worked, and
+    counting it would teach the loop that the noisiest queries are the best
+    ones — which is the exact failure this function exists to prevent, so it
+    is worth being careful about rather than clever.
+
+    `Entity` is keyed by `canonical_key`, built as "type:lowercased name" by
+    the pipeline, so the subject's entity is found the same way the pipeline
+    finds it rather than by a join nothing supports.
+
+    Returns an empty mapping rather than zeros when nothing is attributable:
+    for a subject whose stored mentions predate task provenance the answer is
+    unknown, and "unknown" and "none" must not be the same number.
+    """
+    try:
+        key = f"politician:{(politician.name or '').strip().lower()}"
+        entity = db.query(Entity.id).filter(Entity.canonical_key == key).first()
+        if entity is None:
+            return {}
+        rows = (
+            db.query(IngestionTask.query, MentionEntity.mention_id)
+            .join(RawMention, RawMention.task_id == IngestionTask.id)
+            .join(MentionEntity, MentionEntity.mention_id == RawMention.id)
+            .filter(IngestionTask.run_id.in_(run_ids),
+                    IngestionTask.connector == source,
+                    RawMention.politician_id == politician.id,
+                    RawMention.is_spam == 0,
+                    MentionEntity.entity_id == entity.id)
+            .all()
+        )
+        counts: dict[str, set] = {}
+        for query, mention_id in rows:
+            counts.setdefault(query, set()).add(mention_id)
+        return {query: len(ids) for query, ids in counts.items()}
+    except Exception:  # noqa: BLE001 — a memory must never break a run
+        # A schema that predates the task column, or a join that cannot be
+        # built. Falling back to novelty is a worse signal, not a broken run,
+        # and `ranked_by` reports which one was used.
+        return {}
 
 
 def plan(candidates: list[str], memory: dict[str, dict], budget: int,
@@ -142,7 +205,8 @@ def plan(candidates: list[str], memory: dict[str, dict], budget: int,
     """
     if budget <= 0 or not candidates:
         return {"queries": candidates[:max(0, budget)], "proven": [],
-                "explored": [], "retired": [], "memory_size": len(memory)}
+                "explored": [], "retired": [], "memory_size": len(memory),
+                "ranked_by": "nothing to rank"}
 
     head: list[str] = []
     if always_first and always_first in candidates:
@@ -152,11 +216,27 @@ def plan(candidates: list[str], memory: dict[str, dict], budget: int,
                if memory.get(q, {}).get("retired") and q not in head]
 
     # Proven: asked before and brought back something. Best first.
+    #
+    # Ranked on mentions that entity linking tied to the subject, with
+    # novelty as the tie-break. A query that reliably returns material
+    # nobody can connect to the subject is a query wasting a slot, however
+    # much of it there is — and ranking on row count alone would promote
+    # exactly that query, because noise is plentiful.
+    attributable = any(memory.get(q, {}).get("linked") is not None for q in candidates)
+    ranked_by = "on-topic mentions" if attributable else "new mentions"
+
+    def _worth(query: str) -> tuple[float, float]:
+        entry = memory[query]
+        linked = entry.get("linked")
+        return (-(linked if linked is not None else 0), -entry["average"])
+
     proven = sorted(
         (q for q in candidates
          if q not in head
-         and memory.get(q, {}).get("new_mentions", 0) > 0),
-        key=lambda q: -memory[q]["average"],
+         and (memory.get(q, {}).get("linked") or 0) > 0
+         or (q not in head and not attributable
+             and memory.get(q, {}).get("new_mentions", 0) > 0)),
+        key=_worth,
     )
     exploit_slots = max(0, int((budget - len(head)) * EXPLOIT_SHARE))
     proven = proven[:exploit_slots]
@@ -190,6 +270,10 @@ def plan(candidates: list[str], memory: dict[str, dict], budget: int,
         "explored": [q for q in untried if q in queries[:budget]],
         "retired": retired,
         "memory_size": len(memory),
+        # Which signal actually decided the order. A loop that quietly falls
+        # back to the weaker one while appearing to use the stronger one is
+        # the kind of thing this codebase refuses to do.
+        "ranked_by": ranked_by,
     }
 
 
@@ -210,4 +294,6 @@ def explain(decision: dict) -> str:
     if decision.get("retired"):
         parts.append(f"{len(decision['retired'])} set aside as answered "
                      f"(asked again after {RETIREMENT_RUNS} runs)")
+    if decision.get("ranked_by"):
+        parts.append(f"ranked by {decision['ranked_by']}")
     return "; ".join(parts)

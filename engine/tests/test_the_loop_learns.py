@@ -82,7 +82,7 @@ def test_what_a_query_returned_is_remembered(db_session):
     politician = _subject(db_session)
     _past_run(db_session, politician, {"worked": 14, "empty": 0})
 
-    memory = learning.recall(db_session, politician.id, "google_news")
+    memory = learning.recall(db_session, politician, "google_news")
     assert memory["worked"]["new_mentions"] == 14
     assert memory["worked"]["average"] == 14.0
     assert memory["empty"]["new_mentions"] == 0
@@ -96,7 +96,7 @@ def test_a_failed_task_is_not_an_empty_result(db_session):
     for _ in range(3):
         _past_run(db_session, politician, {"courts": 0}, status="failed")
 
-    memory = learning.recall(db_session, politician.id, "google_news")
+    memory = learning.recall(db_session, politician, "google_news")
     assert "courts" not in memory, (
         "a failed task was recorded as a query that found nothing")
 
@@ -106,7 +106,7 @@ def test_two_empty_results_set_a_question_aside(db_session):
     for _ in range(2):
         _past_run(db_session, politician, {"courts": 0, "contracts": 5})
 
-    memory = learning.recall(db_session, politician.id, "google_news")
+    memory = learning.recall(db_session, politician, "google_news")
     assert memory["courts"]["retired"] is True
     assert memory["contracts"]["retired"] is False
 
@@ -115,7 +115,7 @@ def test_one_empty_result_is_noise_not_an_answer(db_session):
     politician = _subject(db_session)
     _past_run(db_session, politician, {"courts": 0})
 
-    memory = learning.recall(db_session, politician.id, "google_news")
+    memory = learning.recall(db_session, politician, "google_news")
     assert memory["courts"]["retired"] is False, (
         "a single quiet window retired a question")
 
@@ -130,7 +130,7 @@ def test_a_retirement_lifts_so_the_question_is_asked_again(db_session):
     for index in range(learning.RETIREMENT_RUNS + 1):
         _past_run(db_session, politician, {f"other-{index}": 3})
 
-    memory = learning.recall(db_session, politician.id, "google_news")
+    memory = learning.recall(db_session, politician, "google_news")
     assert memory["courts"]["retired"] is False, (
         f"a question is still set aside {learning.RETIREMENT_RUNS}+ runs later")
 
@@ -297,3 +297,111 @@ def test_the_page_shows_it():
         "corpus is invisible to the person paying for it")
     for shown in ("Repeated", "Asked first time", "Set aside"):
         assert shown in body, f"{shown} is not on the page"
+
+
+# --- novelty is not quality --------------------------------------------------
+
+def test_a_noisy_query_does_not_beat_a_useful_one():
+    """`result_count` counts rows, so a query returning 120 rows nobody can
+    connect to the subject would outscore one returning 6 that are about
+    them — and the loop would learn that noise is the best strategy, while
+    looking from the outside as though it were working.
+
+    Ranking is on mentions entity linking tied to the subject, with novelty
+    as the tie-break.
+    """
+    candidates = ["name", "noisy", "useful", "fresh-a", "fresh-b", "fresh-c"]
+    memory = {
+        "noisy": {"new_mentions": 120, "average": 120.0, "linked": 0,
+                  "retired": False, "asked": 1, "empty_in_a_row": 0},
+        "useful": {"new_mentions": 6, "average": 6.0, "linked": 5,
+                   "retired": False, "asked": 1, "empty_in_a_row": 0},
+    }
+    out = learning.plan(candidates, memory, budget=4, always_first="name")
+    assert out["ranked_by"] == "on-topic mentions"
+    assert "useful" in out["proven"]
+    assert "noisy" not in out["proven"], (
+        "a query that returns nothing about the subject is being repeated "
+        "because it returns a lot of it")
+
+
+def test_the_weaker_signal_is_used_honestly_when_it_is_all_there_is():
+    """Rows stored before mention-level task provenance cannot be attributed,
+    so the loop falls back to novelty — and says which signal decided the
+    order, rather than appearing to use the stronger one."""
+    candidates = ["name", "noisy", "useful", "fresh-a"]
+    memory = {
+        "noisy": {"new_mentions": 120, "average": 120.0, "linked": None,
+                  "retired": False, "asked": 1, "empty_in_a_row": 0},
+        "useful": {"new_mentions": 6, "average": 6.0, "linked": None,
+                   "retired": False, "asked": 1, "empty_in_a_row": 0},
+    }
+    out = learning.plan(candidates, memory, budget=3, always_first="name")
+    assert out["ranked_by"] == "new mentions"
+    assert "ranked by new mentions" in learning.explain(out)
+
+
+def test_on_topic_counts_only_the_subject_s_own_entity(db_session):
+    """A mention linked to "Ministry of Health" is not evidence that a query
+    about Mudavadi worked. Counting any entity would teach the loop that the
+    broadest, noisiest queries are the best — the exact failure the on-topic
+    signal exists to prevent."""
+    from engine.db.models import Entity, MentionEntity, RawMention
+
+    politician = _subject(db_session)
+    subject = Entity(name=politician.name, type="politician",
+                     canonical_key=f"politician:{politician.name.lower()}")
+    other = Entity(name="Ministry of Health", type="organization",
+                   canonical_key="organization:ministry of health")
+    db_session.add_all([subject, other])
+    db_session.flush()
+
+    run = IngestionRun(politician_id=politician.id, window_start=WINDOW[0],
+                       window_end=WINDOW[1], status="completed",
+                       started_at=datetime(2026, 5, 1))
+    db_session.add(run)
+    db_session.flush()
+    on_q = IngestionTask(run_id=run.id, connector="google_news", platform="news",
+                         endpoint="rss", query="on-topic", status="done",
+                         result_count=2)
+    off_q = IngestionTask(run_id=run.id, connector="google_news", platform="news",
+                          endpoint="rss", query="off-topic", status="done",
+                          result_count=2)
+    db_session.add_all([on_q, off_q])
+    db_session.flush()
+
+    def _mention(task, text):
+        row = RawMention(politician_id=politician.id, platform="news",
+                         source_type="article", author_handle="nation.africa",
+                         text=text, posted_at=datetime(2026, 6, 10),
+                         content_hash=text, run_id=run.id, task_id=task.id,
+                         is_spam=0)
+        db_session.add(row)
+        db_session.flush()
+        return row
+
+    linked_to_subject = _mention(on_q, "Mudavadi on foreign policy")
+    linked_elsewhere = _mention(off_q, "Ministry of Health budget notes")
+    db_session.add_all([
+        MentionEntity(mention_id=linked_to_subject.id, entity_id=subject.id),
+        MentionEntity(mention_id=linked_elsewhere.id, entity_id=other.id),
+    ])
+    db_session.commit()
+
+    memory = learning.recall(db_session, politician, "google_news")
+    assert memory["on-topic"]["linked"] == 1
+    assert memory["off-topic"].get("linked") in (None, 0), (
+        "a mention linked to a different entity counted as on-topic")
+
+
+def test_a_mention_records_which_query_fetched_it():
+    """The join the on-topic signal needs. Without it the loop can only ever
+    learn novelty."""
+    from engine.db.models import RawMention
+
+    assert hasattr(RawMention, "task_id"), (
+        "mentions do not record their task, so a relevance verdict cannot be "
+        "attributed back to the query that fetched it")
+    body = open("engine/ingestion/orchestrator.py", encoding="utf-8").read()
+    assert '"task_id": task.id' in body, (
+        "the column exists and nothing writes it")

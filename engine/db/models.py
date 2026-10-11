@@ -67,6 +67,15 @@ class RawMention(Base):
     is_spam = Column(Integer, default=0)
     # Provenance: which run/endpoint produced this row, and where it lives online.
     run_id = Column(UUID(as_uuid=False), ForeignKey("ingestion_runs.id"), nullable=True)
+    # WHICH QUERY fetched this. The run was recorded and the task was not, so
+    # there was no way to ask the question the learning loop turns on: of what
+    # this query brought back, how much was actually about the subject? Without
+    # it the loop can only learn novelty, and a query returning fifty
+    # off-topic rows outscores one returning three on-topic ones.
+    # Nullable: rows stored before this existed have no task to point at, and
+    # inventing one would be inventing provenance.
+    task_id = Column(UUID(as_uuid=False), ForeignKey("ingestion_tasks.id", ondelete="SET NULL"),
+                     nullable=True, index=True)
     source_endpoint = Column(String, nullable=True)
     source_url = Column(String, nullable=True)
     fetched_at = Column(DateTime, nullable=True)
