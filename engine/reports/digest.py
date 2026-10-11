@@ -204,7 +204,17 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
 
     from engine.config import settings
 
-    workers = llm.concurrency(2 if settings.low_memory else MAP_WORKERS)
+    # Width from LLM_FANOUT_WORKERS, not from LOW_MEMORY. These threads are
+    # blocked on an HTTP response; capping them to two on a default
+    # deployment made this stage 56% of the run's wall clock with nothing
+    # else in flight, and saved under 200KB. The real ceiling on requests in
+    # flight is `llm.in_flight_gate()`, which is process-wide.
+    #
+    # MAP_WORKERS is the floor rather than the cap: it was a hard-coded "six
+    # is reasonable", which is exactly what the setting now expresses, and
+    # leaving it as a second hidden ceiling is the same category error one
+    # layer down.
+    workers = llm.concurrency(max(MAP_WORKERS, settings.llm_fanout_workers))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         digests = list(pool.map(lambda ic: _digest_chunk(name, ic[1], ic[0]), enumerate(chunks)))
 

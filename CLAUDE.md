@@ -97,6 +97,24 @@ psql -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 
 These are all paid for in production failures. Each has tests pinning it.
 
+**One setting must not govern two unrelated costs.** `low_memory` protected
+RAM on a 512MB instance *and* set the width of every model fan-out in the
+product — two workers on the corpus digest instead of six, three analysts
+instead of eight — and it is on by default. Those threads are blocked on an
+HTTP response: six in flight hold about 200KB. They bought no memory and
+they cost minutes. Fan-out width is `LLM_FANOUT_WORKERS` and
+`INGESTION_WORKERS`; `low_memory` still governs the things that genuinely
+allocate (NER, YouTube extraction, the per-mention work cap).
+
+**A per-stage limit does not bound a run whose stages overlap.**
+`llm.concurrency()` clamps each pool separately, so two overlapping stages
+each got the full ceiling. Since providers reserve credit for the whole time
+a request is in flight, that is a spending limit that silently multiplies —
+and it is the number an operator sets when the bill arrives.
+`LLM_MAX_CONCURRENCY` is enforced by one process-wide semaphore in
+`llm.call_json`, held around the send and nowhere else, so a stage that fans
+out cannot deadlock against its own children.
+
 **Model budgets are shared with thinking.** A reasoning model spends its token
 allowance thinking *before* it answers, so a budget sized for the JSON comes
 back empty. Always size budgets through `llm.budget_for()`, never a bare
@@ -148,6 +166,15 @@ The ones you cannot run without:
 | `PULSE_API_KEY` | Gates the API. The frontend sends it as `x-api-key`. |
 | `ALLOWED_ORIGINS` | CORS. |
 | `ANTHROPIC_API_KEY` | Only when `LLM_PROVIDER=anthropic`. |
+
+Worth setting on anything larger than a 512MB instance:
+
+| Variable | Notes |
+|---|---|
+| `LOW_MEMORY=false` | Turns spaCy NER back on — the grounding check falls back to a capitalised-name pattern without it — and lifts the per-mention work cap from 140 to 300. Needs ~1GB; see `docs/DEPLOY_FLY.md` for the measurements. |
+| `LLM_FANOUT_WORKERS` | How wide a parallel stage of model calls runs. Default 8. Raising it is latency, not memory. |
+| `INGESTION_WORKERS` | The same for collectors. Default 8. |
+| `LLM_MAX_CONCURRENCY` | A hard ceiling on model calls in flight across the whole process. Unset means none, which is what the paid Anthropic path wants; set it on a metered or rate-limited backend. |
 
 Model backend — either Anthropic directly, or anything OpenAI-compatible:
 

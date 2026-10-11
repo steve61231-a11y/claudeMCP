@@ -7,6 +7,7 @@ rule-based payload from `generate_report_payload`).
 
 import time
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
@@ -232,6 +233,26 @@ def enrich_report_payload(
         payload["narrative_breakdown"],
     )
 
+    from engine.config import settings
+
+    # The phase budget, set up BEFORE the jobs, because one of them now
+    # closes over `remaining()`: the deep-insight pass waits for the corpus
+    # digest, and a wait that outlived the budget would push every stage
+    # after this one past it.
+    deadline = max(60, settings.analyst_deadline_seconds)
+    # ONE budget for this whole phase, not one per stage. Bounding the fan-out
+    # and then handing the two stages after it the same full deadline each
+    # made the worst case 45 minutes rather than 15 — bounded, but so loosely
+    # that a reader still sat on "Still building this report" long past the
+    # point of usefulness. Every stage below takes what is LEFT of it.
+    ends_at = time.monotonic() + deadline
+
+    def remaining() -> float:
+        # Never zero: a stage given no time at all cannot even fail honestly,
+        # it just returns the fallback without having tried.
+        return max(15.0, ends_at - time.monotonic())
+
+
     jobs = {
         "executive_summary": (lambda: generate_executive_summary(context), payload["executive_summary"]),
         "risks": (lambda: generate_risks(context), []),
@@ -243,14 +264,62 @@ def enrich_report_payload(
         by_day = payload["volume_trends"].get("by_day", {})
         influence = payload["influence_summary"]
         mentions_by_id = {str(m.get("id")): m for m in mentions}
+
         # Whole-corpus map-reduce digest: guarantees every mention is read by
         # the model (not a truncated slice) and powers the deep-insight pass.
+        #
+        # It used to run HERE, synchronously, before the pool below existed —
+        # and it is the single most expensive thing in the run. Measured on a
+        # 400-mention corpus with the model stubbed to a fixed latency, so
+        # only the structure shows: 19 of the run's 32 calls, and 56% of its
+        # wall clock, with NOTHING else in flight for the whole of it. Every
+        # other analyst sat waiting for a digest that exactly one of them
+        # reads.
+        #
+        # So it becomes a job like any other, and `deep_insights` waits on
+        # it rather than the whole report doing so. The other ten analysts
+        # now run alongside it, which costs nothing: these are threads
+        # waiting on HTTP, and the number of requests actually in flight is
+        # bounded for the whole process by `llm.in_flight_gate()` rather
+        # than per stage — so overlapping phases cannot multiply what a
+        # provider has reserved, which is this file's standing warning about
+        # parallel fan-out and HTTP 402.
         from engine.reports.digest import build_corpus_digest
 
-        corpus_digest = build_corpus_digest(politician_name, mentions)
-        payload["coverage"] = corpus_digest["coverage"]
+        digest_done = threading.Event()
+        digest_box: dict = {}
+
+        def _digest():
+            try:
+                digest_box["value"] = build_corpus_digest(politician_name, mentions)
+            finally:
+                # Set even on failure, so a digest that blew up fails
+                # `deep_insights` in seconds instead of hanging it until the
+                # phase deadline — the difference between a failed section
+                # and a report that never arrives.
+                digest_done.set()
+            result = digest_box["value"]
+            payload["coverage"] = result["coverage"]
+            return result["coverage"]
+
+        jobs["coverage"] = (_digest, payload.get("coverage", {}))
+
+        def _deep_insights():
+            # Whatever is left of the phase budget: a wait that outlived the
+            # budget would push the sections after this one past it.
+            if not digest_done.wait(timeout=remaining()):
+                raise TimeoutError(
+                    "the corpus digest did not finish inside the analyst "
+                    "budget, so the deep-insight pass had nothing to read")
+            corpus_digest = digest_box.get("value")
+            if not corpus_digest:
+                raise RuntimeError(
+                    "the corpus digest failed, so there was nothing for the "
+                    "deep-insight pass to read")
+            return analysts.analyze_deep_insights(politician_name, corpus_digest)
+
         jobs["deep_insights"] = (
-            lambda: analysts.analyze_deep_insights(politician_name, corpus_digest),
+            _deep_insights,
             {"insights": [], "the_one_thing": ""},
         )
         jobs.update(
@@ -286,12 +355,9 @@ def enrich_report_payload(
         # died and a corpus with nothing to say produced the identical page.
         return key, stages.run_guarded(key, fn, fallback=fallback)
 
-    from engine.config import settings
-
-    if "coverage" in payload:
-        publish("coverage", payload["coverage"])
-
-    _cap = 3 if settings.low_memory else 8
+    # Width from LLM_FANOUT_WORKERS, not from LOW_MEMORY — see the comment
+    # on that setting. An analyst thread is waiting on a socket.
+    _cap = max(1, settings.llm_fanout_workers)
     # A DEADLINE, because without one the report never finishes. as_completed()
     # had no timeout, so a single analyst that hung — a free-tier model being
     # rate-limited, a provider not answering — blocked the loop forever. Every
@@ -300,19 +366,6 @@ def enrich_report_payload(
     # arrive. A section that cannot be produced inside the budget is a failed
     # section, and a report with a failed section beats a report that never
     # comes.
-    deadline = max(60, settings.analyst_deadline_seconds)
-    # ONE budget for this whole phase, not one per stage. Bounding the fan-out
-    # and then handing the two stages after it the same full deadline each
-    # made the worst case 45 minutes rather than 15 — bounded, but so loosely
-    # that a reader still sat on "Still building this report" long past the
-    # point of usefulness. Every stage below takes what is LEFT of it.
-    ends_at = time.monotonic() + deadline
-
-    def remaining() -> float:
-        # Never zero: a stage given no time at all cannot even fail honestly,
-        # it just returns the fallback without having tried.
-        return max(15.0, ends_at - time.monotonic())
-
     pool = ThreadPoolExecutor(max_workers=min(_cap, len(jobs)))
     futures = {pool.submit(run, key): key for key in jobs}
     try:

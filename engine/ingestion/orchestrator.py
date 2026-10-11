@@ -251,8 +251,13 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     """Executes all pending tasks for a run in parallel. Each worker uses its
     own session; pages are committed as they land, so a crash loses at most
     one in-flight page and a re-run resumes from the stored cursors."""
-    if settings.low_memory:
-        max_workers = min(max_workers, 3)  # fewer concurrent scrapers on tiny instances
+    # From INGESTION_WORKERS rather than from LOW_MEMORY. A scraper worker
+    # does hold a response body, so the memory argument here is not
+    # imaginary — but it is still the wrong lever: http.py paces per host,
+    # pages are parsed and committed as they land rather than accumulated,
+    # and three workers against a dozen sources is most of why collection is
+    # the longest phase of a run.
+    max_workers = max(1, min(max_workers, settings.ingestion_workers))
     session_factory = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)
 
     run = db.get(IngestionRun, run_id)

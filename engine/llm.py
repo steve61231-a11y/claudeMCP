@@ -114,15 +114,63 @@ def bulk_model() -> str:
 
 
 def concurrency(default: int) -> int:
-    """How many LLM calls may run at once.
+    """How many workers a single parallel stage should start.
 
-    Free tiers cap requests-per-minute well below what the map step would like,
-    and hitting that cap looks like a broken run rather than a throttled one.
-    LLM_MAX_CONCURRENCY clamps every parallel stage at once; unset means no
-    clamp, which is what the paid Anthropic path wants.
+    A hint for sizing a pool, nothing more. The limit that is actually
+    enforced is `in_flight_gate()` below — this only avoids starting
+    threads that would immediately queue behind it.
     """
     ceiling = settings.llm_max_concurrency or 0
     return max(1, min(default, ceiling)) if ceiling > 0 else default
+
+
+#: One in-flight limit for the whole process.
+#:
+#: `concurrency()` clamps each stage SEPARATELY, and its docstring used to
+#: claim it "clamps every parallel stage at once". It does not: two stages
+#: that overlap each get the full ceiling, so the real number of requests in
+#: flight is the ceiling times the number of overlapping stages. Today the
+#: analyst fan-out already nests — a pool of eight workers, inside which an
+#: analyst can fan out again — so a ceiling of six could mean forty-eight.
+#:
+#: That is not an abstract tidiness problem. This file's own notes record it:
+#: providers reserve credit for the whole time a request is in flight, so
+#: parallel calls each hold their own reservation, and that is how a working
+#: account started answering HTTP 402. A ceiling that silently multiplies is
+#: worse than no ceiling, because it is the number an operator sets when the
+#: bill arrives.
+#:
+#: Held around the send only, never around a stage, so a caller that fans
+#: out while holding nothing cannot deadlock against its own children.
+_GATE: threading.Semaphore | None = None
+_GATE_SIZE = 0
+_GATE_LOCK = threading.Lock()
+
+
+def in_flight_gate():
+    """The process-wide semaphore, or None when no ceiling is configured."""
+    global _GATE, _GATE_SIZE
+    want = settings.llm_max_concurrency or 0
+    if want <= 0:
+        return None
+    with _GATE_LOCK:
+        if _GATE is None or _GATE_SIZE != want:
+            _GATE = threading.Semaphore(want)
+            _GATE_SIZE = want
+        return _GATE
+
+
+@contextlib.contextmanager
+def _in_flight():
+    gate = in_flight_gate()
+    if gate is None:
+        yield
+        return
+    gate.acquire()
+    try:
+        yield
+    finally:
+        gate.release()
 
 
 # Ceiling on a single response. Depth is the product here: an analyst section
@@ -271,7 +319,11 @@ def call_json(prompt: str, max_tokens: int | None = None, model: str | None = No
         raise exc
 
     try:
-        result = _call_json(prompt, max_tokens=max_tokens, model=model)
+        # The ceiling, enforced here because this is the one seam every call
+        # passes through — see `in_flight_gate`. A per-stage clamp cannot
+        # bound a run whose stages overlap.
+        with _in_flight():
+            result = _call_json(prompt, max_tokens=max_tokens, model=model)
     except BaseException as exc:
         _record_failure(exc)
         tracker.record_failure(exc)

@@ -126,6 +126,38 @@ class Settings(BaseSettings):
     # for fuller/faster runs.
     low_memory: bool = True
     low_memory_max_llm_mentions: int = 140  # cap per-mention LLM work per report
+    # How wide a parallel stage of MODEL CALLS may run.
+    #
+    # This used to be bundled into `low_memory`, which is on by default — so
+    # every model fan-out in the product ran at a third to a quarter of its
+    # width on a default deployment. Measured on a 400-mention corpus with
+    # the model stubbed to a fixed latency so only the structure shows: the
+    # corpus digest alone, at two workers instead of six, was 56% of the
+    # run's wall clock with nothing else in flight. That is most of "it's a
+    # bit slow".
+    #
+    # The bundling was a category error. `low_memory` protects RAM on a
+    # 512MB instance; these are threads blocked on an HTTP response. A
+    # digest call holds a 16KB prompt and returns about as much, so six in
+    # flight cost under 200KB of the 512MB they were protecting. They bought
+    # no memory and they cost minutes.
+    #
+    # Memory protection stays where it belongs: NER, YouTube comment
+    # extraction, and the cap on per-mention work. To throttle a
+    # rate-limited or metered backend the right knob is LLM_MAX_CONCURRENCY,
+    # which is now a real process-wide in-flight limit rather than a
+    # per-stage one that overlapping stages could multiply.
+    llm_fanout_workers: int = 8
+    # The same separation for the collectors.
+    #
+    # A scraper worker holds a response body, which is a real allocation —
+    # so unlike the model fan-out above, the memory argument here is not
+    # imaginary. It is still the wrong lever: `ingestion/http.py` already
+    # paces per host, pages are parsed and committed as they land rather
+    # than accumulated, and three workers against a dozen sources is most of
+    # why collection is the longest phase of a run. Lower this, not
+    # LOW_MEMORY, if a small instance is actually running out of room.
+    ingestion_workers: int = 8
     # Full-power (2GB) cap on per-mention LLM work (entity-linking + sentiment)
     # per run, so a heavily-covered subject still finishes in a few minutes. The
     # map-reduce digest reads 100% of the corpus regardless; uncapped mentions

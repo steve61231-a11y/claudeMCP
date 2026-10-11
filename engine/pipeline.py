@@ -108,16 +108,20 @@ def _as_corpus_dicts(rows) -> list[dict]:
 
 
 def _per_mention_workers() -> int:
-    """Fewer threads on a memory-constrained free instance so concurrent work
-    can't exhaust RAM and get the worker OOM-killed (intermittent 502s), and
-    never more than the operator's LLM concurrency ceiling.
+    """How wide the highest-volume model stage runs.
 
-    That ceiling exists to keep a rate-limited backend under its per-minute
-    quota, and this is the highest-volume stage in the pipeline — it was the
-    one place that ignored it."""
+    From LLM_FANOUT_WORKERS rather than from LOW_MEMORY. The old reasoning
+    was that fewer threads protect RAM on a free instance — but these
+    threads are blocked on an HTTP response, and what actually bounds this
+    stage's memory is `max_llm_mentions`, which is a separate setting and
+    still honoured.
+
+    `llm.concurrency` trims the pool to the operator's ceiling so threads
+    are not started only to queue behind the in-flight gate."""
     from engine import llm
 
-    return llm.concurrency(3 if settings.low_memory else _PER_MENTION_WORKERS)
+    return llm.concurrency(min(_PER_MENTION_WORKERS,
+                               max(1, settings.llm_fanout_workers)))
 
 
 def run_pipeline(
