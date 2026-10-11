@@ -157,12 +157,12 @@ def check(payload: dict, mentions: list[dict]) -> dict:
     strings: list[str] = []
     _prose(payload, strings)
 
-    seen, how = _names_in(strings)
+    seen, how, why = _names_in(strings)
 
     ungrounded = sorted({name for name in seen.values()
                          if not is_grounded(name, haystack)})
     checked = len(seen)
-    return {
+    result = {
         "checked": checked,
         "ungrounded": ungrounded,
         "rate": round(len(ungrounded) / checked, 3) if checked else 0.0,
@@ -171,6 +171,12 @@ def check(payload: dict, mentions: list[dict]) -> dict:
         # to know which they are looking at.
         "method": how,
     }
+    # And WHY, when it was the cheap one. The page used to guess, and a guess
+    # that names the wrong cause is worse than saying nothing: it sends the
+    # reader to fix something that is already correct.
+    if why:
+        result["method_reason"] = why
+    return result
 
 
 #: A capitalised multi-word name: "Peter Kamau", "National Treasury".
@@ -185,7 +191,7 @@ def check(payload: dict, mentions: list[dict]) -> dict:
 _NAME_PAIR = re.compile(r"\b([A-Z][a-z’'-]{2,})(?:\s+([A-Z][a-z’'-]{2,})){1,3}\b")
 
 
-def _names_in(strings: list[str]) -> tuple[dict[str, str], str]:
+def _names_in(strings: list[str]) -> tuple[dict[str, str], str, str]:
     """Candidate names from the report's prose, however we can get them.
 
     spaCy's NER is the better extractor, but `settings.low_memory` replaces
@@ -193,12 +199,26 @@ def _names_in(strings: list[str]) -> tuple[dict[str, str], str]:
     the DEFAULT. A check that quietly did nothing on a default deployment
     would be worse than no check, because the report would carry a clean
     grounding result that nobody had earned.
+
+    Returns the reason as well as the method, and that third value is the
+    point of this function's shape.
+
+    This used to swallow every failure into a bare `except: pass` and report
+    "capitalised-names" with no explanation, so the page had to GUESS why and
+    guessed the common case: "set LOW_MEMORY=false for the fuller entity
+    check". Told to an operator who had already set it, that is a dead end
+    dressed as a fix — the same mistake as sending somebody to a settings
+    menu that could not exist. There are three different causes with three
+    different remedies, and reporting the wrong one costs an evening.
     """
     seen: dict[str, str] = {}
+    why = ""
     try:
+        from engine.config import settings
         from engine.processing.entities import get_nlp
 
-        if "ner" in get_nlp().pipe_names:
+        pipeline = get_nlp()
+        if "ner" in pipeline.pipe_names:
             from engine.processing.entities import extract_standard_entities
 
             for text in strings:
@@ -209,9 +229,23 @@ def _names_in(strings: list[str]) -> tuple[dict[str, str], str]:
                         name = (entity.get("name") or "").strip()
                         if name:
                             seen.setdefault(name.lower(), name)
-            return seen, "ner"
-    except Exception:  # noqa: BLE001 — a check must never break a report
-        pass
+            return seen, "ner", ""
+
+        # A blank pipeline, and the two ways to get one are not the same
+        # problem. One is a setting the operator controls; the other is a
+        # missing model in the image, which no amount of changing settings
+        # will fix.
+        if settings.low_memory:
+            why = ("LOW_MEMORY is on, which replaces the entity model with a "
+                   "blank pipeline. Set LOW_MEMORY=false on an instance with "
+                   "~1GB to use the fuller check.")
+        else:
+            why = ("LOW_MEMORY is off, so this is not a settings problem: the "
+                   "en_core_web_sm model is not loadable in this deployment. "
+                   "The image builds it with `python -m spacy download "
+                   "en_core_web_sm` — check that step ran.")
+    except Exception as exc:  # noqa: BLE001 — a check must never break a report
+        why = f"the entity model could not be loaded: {type(exc).__name__}: {exc}"[:240]
 
     for text in strings:
         if len(text) < 12:
@@ -220,4 +254,4 @@ def _names_in(strings: list[str]) -> tuple[dict[str, str], str]:
             name = match.group(0).strip()
             if _distinctive(name):
                 seen.setdefault(name.lower(), name)
-    return seen, "capitalised-names"
+    return seen, "capitalised-names", why

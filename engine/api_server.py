@@ -2193,6 +2193,39 @@ def serve_frontend():
     )
 
 
+
+def _analysis_capability() -> dict:
+    """Can this deployment do the fuller entity analysis, and if not, why?
+
+    Three separable facts, because they have three different remedies: the
+    setting is off, the model is missing from the image, or loading it
+    raised. Reporting "low memory" for all three is how an operator ends up
+    changing a setting that was already correct.
+    """
+    out = {"low_memory": settings.low_memory}
+    try:
+        from engine.processing.entities import get_nlp
+
+        pipes = list(get_nlp().pipe_names)
+        out["entity_model"] = "loaded" if "ner" in pipes else "blank"
+        out["pipeline"] = pipes
+    except Exception as exc:  # noqa: BLE001 — a health check must answer
+        out["entity_model"] = "error"
+        out["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    # The consequence, spelled out, so nobody has to join the two up.
+    out["grounding_method"] = ("ner" if out.get("entity_model") == "loaded"
+                               else "capitalised-names")
+    if out["grounding_method"] != "ner":
+        out["hint"] = (
+            "LOW_MEMORY is on; set it to false on an instance with ~1GB."
+            if settings.low_memory else
+            "LOW_MEMORY is already off, so this is not a settings problem — "
+            "en_core_web_sm is not loadable here. Check that the image's "
+            "`python -m spacy download en_core_web_sm` step ran."
+        )
+    return out
+
+
 @app.get("/api/health")
 def health():
     """Liveness + data-supply state: the operator's one-glance view of
@@ -2265,6 +2298,18 @@ def health():
         "database": database,
         "build": commit[:7] or "local",
         "local_ml": settings.use_local_ml,
+        # What this deployment can actually do, as opposed to what its
+        # environment variables say.
+        #
+        # An operator set LOW_MEMORY=false and had no way to confirm it had
+        # taken effect without generating a whole report and reading a
+        # banner — and that banner was guessing at the cause anyway. These
+        # three facts answer it from one URL: the setting as parsed, whether
+        # the entity model actually loads, and which extractor the grounding
+        # check would therefore use. `settings.low_memory` is read rather
+        # than the raw variable because the parse is the thing that matters:
+        # a typo in the value is exactly the failure this is for.
+        "analysis": _analysis_capability(),
         "uptime_seconds": int(time.time() - _PROCESS_START),
         # Which model backend is actually live, so a provider switch can be
         # confirmed from outside without generating a report to find out.

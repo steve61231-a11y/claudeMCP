@@ -97,6 +97,16 @@ psql -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 
 These are all paid for in production failures. Each has tests pinning it.
 
+**Never state a cause you have not checked.** This has cost an evening three
+times: an operator sent to a Railway "Networking" menu that cannot exist for
+a crashed service; a nightly backup diagnosed as holding the wrong hostname
+when the real cause was a TLS refusal; and the grounding banner advising
+`LOW_MEMORY=false` to an operator who had already set it, because the page
+guessed the common cause rather than being told the real one. Where a check
+degrades, the code that knows WHY must say so — `grounding.check` returns
+`method_reason`, and `/api/health` reports `analysis` so a deployment's real
+capability can be confirmed without generating a report.
+
 **One setting must not govern two unrelated costs.** `low_memory` protected
 RAM on a 512MB instance *and* set the width of every model fan-out in the
 product — two workers on the corpus digest instead of six, three analysts
@@ -171,7 +181,7 @@ Worth setting on anything larger than a 512MB instance:
 
 | Variable | Notes |
 |---|---|
-| `LOW_MEMORY=false` | Turns spaCy NER back on — the grounding check falls back to a capitalised-name pattern without it — and lifts the per-mention work cap from 140 to 300. Needs ~1GB; see `docs/DEPLOY_FLY.md` for the measurements. |
+| `LOW_MEMORY=false` | Confirm it took effect at `/api/health` → `analysis`, which reports the parsed setting, whether the entity model loads, and which extractor grounding will use. Turns spaCy NER back on — the grounding check falls back to a capitalised-name pattern without it — and lifts the per-mention work cap from 140 to 300. Needs ~1GB; see `docs/DEPLOY_FLY.md` for the measurements. |
 | `LLM_FANOUT_WORKERS` | How wide a parallel stage of model calls runs. Default 8. Raising it is latency, not memory. |
 | `INGESTION_WORKERS` | The same for collectors. Default 8. |
 | `LLM_MAX_CONCURRENCY` | A hard ceiling on model calls in flight across the whole process. Unset means none, which is what the paid Anthropic path wants; set it on a metered or rate-limited backend. |
