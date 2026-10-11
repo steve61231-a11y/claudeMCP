@@ -25,7 +25,7 @@ from engine.db.models import (
     Politician,
     RawMention,
 )
-from engine.ingestion import queries
+from engine.ingestion import learning, queries
 from engine.ingestion.base import IngestedMention
 from engine.processing import cleaning
 
@@ -94,8 +94,10 @@ def plan_run(
         .count()
     )
 
+    learned: dict[str, dict] = {}
+
     def _keyword_tasks(connector: str, platform: str, endpoint: str) -> None:
-        """One task per query variant.
+        """One task per query variant, ordered by what previous runs learned.
 
         Every one of these connectors used to get `politician.name` and
         nothing else, so the whole search was a single bare-name lookup per
@@ -103,8 +105,32 @@ def plan_run(
         record, the court record or the earlier career. The probes, aliases
         and investigator leads all existed; they were wired only to the
         SearXNG discovery layer, which is optional and off here.
+
+        And then the ORDER of them is where the subject's own history gets
+        used. `learning.recall` reads back what each of these queries
+        returned on previous runs — new, non-duplicate mentions, which the
+        task rows have recorded all along and nobody read. Queries that
+        brought material back are repeated, queries that have come back
+        empty twice are set aside as answered questions, and a fixed share
+        of the budget is held for questions this subject has never been
+        asked, so the loop cannot narrow itself into asking only what it
+        already knows the answer to.
         """
-        for variant in queries.connector_variants(politician, connector, rotation=prior_runs):
+        budget = queries.SOURCE_VARIANT_BUDGET.get(connector, 0)
+        candidates = queries.connector_variants(politician, connector,
+                                                rotation=prior_runs)
+        memory = learning.recall(db, politician.id, connector)
+        decision = learning.plan(candidates, memory,
+                                 budget=max(budget, len(candidates)) if budget else len(candidates),
+                                 always_first=politician.name)
+        learned[connector] = {
+            "remembered": decision["memory_size"],
+            "repeated": len(decision["proven"]),
+            "new_questions": len(decision["explored"]),
+            "set_aside": len(decision["retired"]),
+            "note": learning.explain(decision),
+        }
+        for variant in decision["queries"]:
             tasks.append(
                 IngestionTask(run_id=run.id, connector=connector, platform=platform,
                               endpoint=endpoint, query=variant)
@@ -118,6 +144,10 @@ def plan_run(
         "social_tier": social_tier,
         "socialcrawl_balance": sc_balance,
         "social_tier_reason": social_reason,
+        # How many runs of history this plan was built on. A reader comparing
+        # two reports for the same subject needs to know that the second one
+        # was asking different questions, and why.
+        "prior_runs": prior_runs,
     }
 
     if social_tier == "managed":
@@ -242,6 +272,13 @@ def plan_run(
         tasks.append(
             IngestionTask(run_id=run.id, connector="mock", platform="mixed", endpoint="fixtures", query=politician.name)
         )
+
+    # What the subject's own history changed about this plan. Recorded on the
+    # run, so the loop can be inspected rather than believed in — a brain
+    # nobody can see the working of is indistinguishable from a random
+    # number generator having a good week.
+    if learned:
+        run.stats = {**(run.stats or {}), "learning": learned}
 
     db.add_all(tasks)
     db.commit()

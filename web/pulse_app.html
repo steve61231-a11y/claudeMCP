@@ -3397,6 +3397,38 @@
     c.appendChild(el('div','',row('Delivered',ok,'pos')+row('Partial',deg,'amber')+row('Failed',down,'neg')));
     if((dc.notes||[]).length)c.appendChild(el('div','',
       `<div class="lbl" style="margin-top:14px">Notes</div><ul class="muted" style="font-size:13px;margin:8px 0 0 18px"><li>${dc.notes.map(esc).join('</li><li>')}</li></ul>`));
+    // What this subject's own history changed about the questions this run
+    // asked.
+    //
+    // The corpus compounds — the engine records what every query returned
+    // and the next run repeats what found material, sets aside what came
+    // back empty, and keeps asking things it has never asked. That is most
+    // of why a second report on a subject is worth more than the first, and
+    // it was happening entirely invisibly, which means a client had no
+    // reason to believe it was happening at all.
+    const lr = dc.learning;
+    if(lr){
+      const f = foldBlock(lr.prior_runs
+          ? `What this run learned from the previous ${lr.prior_runs}`
+          : 'What later runs will learn from this one',
+        lr.remembered ? `${lr.remembered} queries remembered` : 'first run for this subject');
+      f.appendChild(el('div','',`<div style="font-size:13.5px;margin-top:8px;line-height:1.6">${esc(lr.note||'')}</div>`));
+      if(lr.remembered){
+        const g = el('div','grid');
+        g.style.cssText='grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-top:12px';
+        g.appendChild(kpiCard('Repeated',fmt(lr.repeated),'returned material before'));
+        g.appendChild(kpiCard('Asked first time',fmt(lr.new_questions),'never tried on this subject'));
+        g.appendChild(kpiCard('Set aside',fmt(lr.set_aside),'empty twice — retried later'));
+        f.appendChild(g);
+      }
+      Object.entries(lr.per_source||{}).forEach(([source,note])=>{
+        if(!note)return;
+        f.appendChild(el('div','mentr',
+          `<b style="font-size:13.5px">${esc(source)}</b>
+           <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(note)}</div>`));
+      });
+      c.appendChild(f);
+    }
     return c;
   }
 
@@ -5105,6 +5137,19 @@
           {action:'Name the people now covered who were not before',issue:'Reform defense',issue_share:21.2},
           {action:'Brief oncology and chronic-care units ahead of the 90-day date',issue:null,issue_share:null}]},
       grounding:{checked:41,ungrounded:[],rate:0,method:'capitalised-names'},
+      // The compounding corpus, shown. The engine records what every query
+      // returned and the next run repeats what found material — most of why
+      // a second report on a subject is worth more than the first, and
+      // invisible until it was put on the page.
+      dataCoverage:{sources_ok:['gdelt','google_news','reddit','youtube'],
+        sources_degraded:['twscrape'],sources_down:[],complete:false,
+        notes:['twscrape: partial — upstream errors during collection'],
+        prior_runs:4,
+        learning:{prior_runs:4,remembered:45,repeated:6,new_questions:7,set_aside:12,
+          note:'Built on 4 previous run(s) of this subject. 45 queries remembered: 6 repeated because they returned material, 7 asked for the first time, 12 set aside as answered for now.',
+          per_source:{
+            gdelt:'14 queries remembered; 2 repeated because they returned material; 2 never asked before; 3 set aside as answered (asked again after 6 runs)',
+            google_news:'31 queries remembered; 4 repeated because they returned material; 5 never asked before; 9 set aside as answered (asked again after 6 runs)'}}},
       publicVoice:{
         supportive:[{theme:'Universal cover is worth the disruption',summary:'A minority argue the transition pain is the price of ending NHIF\u2019s exclusions, and point to people now covered who were not before.',quotes:[{ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'},{ref:'e5f6a7b8',text:'Every reform hurts in year one. Judge it in year three.'}]}],
         critical:[{theme:'Facilities still demand cash',summary:'The dominant critical theme: registration is done, the card exists, and the clinic still asks for money at the counter \u2014 reported across counties and platforms.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},

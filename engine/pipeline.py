@@ -839,6 +839,13 @@ def _coverage_summary(stats: dict) -> dict:
             reason = "; ".join(raw) or "no reason recorded"
             notes.append(f"{source}: returned nothing — {reason}")
     balance = stats.get("credit_balance_after")
+    # What this subject's own history changed about the questions this run
+    # asked. Carried into the report because the compounding corpus is a
+    # thing the client is buying — the second report on a subject is worth
+    # more than the first — and it was happening invisibly. A reader
+    # comparing two reports needs to be told the second one asked different
+    # questions, and which.
+    learning_note = _learning_summary(stats)
     return {
         "sources_ok": ok,
         "sources_degraded": degraded,
@@ -846,6 +853,46 @@ def _coverage_summary(stats: dict) -> dict:
         "notes": sorted(set(notes)),
         "credit_balance": balance,
         "complete": not down and not degraded,
+        "prior_runs": stats.get("prior_runs"),
+        "learning": learning_note,
+    }
+
+
+def _learning_summary(stats: dict) -> dict | None:
+    """One honest paragraph about what the run remembered, across sources.
+
+    Per-source detail is on the run; this is the line a reader gets. An
+    empty return is a real answer — a first run has learned nothing and
+    saying "0 queries repeated" would dress that up as a measurement.
+    """
+    learned = stats.get("learning") or {}
+    if not learned:
+        return None
+    remembered = sum(int(v.get("remembered") or 0) for v in learned.values())
+    repeated = sum(int(v.get("repeated") or 0) for v in learned.values())
+    fresh = sum(int(v.get("new_questions") or 0) for v in learned.values())
+    aside = sum(int(v.get("set_aside") or 0) for v in learned.values())
+    if not remembered:
+        return {
+            "prior_runs": stats.get("prior_runs") or 0,
+            "remembered": 0,
+            "note": ("This is the first run for this subject, so every query was "
+                     "new. Later runs repeat what found material, retire what "
+                     "came back empty, and keep asking questions never asked "
+                     "before."),
+        }
+    return {
+        "prior_runs": stats.get("prior_runs") or 0,
+        "remembered": remembered,
+        "repeated": repeated,
+        "new_questions": fresh,
+        "set_aside": aside,
+        "per_source": {k: v.get("note") for k, v in sorted(learned.items())},
+        "note": (
+            f"Built on {stats.get('prior_runs') or 0} previous run(s) of this "
+            f"subject. {remembered} queries remembered: {repeated} repeated "
+            f"because they returned material, {fresh} asked for the first "
+            f"time, {aside} set aside as answered for now."),
     }
 
 

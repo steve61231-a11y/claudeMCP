@@ -97,6 +97,21 @@ psql -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 
 These are all paid for in production failures. Each has tests pinning it.
 
+**The corpus is meant to compound, so the queries have to.**
+`ingestion/learning.py` reads back what every query returned on this
+subject's previous runs — `IngestionTask.result_count` is NEW,
+non-duplicate mentions, because the store is ON CONFLICT DO NOTHING on a
+content hash — and the next run repeats what found material, sets aside
+what came back empty twice, and reserves a fixed share of every budget for
+questions never asked. Three rules that are easy to break: a FAILED task is
+not an empty result (a source being down is not a question being answered);
+retirement decays, because a subject with no court record this year may
+have one next year; and the exploit share is capped, because a loop that
+only repeats what worked stops discovering. It learns novelty, not quality
+— `RawMention` cannot yet attribute a relevance verdict back to the query
+that fetched it, and the module says so rather than letting a reader assume
+otherwise.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname
