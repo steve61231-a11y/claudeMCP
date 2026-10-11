@@ -102,6 +102,58 @@ def test_no_render_site_prints_a_bare_count_of_mentions():
         "share(n, CORPUS_TOTAL)")
 
 
+def test_every_bar_chart_is_scaled_to_something_it_is_a_share_of():
+    """A bar chart with no denominator always has one full-width bar.
+
+    `hBars` scales to the largest value present unless it is told what the
+    whole is. So a source with 60% of the coverage and a source with 6% of
+    it drew IDENTICALLY whenever each happened to lead its own section —
+    which is how three charts on one page could not be compared with each
+    other, and what the client's note on the media graph was about:
+    "this graph needs to reflect mentions as percentage of total as with
+    the others, same with 6 and 7 below."
+
+    Pinned at the call sites rather than on the helper, because the helper
+    was already capable of this and the charts simply were not asking. A
+    new chart that forgets is the same bug again, so the rule is: every
+    `hBars` call passes a total.
+    """
+    calls = [m for m in re.finditer(r"hBars\(", PAGE)]
+    # Skip the definition itself.
+    sites = []
+    for match in calls:
+        if PAGE[max(0, match.start() - 9):match.start()].endswith("function "):
+            continue
+        # The call's own argument list, to its closing paren.
+        depth, i = 0, match.end() - 1
+        while i < len(PAGE):
+            if PAGE[i] == "(":
+                depth += 1
+            elif PAGE[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        sites.append(PAGE[match.start():i + 1])
+
+    assert sites, "no hBars call sites found — has the helper been renamed?"
+    missing = [s[:90].replace("\n", " ") for s in sites
+               if "total:" not in s and "suffix:'%'" not in s]
+    assert not missing, (
+        "these bar charts scale to their own largest bar, so one of them is "
+        "always full width whatever it is a share of: " + "; ".join(missing))
+
+
+def test_a_bar_chart_of_counts_prints_the_share_not_the_count():
+    """The number at the end of the bar is what a reader quotes. The count
+    belongs in the tooltip, where it is checkable, and the share belongs on
+    the page, where it is comparable."""
+    for needle in ("display:share(sgm.count,segTotal)",
+                   "display:share(sent.positive,sentTotal)"):
+        assert needle in re.sub(r"\s+", "", PAGE), (
+            f"{needle} is not on the page — a bar is labelled with a raw count")
+
+
 def test_the_page_has_a_denominator_to_divide_by():
     """The renderers showing counts sit several levels below the payload. A
     share helper they cannot feed is a share helper that always falls back."""

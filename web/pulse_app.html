@@ -1425,7 +1425,11 @@
     ].filter(r=>r.value!=null);
     const wrap=el('div','');
     if(!rows.length){wrap.appendChild(el('div','muted','Not enough stakeholder positions to compute a baseline.'));return wrap;}
-    wrap.appendChild(hBars(rows.map(r=>({label:r.label,value:r.value,color:r.color})),{suffix:'%'}));
+    // Already percentages — but without a denominator the bars scaled to
+    // the largest of them, so a 46% baseline drew exactly as wide as a
+    // certainty.
+    wrap.appendChild(hBars(rows.map(r=>({label:r.label,value:r.value,color:r.color})),
+                           {suffix:'%',total:100}));
     if(tree.caveat)wrap.appendChild(el('div','muted chart-note',esc(tree.caveat)));
     return wrap;
   }
@@ -1689,11 +1693,17 @@
     const s2b=numberedCard('Overall mentions','Total, change on the previous period, and outlet segmentation');
     const mg=el('div','grid');mg.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';
     mg.appendChild(deltaStat('Total mentions',vol.total||0,vol.difference_pct));
-    const segs=(vol.segmentation||[]).map((sgm,i)=>({label:sgm.label,value:sgm.count,color:SERIES[i%SERIES.length],
-      note:sgm.share+'% of coverage'}));
+    // The share was in the hover note only, so on paper and at a glance the
+    // widest bar was whichever segment came first — scaled to the largest
+    // bar present rather than to the coverage it is a share OF.
+    const segTotal=(vol.segmentation||[]).reduce((a,s)=>a+(s.count||0),0)||vol.total||0;
+    const segs=(vol.segmentation||[]).map((sgm,i)=>({
+      label:sgm.label, value:sgm.count, color:SERIES[i%SERIES.length],
+      display:share(sgm.count,segTotal),
+      note:`${fmt(sgm.count)} of ${fmt(segTotal)} mentions`}));
     const segBox=el('div','');
     segBox.appendChild(el('div','lbl','By outlet type'));
-    segBox.appendChild(segs.length?hBars(segs):fwEmpty('no coverage segmented yet'));
+    segBox.appendChild(segs.length?hBars(segs,{total:segTotal}):fwEmpty('no coverage segmented yet'));
     mg.appendChild(segBox);
     s2b.appendChild(mg);
     // Sources, as a dossier rather than a headcount. "Sources covered (73)"
@@ -1742,11 +1752,15 @@
       {label:'Neutral',value:sent.neutral||0,color:TONE.neutral},
       {label:'Negative',value:sent.negative||0,color:TONE.negative},
     ],{label:'analysed'}));
+    // Scaled to the scored total, not to the largest of the three. A
+    // corpus that is 35% negative drew an identical bar to one that is 95%
+    // negative, which is the only thing this chart is for.
+    const sentTotal=(sent.positive||0)+(sent.neutral||0)+(sent.negative||0);
     g3.appendChild(hBars([
-      {label:'Positive',value:sent.positive||0,color:TONE.positive},
-      {label:'Neutral',value:sent.neutral||0,color:TONE.neutral},
-      {label:'Negative',value:sent.negative||0,color:TONE.negative},
-    ]));
+      {label:'Positive',value:sent.positive||0,color:TONE.positive,display:share(sent.positive,sentTotal)},
+      {label:'Neutral',value:sent.neutral||0,color:TONE.neutral,display:share(sent.neutral,sentTotal)},
+      {label:'Negative',value:sent.negative||0,color:TONE.negative,display:share(sent.negative,sentTotal)},
+    ],{total:sentTotal}));
     s3.appendChild(g3);
     out.appendChild(s3);
 
