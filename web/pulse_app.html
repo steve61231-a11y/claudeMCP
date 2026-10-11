@@ -451,6 +451,21 @@
 
   /* Scroll boxes must not clip their content to one screenful in print. */
   #zenith .drill-body,#zenith .tl-strip{max-height:none!important;overflow:visible!important}
+
+  /* And the third way this page hides things, which had no print rule.
+     -------------------------------------------------------------------
+     Receipts — "show the 4 mentions behind this" — are a button and a
+     `hidden` body. `#zenith [hidden]{display:none!important}` is correct
+     on screen and fatal on paper: the button is hidden as a control, the
+     body stays hidden as a `hidden` element, and the PDF carried the
+     heading "Sources covered (6)" with not one source under it. Measured:
+     zero of the six sources' quotes reached the exported file.
+
+     That is the provenance section of a due-diligence report printing
+     empty, which is the exact failure this product is built to prevent,
+     and the third separate mechanism to need the same fix — the sections,
+     then the folds, now this. Anything collapsed is open on paper. */
+  #zenith .drill-body[hidden],#zenith .drill-body{display:block!important}
   /* Paper has no panel to open, so every moment must be readable in the
      list — un-clamp it, or the printed timeline is twenty truncated stubs. */
   #zenith .tl-row-event{-webkit-line-clamp:unset!important;overflow:visible!important}
@@ -1782,8 +1797,17 @@
             ${item.strength!=null?`<span class="chip">strength ${item.strength}</span>`:''}
             ${item.growth!=null?`<span class="chip">${item.growth>0?'▲':'▼'} ${Math.abs(Math.round(item.growth*100))}%</span>`:''}
           </div>`;
+        // Evidence folds, on the client's instruction and for the same
+        // reason it folds under the storyline: it is the framings, the
+        // accounts pushing it and up to five quotes — a page of reading
+        // underneath a card whose job is to name the issue in one line.
+        // Six of those open at once is why this section ran to pages.
         const ev=fwEvidence(item.evidence);
-        if(ev)c.appendChild(ev);
+        if(ev){
+          const f=foldBlock('The evidence','what this reading rests on');
+          f.appendChild(ev);
+          c.appendChild(f);
+        }
         col.appendChild(c);
       });
       g4.appendChild(col);
