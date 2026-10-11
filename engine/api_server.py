@@ -7,6 +7,7 @@ rate-limited per client IP. All default to permissive for local dev only.
 """
 
 import json
+import os
 import threading
 import time
 import traceback
@@ -2194,6 +2195,52 @@ def serve_frontend():
 
 
 
+def _schema_state(db) -> dict:
+    """Is the database actually migrated to the code's head revision?
+
+    `start.sh` deliberately starts the server even when `alembic upgrade
+    head` fails, because a container that vanishes tells an operator
+    nothing. That is the right call and it has a consequence worth being
+    able to see: the app then runs against an older schema than the models
+    declare, and the first symptom is every mention INSERT failing on a
+    column that does not exist — which surfaces as "collection returned
+    nothing", a sentence about the subject rather than about the deploy.
+
+    So report it. An operator who has just pushed a migration should be able
+    to confirm it ran without generating a report to find out, which is the
+    same reason `analysis` is next door.
+    """
+    out: dict = {}
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+        from sqlalchemy import text
+
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)))
+        config = Config(os.path.join(root, "alembic.ini"))
+        config.set_main_option("script_location", os.path.join(root, "alembic"))
+        heads = set(ScriptDirectory.from_config(config).get_heads())
+        out["code_head"] = sorted(heads)[0] if heads else None
+
+        # The caller's session, not a new one: `health` already has a
+        # connection open, and in tests the bound engine is the fixture's
+        # rather than the module's — a check that opens its own cannot see
+        # the database the rest of the request is talking to.
+        applied = {row[0] for row in db.execute(
+            text("SELECT version_num FROM alembic_version")).fetchall()}
+        out["database_at"] = sorted(applied)[0] if applied else None
+        out["migrated"] = bool(heads) and applied == heads
+        if not out["migrated"]:
+            out["hint"] = (
+                "The database is not at the code's head revision, so the app "
+                "is running against an older schema than its models declare. "
+                "Redeploy and check the start-up log for the alembic step — "
+                "the server starts even when that step fails, on purpose.")
+    except Exception as exc:  # noqa: BLE001 — a health check must answer
+        out["migrated"] = None
+        out["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    return out
+
 def _analysis_capability() -> dict:
     """Can this deployment do the fuller entity analysis, and if not, why?
 
@@ -2266,6 +2313,7 @@ def health():
 
         db.execute(text("SELECT 1"))
         database["reachable"] = True
+        schema = _schema_state(db)
 
         last_run = db.query(IngestionRun).order_by(IngestionRun.started_at.desc()).first()
         if last_run:
@@ -2279,6 +2327,11 @@ def health():
         database["error"] = f"{type(exc).__name__}: {exc}"[:300]
     finally:
         db.close()
+    # Unreachable database: there is nothing to compare the code's head
+    # against, and reporting "migrated: false" would blame a migration for a
+    # connection problem.
+    schema = locals().get("schema") or {
+        "migrated": None, "error": "the database could not be reached"}
     if not database["configured"]:
         database["hint"] = ("DATABASE_URL is not set. Set it to a Postgres "
                             "connection string and redeploy.")
@@ -2310,6 +2363,8 @@ def health():
         # than the raw variable because the parse is the thing that matters:
         # a typo in the value is exactly the failure this is for.
         "analysis": _analysis_capability(),
+        # Did the last deploy's migration actually run? See `_schema_state`.
+        "schema": schema,
         "uptime_seconds": int(time.time() - _PROCESS_START),
         # Which model backend is actually live, so a provider switch can be
         # confirmed from outside without generating a report to find out.

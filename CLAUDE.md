@@ -245,6 +245,11 @@ which skews reports toward news coverage and away from supportive voices),
 
 ## Where to look when something is wrong
 
+- **Just deployed and nothing works** → `/api/health` → `schema`. `start.sh`
+  starts the server even when `alembic upgrade head` fails, on purpose, so a
+  failed migration leaves the app running against an older schema than its
+  models declare — and the first symptom is every mention INSERT failing on a
+  missing column, which reads as "collection returned nothing".
 - **The report is empty** → `/api/admin/model-check`, then the run-health
   banner on the page. It distinguishes "model down" from "nothing found".
 - **A section is missing** → the stage ledger is on the page under "Some

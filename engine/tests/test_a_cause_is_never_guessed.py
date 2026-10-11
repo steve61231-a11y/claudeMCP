@@ -177,3 +177,47 @@ def test_the_page_prints_the_engine_s_reason_rather_than_its_own(monkeypatch):
         "the page is not showing the engine's reason")
     assert "set LOW_MEMORY=false for the fuller entity check" not in page, (
         "the hard-coded guess is still on the page")
+
+
+# --- did the deploy's migration actually run? --------------------------------
+
+def test_health_reports_whether_the_schema_is_at_head(db_session):
+    """`start.sh` starts the server even when `alembic upgrade head` fails,
+    deliberately — a container that vanishes tells an operator nothing.
+
+    That has a consequence worth being able to see. The app then runs
+    against an older schema than its models declare, and the first symptom
+    is every mention INSERT failing on a column that does not exist, which
+    surfaces to the reader as "collection returned nothing" — a sentence
+    about the subject rather than about the deploy. The exact confusion this
+    codebase exists to prevent, one layer below where it usually happens.
+    """
+    from engine.api_server import _schema_state
+
+    state = _schema_state(db_session)
+    assert state.get("code_head"), "the code's head revision is not reported"
+    # The test fixture migrates to head, so this deployment is current.
+    assert state["migrated"] is True, state
+    assert "hint" not in state, "a migrated database is being given a remedy"
+
+
+def test_a_database_behind_the_code_is_reported_with_its_remedy(monkeypatch):
+    """The case that matters: a push that included a migration, and a deploy
+    whose alembic step failed."""
+    import engine.api_server as api
+
+    class _Behind:
+        def execute(self, *a, **k):
+            class R:
+                @staticmethod
+                def fetchall():
+                    return [("an-older-revision",)]
+            return R()
+
+    state = api._schema_state(_Behind())
+    assert state["migrated"] is False
+    assert state["database_at"] == "an-older-revision"
+    assert "older schema" in state["hint"]
+    assert "alembic" in state["hint"], (
+        "the remedy does not name the step to look at, so the operator is "
+        "told what is wrong and not what to do")
