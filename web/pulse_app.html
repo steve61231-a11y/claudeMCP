@@ -3837,6 +3837,32 @@
     // Nothing was collected. Rendering the usual empty sections made this look
     // like a subject with no story, or like the app was broken. It is neither:
     // it is a collection result, and it is the only thing worth saying.
+    // The run failed partway and this is what it had finished.
+    //
+    // Before this, a run that collected a corpus, digested it and completed
+    // eleven analysts before dying on a database query showed the reader a
+    // stack trace and nothing else — the work done, the model calls paid
+    // for, seven minutes waited, and nothing handed over. The sections are
+    // delivered now, so the one thing that must not happen is a reader
+    // taking an incomplete report for a complete one.
+    const pf=r.partialFailure;
+    if(pf){
+      const c=el('div','card');
+      c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.08)';
+      c.innerHTML=`<div class="row" style="gap:12px;align-items:flex-start">
+        <div style="font-size:24px">\u26a0</div>
+        <div style="flex:1">
+          <b style="font-size:16px">This report is incomplete.</b>
+          <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">
+            ${esc(pf.note||'The run failed partway through.')}</div>
+          ${pf.error?`<div class="qt" style="border-left-color:var(--amber);font-style:normal;margin-top:10px;font-size:12.5px">${esc(pf.error)}</div>`:''}
+          <div class="muted" style="font-size:12.5px;margin-top:8px">
+            Press Generate again — the pipeline resumes from stored progress,
+            so a second run does not re-collect or re-read what this one
+            already did.</div>
+        </div></div>`;
+      wrap.appendChild(c);
+    }
     const nc=r.nothingCollected;
     if(nc){
       const c=el('div','card');

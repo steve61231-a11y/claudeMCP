@@ -46,7 +46,17 @@ def db_session():
     """
     engine = create_engine(TEST_DATABASE_URL, future=True)
     _run_migrations(TEST_DATABASE_URL, "head")
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    # The SAME session semantics production uses, `expire_on_commit` included.
+    #
+    # This fixture built a plain sessionmaker, so every test ran with commits
+    # that expire instances while production was about to stop doing that —
+    # and a fixture whose sessions behave differently from the real ones
+    # cannot catch the bug that difference causes. It did not: a live run
+    # died because reading `ingestion_run.stats` after a commit silently
+    # re-SELECTed the row on a connection that had been idle through the
+    # whole model phase.
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False,
+                                expire_on_commit=False)
     session = SessionLocal()
     try:
         yield session

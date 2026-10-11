@@ -534,6 +534,9 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "derivedSections": payload.get("derived_sections") or [],
         # An empty corpus is a finding, not a blank page.
         "nothingCollected": payload.get("nothing_collected"),
+        # The run died partway and these are the sections that finished. A
+        # reader must never mistake an incomplete report for a complete one.
+        "partialFailure": payload.get("partial_failure"),
         "sectionStatus": payload.get("section_status"),
         # How much of the corpus the sentiment reading actually rests on, and
         # why anything was lost. Without it, "0 scored" and "genuinely neutral"
@@ -874,6 +877,29 @@ def _set_stage(job_id: str, subject_key: str, kind: str, text: str) -> None:
     _save_progress(subject_key, kind, job_id=job_id, status="running", stage=text)
 
 
+def _partial_payload(name: str) -> dict | None:
+    """Whatever this subject's run had already produced before it failed.
+
+    Sections are written to the progress store the moment each one lands —
+    that is what lets a reader watch a report assemble — so after a failure
+    the finished ones are still there.
+
+    Returns None when there is genuinely almost nothing, because "the run
+    failed and produced nothing" and "the run failed after producing most of
+    a report" are different outcomes and must not render the same.
+    """
+    try:
+        progress = _read_progress(_subject_key(name), "report")
+    except Exception:  # noqa: BLE001 — a recovery path must never raise
+        return None
+    payload = (progress or {}).get("payload")
+    if not isinstance(payload, dict):
+        return None
+    real = {k: v for k, v in payload.items()
+            if v not in (None, [], {}, "") and not k.startswith("_")}
+    return payload if len(real) >= 3 else None
+
+
 def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
                     window_days: int | None = None) -> None:
     # Claim the subject's progress row BEFORE any work starts, clearing whatever
@@ -930,12 +956,44 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
             _jobs[job_id] = {"status": "done", "ok": True, "report": precached,
                              "created_at": time.time(), "live": False,
                              "stale_fallback": True, "error_detail": diag}
-        else:
+            return
+
+        # Deliver what the run DID produce.
+        #
+        # Sections are published and saved as each one lands, so a run that
+        # collected a corpus, digested it and finished eleven analysts before
+        # dying on a database query has eleven sections sitting in the store.
+        # Throwing them away and showing a stack trace is the worst outcome
+        # available: the work was done, the model calls were paid for, the
+        # reader waited seven minutes — and this hands them nothing.
+        #
+        # The product's founding rule, at the scale of a whole run. A run
+        # that failed must not look like a run that found nothing; it must
+        # not look like a run that never happened either. So: the sections,
+        # with the failure stated above them.
+        partial = _partial_payload(name)
+        if partial is not None:
+            partial = {**partial, "partial_failure": {
+                "error": diag,
+                "note": ("This report is incomplete. The run failed partway "
+                         "through and these are the sections that had already "
+                         "finished. Nothing below was invented to fill the gap "
+                         "— the sections that are missing are missing."),
+            }}
             _save_progress(_subject_key(name), "report", job_id=job_id,
-                           status="failed", error=f"report generation failed: {diag}")
-            _jobs[job_id] = {"status": "done", "ok": False,
-                             "error": f"report generation failed: {diag}",
+                           status="failed",
+                           error=f"report generation failed: {diag}",
+                           payload=partial)
+            _jobs[job_id] = {"status": "done", "ok": True, "report": partial,
+                             "partial": True, "error_detail": diag,
                              "created_at": time.time()}
+            return
+
+        _save_progress(_subject_key(name), "report", job_id=job_id,
+                       status="failed", error=f"report generation failed: {diag}")
+        _jobs[job_id] = {"status": "done", "ok": False,
+                         "error": f"report generation failed: {diag}",
+                         "created_at": time.time()}
 
     # Serverless Postgres (Neon) can drop the connection when its compute
     # suspends, so the query fails. The pipeline is incremental (stored mentions

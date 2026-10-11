@@ -175,6 +175,22 @@ returns — there is no exception to catch. The analyst fan-out, the tail after
 it, and the whole run each have a ceiling now. Without one, a report hangs
 forever at "12/15 sections".
 
+**A commit expires every instance, so a later attribute read is a hidden
+SELECT.** `SessionLocal` sets `expire_on_commit=False` for that reason. A
+400-second run died at the end because reading `ingestion_run.stats` — a
+value already in memory — re-SELECTed the row on a pooled connection that
+had been idle through the whole model phase, and Neon had closed it.
+`pool_pre_ping` cannot help: it validates at CHECKOUT, and an open
+transaction holds one connection for the duration. The test fixture uses the
+same setting, because a fixture whose sessions behave differently from
+production cannot catch the bug that difference causes.
+
+**A run that fails late must still hand over what it finished.** Sections
+are saved as they land, so a run that dies at the end has most of a report
+in the store; `_partial_payload` delivers it under a banner that says it is
+incomplete. The founding rule at the scale of a whole run — and the
+difference between seven minutes wasted and seven minutes spent.
+
 **Roll back after a failed flush.** SQLAlchemy will not let a session continue
 after one; every later statement raises `PendingRollbackError` naming the
 *original* error, so the stage that reports the failure is never the stage that
