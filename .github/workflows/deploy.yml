@@ -1,0 +1,170 @@
+name: deploy
+
+# Push the code TO the host, instead of waiting for the host to pull it.
+#
+# ## Why this exists
+#
+# Railway deployed this service by watching the repository through its
+# GitHub App. On 9 October that connection broke: the service's Settings ->
+# Source still named the right repository and the right branch, and two
+# lines below it said "Could not load branches. Retry" and "Auto deploy
+# unavailable". Railway could no longer reach the GitHub API for this
+# repository, so it stopped deploying — and **twenty-three commits landed on
+# the branch over the following three days and not one of them ever ran.**
+#
+# The live site went on serving 9 October's code and went on looking live.
+# Every fix pushed in those three days was tested against a container that
+# did not contain it, so each one appeared not to work, and the next
+# diagnosis started from a false fact. That is this project's founding rule
+# broken at the scale of the whole deployment: **a deploy that never
+# happened must never look like a deploy that happened.**
+#
+# A pull-based deploy has a single point of failure on the host's side,
+# where nothing in this repository can see it or fix it. A push-based one
+# fails here, in a tab with a red cross on it, in the place the commit was
+# made. So this workflow does the deploying, and `deploy-drift.yml` catches
+# the case where neither path ran.
+#
+# ## What it needs, once
+#
+# One repository secret, `RAILWAY_TOKEN`:
+#
+#   Railway -> the project -> Settings -> Tokens -> Create token
+#     (a PROJECT token, scoped to the production environment)
+#   GitHub -> Settings -> Secrets and variables -> Actions
+#     -> New repository secret -> name it RAILWAY_TOKEN
+#
+# Never paste that token into a chat, an issue or a commit. It deploys code
+# to a running service; it is as sensitive as the database password.
+#
+# Two optional repository variables (Settings -> Secrets and variables ->
+# Actions -> Variables), both with sane defaults below:
+#
+#   RAILWAY_SERVICE     the service name inside the project
+#   ENGINE_URL          the live origin, used to verify the deploy landed
+#   DEPLOY_VIA_ACTIONS  set to "false" to turn this off — do that if
+#                       Railway's own GitHub connection is working again and
+#                       you would rather not deploy twice per push.
+
+on:
+  push:
+    # The branch this service deploys from. If you move it, change it here
+    # too — GitHub will not accept a variable in this field, so this is the
+    # one place in the repository where the branch name has to be written
+    # out, and a deploy workflow that watches the wrong branch is exactly
+    # the silent nothing this file exists to prevent.
+    branches:
+      - claude/magical-mayer-yzxz5s
+      - main
+    # Documentation and notes do not need a four-minute image build.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+concurrency:
+  # One deploy at a time, and a newer push supersedes an older one rather
+  # than queueing behind it: the only thing anyone wants deployed is HEAD.
+  group: deploy-railway
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: vars.DEPLOY_VIA_ACTIONS != 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the token is set
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::RAILWAY_TOKEN is not set, so nothing was deployed. Create a PROJECT token in Railway (project -> Settings -> Tokens) and add it at GitHub Settings -> Secrets and variables -> Actions. See the comment at the top of this workflow."
+            {
+              echo "### Nothing was deployed"
+              echo
+              echo "\`RAILWAY_TOKEN\` is not set as a repository secret, so this"
+              echo "workflow cannot deploy. The live site is still running whatever"
+              echo "was last deployed by any other means."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Install the Railway CLI
+        run: |
+          # Pinned to the major, not the exact version: an exact pin breaks
+          # the day npm garbage-collects it, and an unpinned one breaks the
+          # day the CLI's flags change. If the major moves, this one line is
+          # what changes.
+          npm i -g @railway/cli@^4 || npm i -g @railway/cli
+          railway --version
+
+      - name: Stamp this commit into the source tree
+        run: |
+          # `railway up` uploads a tarball, so Railway sets none of the
+          # RAILWAY_GIT_* variables the image would otherwise bake in, and
+          # /api/health would report a build with no commit — unidentifiable,
+          # which is the state that made every diagnosis in the last three
+          # days a guess.
+          #
+          # Dockerfile.render reads this file when no GIT_COMMIT build arg is
+          # passed. It is deliberately untracked: a committed copy would go
+          # stale by exactly one commit, every time.
+          printf '%s\n' "$GITHUB_SHA" > engine/BUILD_COMMIT
+          echo "stamped $GITHUB_SHA"
+
+      - name: Deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          SERVICE: ${{ vars.RAILWAY_SERVICE || 'muugi' }}
+        run: |
+          # --ci streams the build log and exits non-zero if the build or the
+          # deploy fails, instead of returning the moment the upload lands.
+          # Without it a broken build is a green tick here.
+          railway up --ci --service "$SERVICE"
+
+      # A deploy that reported success and did not replace the running code
+      # is the failure this whole file is about, so do not take the CLI's
+      # word for it. Ask the container which commit it is.
+      - name: Verify the live site is running this commit
+        env:
+          ENGINE_URL: ${{ vars.ENGINE_URL || 'https://muugi-production-8e01.up.railway.app' }}
+        run: |
+          want=$(printf '%s' "$GITHUB_SHA" | cut -c1-7)
+          url="${ENGINE_URL%/}/api/health"
+          echo "want commit ${want}; asking ${url}"
+          seen=""
+          for attempt in $(seq 1 40); do
+            body=$(curl -fsS --max-time 20 "$url" 2>/dev/null || true)
+            if [ -n "$body" ]; then
+              # One line on purpose. A multi-line script inside a YAML
+              # block scalar has to be indented to the block, and the first
+              # continuation line that is not ends the block and parses the
+              # rest of this file as YAML.
+              seen=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print(b.get("commit") or "")' 2>/dev/null || true)
+              echo "attempt ${attempt}: live commit = ${seen:-<none reported>}"
+              if [ "$seen" = "$want" ]; then
+                echo "::notice::${want} is live."
+                exit 0
+              fi
+            else
+              echo "attempt ${attempt}: no answer from ${url} yet"
+            fi
+            sleep 15
+          done
+          echo "::error::Railway reported a successful deploy but ${url} still reports commit '${seen:-unknown}', not ${want}. The code that is running is not the code that was pushed."
+          {
+            echo "### The deploy did not land"
+            echo
+            echo "Railway's CLI exited 0, but after ten minutes the live service"
+            echo "still reports commit \`${seen:-unknown}\` rather than \`${want}\`."
+            echo
+            echo "Check, in order:"
+            echo "1. \`RAILWAY_SERVICE\` — the token may have deployed a different service."
+            echo "2. \`ENGINE_URL\` — this may be checking a different deployment's domain."
+            echo "3. The Railway deployment log, for a container that built and then crash-looped."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1

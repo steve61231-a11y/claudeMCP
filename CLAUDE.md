@@ -128,6 +128,24 @@ list and are also the name of a section and a framework here. Each exclusion
 is pinned by a test, because a check that fires on good writing is one its
 reader learns to skip.
 
+**A deploy that never happened looks exactly like a deploy that happened.**
+Railway deployed by watching this repository through its GitHub App. That
+connection broke on 9 October and said so in one grey line on one settings
+page — *"Auto deploy unavailable"*, beside a repository and branch that were
+both correct. The site stayed up serving that day's code while twenty-three
+commits landed on the branch and none of them ran. The stale code was not
+the cost; the cost was that every fix pushed in those three days was tested
+against a container which did not contain it, so each appeared not to work
+and the next diagnosis started from a false fact. The founding rule at the
+scale of the whole deployment. So: `/api/health` reports `build_detail` —
+which commit is *running*, however it has to work that out — and this is the
+first thing to check when a fix appears not to work, before touching the
+fix. `.github/workflows/deploy.yml` pushes the code to the host instead of
+waiting to be pulled, and verifies the commit against the live container
+rather than trusting the deploying tool's exit code.
+`.github/workflows/deploy-drift.yml` catches the one case a deploy workflow
+structurally cannot: the deploy that was never triggered at all.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

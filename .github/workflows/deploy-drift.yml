@@ -1,0 +1,158 @@
+name: deploy-drift
+
+# Is the live site running the code in this branch?
+#
+# Nothing asked that question for three days, which is how twenty-three
+# commits came to be pushed at a container that was never replaced. Each
+# push looked successful — it was; the push was fine — and the only thing
+# that would have revealed the truth was comparing the branch head against
+# what the running service says it is. One HTTP request.
+#
+# `deploy.yml` verifies the deploy it just performed. This catches the case
+# `deploy.yml` cannot: a deploy that nobody performed. A workflow that was
+# never triggered, a secret that expired, a host that quietly stopped
+# pulling — all of them look identical from the outside, and all of them
+# produce the same reading here.
+#
+# Needs no secrets. Optionally reads the `ENGINE_URL` repository variable.
+
+on:
+  schedule:
+    - cron: "41 */6 * * *"   # four times a day, off the hour
+  workflow_dispatch: {}
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Enough history to find the last commit that changed deployable
+          # code. A shallow clone of one commit cannot answer that.
+          fetch-depth: 50
+
+      - name: Compare the branch head with what the live service reports
+        id: compare
+        env:
+          ENGINE_URL: ${{ vars.ENGINE_URL || 'https://muugi-production-8e01.up.railway.app' }}
+        run: |
+          # The last commit that changed something a deploy would carry.
+          #
+          # Not simply HEAD: `deploy.yml` deliberately skips documentation,
+          # so a docs commit at the tip is NOT drift, and reporting it as
+          # drift would train the reader to ignore this alarm — which is the
+          # same failure, one level up.
+          want_full=$(git log -1 --format=%H -- . ':!docs' ':!*.md')
+          [ -n "$want_full" ] || want_full=$(git rev-parse HEAD)
+          want=$(printf '%s' "$want_full" | cut -c1-7)
+          want_at=$(git log -1 --format=%cI "$want_full")
+          echo "branch expects: ${want} (committed ${want_at})"
+
+          url="${ENGINE_URL%/}/api/health"
+          body=$(curl -fsS --max-time 30 "$url" 2>/dev/null || true)
+          if [ -z "$body" ]; then
+            echo "::warning::${url} did not answer. That is a different problem from drift — this job reports only on code, and says nothing rather than guessing."
+            echo "state=unreachable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Deliberately not a heredoc. Inside a YAML block scalar the
+          # terminator would have to sit at column zero, which ends the
+          # block and silently turns the rest of this file into YAML — the
+          # exact accident that once removed db-backup.yml's manual trigger.
+          parsed=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print((b.get("commit") or "-"), (b.get("built_at") or "-"))' 2>/dev/null || echo "- -")
+          live=$(printf '%s' "$parsed" | cut -d" " -f1)
+          built=$(printf '%s' "$parsed" | cut -d" " -f2)
+          echo "live reports:   ${live} (built ${built})"
+
+          {
+            echo "live=${live}"
+            echo "built=${built}"
+            echo "want=${want}"
+            echo "want_at=${want_at}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$live" = "$want" ]; then
+            echo "state=current" >> "$GITHUB_OUTPUT"
+            echo "::notice::Live and branch agree on ${want}."
+            exit 0
+          fi
+
+          # A deploy takes a few minutes, and a commit pushed thirty seconds
+          # ago is in flight, not stranded. Only call it drift once it has
+          # had time to happen.
+          now=$(date -u +%s)
+          then_=$(date -u -d "$want_at" +%s 2>/dev/null || echo "$now")
+          age=$(( (now - then_) / 60 ))
+          echo "the expected commit is ${age} minutes old"
+          if [ "$age" -lt 45 ]; then
+            echo "state=in_flight" >> "$GITHUB_OUTPUT"
+            echo "::notice::${want} is ${age} minutes old — a deploy may still be running."
+            exit 0
+          fi
+          echo "state=stale" >> "$GITHUB_OUTPUT"
+          echo "age=${age}" >> "$GITHUB_OUTPUT"
+
+      # Say it somewhere that gets read. A red tick in a tab nobody opens is
+      # not a signal — the same conclusion db-backup.yml reached, for the
+      # same reason, after failing silently for a month.
+      - name: Raise the alarm
+        if: steps.compare.outputs.state == 'stale'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          LIVE: ${{ steps.compare.outputs.live }}
+          BUILT: ${{ steps.compare.outputs.built }}
+          WANT: ${{ steps.compare.outputs.want }}
+          AGE: ${{ steps.compare.outputs.age }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="The live site is not running this branch's code"
+          existing=$(gh issue list --repo "$GH_REPO" --state open \
+                     --search "$title in:title" \
+                     --json number --jq '.[0].number' 2>/dev/null || true)
+          body=$(printf '%s\n' \
+            "\`/api/health\` reports the live container is commit \`${LIVE}\`, built ${BUILT}." \
+            "This branch's newest deployable commit is \`${WANT}\`, pushed ${AGE} minutes ago." \
+            "" \
+            "**Every fix pushed since \`${LIVE}\` is not running.** Anything tested" \
+            "against the live site since then was tested against older code, so a" \
+            "fix that appears not to work may simply never have been deployed." \
+            "" \
+            "Checked by: $RUN_URL" \
+            "" \
+            "Causes, in the order they have actually happened here:" \
+            "1. The host stopped pulling. Railway -> the service -> Settings ->" \
+            "   Source: \"Could not load branches\" or \"Auto deploy unavailable\"" \
+            "   means its GitHub App can no longer see this repository. Reinstall" \
+            "   or reauthorise it at GitHub -> Settings -> Applications." \
+            "2. \`RAILWAY_TOKEN\` is missing or expired, so \`deploy.yml\` could not" \
+            "   push either. Check the Actions tab for a failed \`deploy\` run." \
+            "3. The build failed, or the new container crash-looped and the host" \
+            "   rolled back to the last one that started." \
+            "" \
+            "This issue is reused rather than duplicated, and closes itself as" \
+            "soon as the live commit matches again.")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GH_REPO" --body "$body"
+          else
+            gh issue create --repo "$GH_REPO" --title "$title" --body "$body"
+          fi
+
+      - name: Stand the alarm down
+        if: steps.compare.outputs.state == 'current'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          WANT: ${{ steps.compare.outputs.want }}
+        run: |
+          title="The live site is not running this branch's code"
+          for n in $(gh issue list --repo "$GH_REPO" --state open \
+                     --search "$title in:title" \
+                     --json number --jq '.[].number' 2>/dev/null || true); do
+            gh issue close "$n" --repo "$GH_REPO" \
+              --comment "The live site reports ${WANT}, which matches the branch — closing."
+          done

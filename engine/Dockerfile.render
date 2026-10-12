@@ -47,10 +47,20 @@ ENV PORT=8000
 # Env vars differ per host and some are build-time only; a file written here
 # is true everywhere and survives into the running container.
 #
-# ARG so a host that DOES pass a commit can bake the real one in; the date
-# is the floor that always works.
+# ARG so a host that DOES pass a commit can bake the real one in. The file
+# is for the host that cannot: `railway up` uploads a tarball, so Railway
+# sets none of its RAILWAY_GIT_* variables and has no commit to pass, and the
+# health endpoint would report a build with no identity — which is precisely
+# the state in which every diagnosis becomes a guess. `.github/workflows/
+# deploy.yml` writes engine/BUILD_COMMIT into the tree it uploads. The file
+# is untracked on purpose: a committed copy is stale by one commit, always.
 ARG GIT_COMMIT=""
-RUN printf '%s\n%s\n' "$GIT_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /app/BUILD_STAMP
+RUN stamped="${GIT_COMMIT}"; \
+    if [ -z "$stamped" ] && [ -f ./engine/BUILD_COMMIT ]; then \
+      stamped="$(head -1 ./engine/BUILD_COMMIT | tr -d '[:space:]')"; \
+    fi; \
+    printf '%s\n%s\n' "$stamped" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /app/BUILD_STAMP; \
+    echo "build stamp: ${stamped:-<no commit available>}"
 
 COPY engine/start.sh /app/start.sh
 RUN chmod +x /app/start.sh

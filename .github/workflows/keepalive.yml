@@ -1,10 +1,18 @@
 name: keepalive
 
-# Free 24/7 keep-alive: pings the engine so the Render free instance never
-# spins down, which in turn lets the in-app 6h ingestion scheduler keep running.
+# Free 24/7 keep-alive: pings the engine so a sleeping instance never spins
+# down, which in turn lets the in-app 6h ingestion scheduler keep running.
 # Replaces needing UptimeRobot. GitHub disables scheduled workflows after ~60
 # days of repo inactivity — any push re-arms it. Cron is best-effort (GitHub may
 # delay a few minutes), which is fine for keep-warm.
+#
+# The default below is the LIVE host. It pointed at the retired Render domain
+# for weeks, so this job pinged a dead address every ten minutes, got a
+# non-200 every time, and deliberately exited 0 — a monitor that cannot
+# distinguish "the service is down" from "I am asking the wrong service" is
+# a monitor whose answer means nothing. Override it with the `ENGINE_URL`
+# repository variable rather than editing this file, and the same variable
+# then drives `deploy.yml` and `deploy-drift.yml` too.
 
 on:
   schedule:
@@ -17,7 +25,7 @@ jobs:
     steps:
       - name: Ping engine health
         run: |
-          URL="${ENGINE_URL:-https://pulse-engine-efnd.onrender.com}/api/health"
+          URL="${ENGINE_URL:-https://muugi-production-8e01.up.railway.app}/api/health"
           echo "Pinging $URL"
           for i in 1 2 3; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo 000)

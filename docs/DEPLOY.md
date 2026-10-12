@@ -7,6 +7,11 @@ and slightly faster. This file exists because that one is not usable by
 somebody who does not already know what `curl` is, and a deploy guide that
 cannot be followed is not a deploy guide.
 
+Three steps that matter, and section 3 is the one people skip and then lose
+an evening to: **a deploy that never happened looks exactly like a deploy
+that happened.** Everything else in this file is setup; 3c is the thirty
+seconds that tells you whether any of it took effect.
+
 Two services, and they are deliberately separate:
 
 - **Neon** holds the database — every mention collected, every report.
@@ -87,7 +92,84 @@ missing rather than quietly producing a thinner answer:
 
 ---
 
-## 3. Confirm the backup
+## 3. Make deploys push instead of pull — and prove they happened
+
+Step 2 leaves Railway *watching* the repository through its GitHub App. That
+works until it does not, and when it stops it does not say so anywhere you
+would look.
+
+**What happened on 9 October 2026.** The service's **Settings → Source**
+still showed the right repository and the right branch. Two lines below it,
+in grey: *"Auto deploy unavailable"*, and in red: *"Could not load branches.
+Retry"*. Railway had lost its GitHub access for this repository and had
+quietly stopped deploying. Twenty-three commits were pushed over the next
+three days and **not one of them ever ran.** The site stayed up, serving
+9 October's code, looking entirely live. Every fix pushed in that window was
+then tested against a container that did not contain it, so each one appeared
+not to work and the next three hours went into re-fixing something that was
+already fixed.
+
+So: two workflows in this repository, and one habit.
+
+### 3a. Give GitHub a token so it can push the code itself
+
+1. **Railway** → your project → **Settings → Tokens** → **Create token**.
+   Make it a **project** token, scoped to the production environment. Copy it
+   once — Railway will not show it again.
+2. **GitHub repo** → **Settings → Secrets and variables → Actions** →
+   **New repository secret** → name it exactly `RAILWAY_TOKEN`, paste, save.
+
+Never paste that token into a chat, an issue or a commit. It can deploy code
+to a running service; treat it like the database password.
+
+Optionally, in the **Variables** tab next door:
+
+| Name | Default if unset | What it is |
+|---|---|---|
+| `ENGINE_URL` | the production domain | the live origin. Also used by `keepalive` and `deploy-drift` |
+| `RAILWAY_SERVICE` | `muugi` | the service name inside the Railway project |
+| `DEPLOY_VIA_ACTIONS` | on | set to `false` to turn pushing off, if Railway's own connection is healthy and you would rather not deploy twice per push |
+
+From then on, every push to the deploy branch runs `.github/workflows/
+deploy.yml`, which uploads the code with the Railway CLI, waits for the build,
+**then asks `/api/health` whether the commit it just pushed is the one
+answering** — and fails red if it is not. GitHub pushing to Railway cannot be
+broken by Railway losing sight of GitHub.
+
+### 3b. Let something notice when neither path ran
+
+`.github/workflows/deploy-drift.yml` runs four times a day, compares the
+branch's newest deployable commit against what the live container reports,
+and opens one reusable issue on this repository if they have disagreed for
+more than 45 minutes. It closes it again by itself. It needs no secrets.
+
+It ignores commits that only touch `docs/` or `*.md`, because `deploy.yml`
+skips those too and an alarm that cries wolf is one its reader learns to
+skip.
+
+### 3c. The habit: ask the container, not the dashboard
+
+Open **`/api/health`** on your domain and read `build_detail`:
+
+```json
+"build_detail": {
+  "commit": "4646ce4",
+  "built_at": "2026-10-12T03:41:08Z",
+  "source": "image build stamp"
+}
+```
+
+`commit` is what is *running*. If it is not the commit you just pushed, your
+fix is not live, whatever the Railway dashboard says and however green the
+deployment card looks. That is the one check worth doing before concluding a
+fix did not work — this project has now lost three evenings to skipping it.
+
+If `commit` is `null`, the container could not establish its own identity;
+`built_at` still answers "is this today's build?".
+
+---
+
+## 4. Confirm the backup
 
 The nightly dump protects whatever is in Neon. It had failed every night for
 a month before this was noticed, so confirm it yourself rather than assuming:
@@ -138,3 +220,23 @@ a bug this project already spent a week removing.
 - **Reports come back thin or empty** — that is the app telling the truth, not
   breaking. The run-health banner on the page distinguishes "the model did not
   answer" from "there was nothing to find".
+- **A fix you pushed does not work** — before anything else, open
+  `/api/health` and read `build_detail.commit`. If it is not the commit you
+  pushed, there is nothing wrong with the fix; it is not running. See 3c.
+- **"Could not load branches. Retry"** or **"Auto deploy unavailable"** under
+  the service's **Settings → Source** — Railway's GitHub App can no longer
+  reach this repository, so it has stopped deploying. The branch shown beside
+  it may be perfectly correct; the branch is not the problem. In order:
+
+  1. Press **Retry**. Sometimes it is a transient GitHub API failure.
+  2. **GitHub → your avatar → Settings → Applications → Installed GitHub
+     Apps → Railway → Configure.** Under *Repository access*, make sure
+     `claudeMCP` is in the list (or choose *All repositories*). Save.
+  3. Back in Railway, **Settings → Source → Check for updates**. The branch
+     list should load and "Auto deploy unavailable" should clear.
+  4. If it does not: **Disconnect** the repository and reconnect it, then
+     reselect the deploy branch.
+
+  You do not have to wait for any of that to ship code. With `RAILWAY_TOKEN`
+  set (3a), GitHub Actions deploys regardless — the Railway → GitHub
+  direction is then only a convenience.

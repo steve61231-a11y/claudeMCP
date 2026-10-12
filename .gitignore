@@ -6,3 +6,8 @@ dist/
 mock-data/fixtures/
 *.egg-info/
 .venv/
+
+# Written by .github/workflows/deploy.yml into the tree it uploads to
+# Railway, so the image can bake in the commit it was built from. Committing
+# it would make it stale by exactly one commit, every time.
+engine/BUILD_COMMIT
