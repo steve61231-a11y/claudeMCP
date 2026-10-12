@@ -38,6 +38,20 @@ ENV PYTHONPATH=/app
 # the container starts uvicorn on an empty --port and exits immediately.
 ENV PORT=8000
 
+# Stamp the image at BUILD time, so the running container can say when it
+# was built without depending on the host setting anything.
+#
+# `/api/health` reported build "local" on Railway because it only read
+# Render's variables — and when a fix appeared not to work, nobody, the
+# person who wrote it included, could tell whether it had been deployed.
+# Env vars differ per host and some are build-time only; a file written here
+# is true everywhere and survives into the running container.
+#
+# ARG so a host that DOES pass a commit can bake the real one in; the date
+# is the floor that always works.
+ARG GIT_COMMIT=""
+RUN printf '%s\n%s\n' "$GIT_COMMIT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /app/BUILD_STAMP
+
 COPY engine/start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

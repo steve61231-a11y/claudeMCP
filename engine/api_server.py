@@ -2253,6 +2253,57 @@ def serve_frontend():
 
 
 
+def _build_identity(commit: str) -> dict:
+    """Which code is actually running, from whatever evidence exists.
+
+    `build` reported "local" on Railway because it read only Render's
+    variables, so when a fix appeared not to work there was no way to tell
+    whether it had been deployed — and this file's own standing rule is
+    never to diagnose a cause you have not checked. A deploy you cannot
+    identify makes every diagnosis after it a guess.
+
+    Env vars are per-host and some are build-time only, so they are the
+    first choice and not the only one. `/app/BUILD_STAMP` is written during
+    the image build and is true on every host; the mtime of this very file
+    is the last resort, and it is the time the source was copied into the
+    image, which is close enough to answer "is this today's deploy?".
+    """
+    out: dict = {"commit": (commit or "")[:7] or None, "source": None}
+    if out["commit"]:
+        out["source"] = "host environment"
+
+    try:
+        stamp = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "BUILD_STAMP")
+        with open(stamp, encoding="utf-8") as handle:
+            lines = [ln.strip() for ln in handle.read().splitlines()]
+        baked = lines[0] if lines else ""
+        out["built_at"] = lines[1] if len(lines) > 1 else None
+        if baked and not out["commit"]:
+            out["commit"] = baked[:7]
+            out["source"] = "image build stamp"
+    except Exception:  # noqa: BLE001 — identity must never break health
+        out["built_at"] = None
+
+    if not out.get("built_at"):
+        try:
+            out["built_at"] = datetime.utcfromtimestamp(
+                os.path.getmtime(os.path.abspath(__file__))).isoformat() + "Z"
+            out["source"] = out["source"] or "source file timestamp"
+        except Exception:  # noqa: BLE001
+            pass
+
+    out["label"] = out["commit"] or (
+        f"built {out['built_at']}" if out.get("built_at") else "unknown")
+    if not out["commit"]:
+        out["hint"] = (
+            "No commit is visible to the running container. Compare "
+            "`built_at` with when you last pushed — if it is older, the "
+            "deploy has not happened. Railway's Deployments tab shows the "
+            "commit it actually built.")
+    return out
+
+
 def _schema_state(db) -> dict:
     """Is the database actually migrated to the code's head revision?
 
@@ -2411,13 +2462,18 @@ def health():
               or os.environ.get("RENDER_GIT_COMMIT", "")
               or os.environ.get("GIT_COMMIT", "")
               or os.environ.get("SOURCE_COMMIT", ""))
+    build = _build_identity(commit)
     return {
         # Serving a page is not the same as working. Without a database every
         # report will fail, and saying "ok" here would hide the one fact an
         # operator needs on a first deploy.
         "ok": database["reachable"],
         "database": database,
-        "build": commit[:7] or "local",
+        "build": build["label"],
+        # Everything known about WHICH CODE is running, because "is the fix
+        # deployed?" was not answerable and a diagnosis of a deploy you
+        # cannot identify is a guess.
+        "build_detail": build,
         "local_ml": settings.use_local_ml,
         # What this deployment can actually do, as opposed to what its
         # environment variables say.

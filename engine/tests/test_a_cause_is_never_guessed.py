@@ -221,3 +221,44 @@ def test_a_database_behind_the_code_is_reported_with_its_remedy(monkeypatch):
     assert "alembic" in state["hint"], (
         "the remedy does not name the step to look at, so the operator is "
         "told what is wrong and not what to do")
+
+
+# --- which code is actually running? -----------------------------------------
+
+def test_the_container_can_identify_its_own_build_without_the_host():
+    """`build` reported "local" on Railway because it read only Render's
+    variables. So when a fix appeared not to work, nobody — the person who
+    wrote it included — could tell whether it had been deployed, and every
+    diagnosis after that was a guess about a deploy nobody could identify.
+
+    Env vars are per-host and some are build-time only, so they cannot be
+    the only evidence. A build stamp written into the image is true
+    everywhere; the source file's own timestamp is the floor.
+    """
+    from engine.api_server import _build_identity
+
+    with_env = _build_identity("a3b0ff7deadbeef")
+    assert with_env["commit"] == "a3b0ff7"
+    assert with_env["source"] == "host environment"
+    assert "hint" not in with_env, "a known build is being given a remedy"
+
+    blind = _build_identity("")
+    assert blind["label"] != "local", (
+        "with no commit the answer is still 'local', which tells an operator "
+        "nothing about whether their push is running")
+    assert blind["built_at"], "there is no timestamp to compare against a push"
+    assert "Deployments tab" in blind["hint"], (
+        "the remedy does not say where the ground truth is")
+
+
+def test_the_image_is_stamped_at_build_time():
+    """The env-var-free evidence. A file written during the build is true on
+    every host, which is the point — the last two attempts at this read
+    variables one host happened to set."""
+    from pathlib import Path
+
+    dockerfile = Path("engine/Dockerfile.render").read_text(encoding="utf-8")
+    assert "BUILD_STAMP" in dockerfile
+    assert "date -u" in dockerfile, (
+        "the stamp carries no time, so it cannot answer 'is this today's "
+        "deploy?' on a host that passes no commit")
