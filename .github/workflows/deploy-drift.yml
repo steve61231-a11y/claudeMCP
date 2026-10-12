@@ -71,7 +71,20 @@ jobs:
           # so the one fact this job exists to produce was readable from a
           # browser and nowhere else — which db-backup.yml had already
           # learned the hard way, two workflows over.
-          echo "::notice::live=${live} (built ${built}); branch expects ${want}"
+          # "No identity at all" is a different finding from "a different
+          # commit", and it is a sharper one: /api/health has reported
+          # build_detail since 4646ce4, so a live service that has no such
+          # field is running code older than that — which is a fact about
+          # the deployment, not an inconclusive reading. The first run of
+          # this job returned exactly that, and it is how the 9 October
+          # diagnosis stopped being an inference.
+          if [ "$live" = "-" ]; then
+            echo "verdict=no_build_detail" >> "$GITHUB_OUTPUT"
+            echo "::notice::the live service answered but reports no build identity — it is running code older than 4646ce4, the commit that added build_detail to /api/health. branch expects ${want}"
+          else
+            echo "verdict=commit" >> "$GITHUB_OUTPUT"
+            echo "::notice::live=${live} (built ${built}); branch expects ${want}"
+          fi
           {
             echo "### Is the live site running this branch?"
             echo
@@ -128,10 +141,14 @@ jobs:
                      --search "$title in:title" \
                      --json number --jq '.[0].number' 2>/dev/null || true)
           body=$(printf '%s\n' \
-            "\`/api/health\` reports the live container is commit \`${LIVE}\`, built ${BUILT}." \
+            "$(if [ "$LIVE" = "-" ]; then \
+                 printf '%s' "\`/api/health\` on the live service reports **no build identity at all** — no commit, no build time. That field has existed since \`4646ce4\`, so the running code is older than that commit. It is not an inconclusive reading; it is a measurement of how stale the deployment is."; \
+               else \
+                 printf '%s' "\`/api/health\` reports the live container is commit \`${LIVE}\`, built ${BUILT}."; \
+               fi)" \
             "This branch's newest deployable commit is \`${WANT}\`, pushed ${AGE} minutes ago." \
             "" \
-            "**Every fix pushed since \`${LIVE}\` is not running.** Anything tested" \
+            "**Nothing pushed since the live build is running.** Anything tested" \
             "against the live site since then was tested against older code, so a" \
             "fix that appears not to work may simply never have been deployed." \
             "" \
