@@ -138,6 +138,24 @@ def test_a_pushed_deploy_can_still_identify_its_commit():
         "a committed BUILD_COMMIT is stale by exactly one commit, every time")
 
 
+def test_the_drift_answer_is_readable_without_opening_a_log():
+    """GitHub serves raw workflow logs from blob storage, so a fact printed
+    with `echo` is reachable from a browser and nowhere else — not from the
+    API, not from a CLI, not from another agent. `db-backup.yml` learned
+    that when the reason a month of backups failed turned out to be
+    unreadable from anywhere except a browser tab nobody opened.
+
+    This job exists to produce exactly one fact. It has to survive into the
+    run's annotations and its summary, whatever the verdict."""
+    body = DRIFT.read_text()
+    compare = body.split("Compare the branch head")[1].split("- name:")[0]
+    assert "::notice::live=" in compare, (
+        "the live commit is only echoed into the log body, so the one fact "
+        "this job produces cannot be read from the API")
+    assert "GITHUB_STEP_SUMMARY" in compare, (
+        "the comparison does not reach the run summary")
+
+
 def test_the_monitor_pings_the_host_that_is_actually_live():
     """keepalive.yml pinged the retired Render domain every ten minutes for
     weeks, got a non-200 every time, and deliberately exited 0. A monitor

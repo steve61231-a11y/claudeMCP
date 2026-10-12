@@ -66,7 +66,20 @@ jobs:
           parsed=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print((b.get("commit") or "-"), (b.get("built_at") or "-"))' 2>/dev/null || echo "- -")
           live=$(printf '%s' "$parsed" | cut -d" " -f1)
           built=$(printf '%s' "$parsed" | cut -d" " -f2)
-          echo "live reports:   ${live} (built ${built})"
+          # Put the comparison in the run's ANNOTATIONS and its summary, not
+          # only in the log body. GitHub serves raw logs from blob storage,
+          # so the one fact this job exists to produce was readable from a
+          # browser and nowhere else — which db-backup.yml had already
+          # learned the hard way, two workflows over.
+          echo "::notice::live=${live} (built ${built}); branch expects ${want}"
+          {
+            echo "### Is the live site running this branch?"
+            echo
+            echo "| | commit | when |"
+            echo "|---|---|---|"
+            echo "| live | \`${live}\` | built ${built} |"
+            echo "| branch | \`${want}\` | committed ${want_at} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           {
             echo "live=${live}"
