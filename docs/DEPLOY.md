@@ -228,15 +228,111 @@ a bug this project already spent a week removing.
   reach this repository, so it has stopped deploying. The branch shown beside
   it may be perfectly correct; the branch is not the problem. In order:
 
-  1. Press **Retry**. Sometimes it is a transient GitHub API failure.
-  2. **GitHub → your avatar → Settings → Applications → Installed GitHub
-     Apps → Railway → Configure.** Under *Repository access*, make sure
-     `claudeMCP` is in the list (or choose *All repositories*). Save.
-  3. Back in Railway, **Settings → Source → Check for updates**. The branch
-     list should load and "Auto deploy unavailable" should clear.
-  4. If it does not: **Disconnect** the repository and reconnect it, then
-     reselect the deploy branch.
+  Press **Retry** first — sometimes it is a transient GitHub API failure.
+  If it stays red, work through the appendix at the end of this file, which
+  covers the four states the GitHub App can be in and which one you are
+  looking at. Do not guess: three of the four look almost identical.
 
   You do not have to wait for any of that to ship code. With `RAILWAY_TOKEN`
   set (3a), GitHub Actions deploys regardless — the Railway → GitHub
   direction is then only a convenience.
+
+---
+
+## Appendix: reconnecting Railway to GitHub
+
+Written out in full because the short version — "check the repository is in
+the list" — is exactly the kind of advice that sent an operator to look at a
+setting that was already correct. Three of the four states below show
+`claudeMCP` in the list. Only one of them works.
+
+### Facts about this repository that change the steps
+
+Checked, not assumed:
+
+| | |
+|---|---|
+| Owner `steve61231-a11y` is a **user account**, not an organisation | So this is the *personal* settings path. Most guides online describe the organisation path, which has an extra "approve this app for the org" step that does not exist here and cannot be the problem |
+| The repository is **public** | Railway needs no permission at all to *clone* it. So "Could not load branches" is not a missing read scope — it is the installation itself being absent, suspended, or holding a permission it has not been granted |
+| The default branch **is** the deploy branch | After any reconnect, Railway picks the right branch by itself. You do not have to hunt for `claude/magical-mayer-yzxz5s` in a dropdown |
+
+### Start from Railway, not from GitHub
+
+Railway's own **Settings → Source** usually has a *Configure GitHub App* or
+*Manage GitHub permissions* link. **Use that one.** It opens the installation
+page for the GitHub account Railway is actually connected as — which may not
+be the account you are logged into GitHub with in that browser.
+
+That matters: if Railway signed in with a different GitHub identity, its App
+is installed on *that* account and can never see `steve61231-a11y/claudeMCP`,
+no matter what you tick. Railway → your avatar → *Account Settings* shows
+which GitHub username it holds. If it is not `steve61231-a11y`, nothing in
+this appendix will fix it; you need to connect Railway to the right account.
+
+### "Applications" is three lists, and two of them are decoys
+
+GitHub → avatar → **Settings → Applications** has three tabs. Railway can
+appear in all three:
+
+| Tab | What it is | Does it affect deploys? |
+|---|---|---|
+| **Installed GitHub Apps** | the App's access to your *repositories* | **Yes. This is the only one that matters.** |
+| Authorized GitHub Apps | the App's access to your *identity* | No |
+| Authorized OAuth Apps | the older login integration | No |
+
+Revoking and re-granting the OAuth entry is the most common wasted hour
+here: it fixes logging in, and changes nothing about deploys.
+
+Direct link, which skips all of it: **<https://github.com/settings/installations>**
+
+### The four states, and how to tell them apart
+
+Open that link and find Railway.
+
+**1 — Railway is not in the list at all.** The installation was removed. There
+is nothing to configure: the Configure button you are looking for does not
+exist. Reinstall from the Railway side — project → service → Settings →
+Source → connect the repository again, and accept GitHub's install prompt.
+
+**2 — Railway is listed. Click Configure. Under *Repository access*,
+`claudeMCP` is missing.** Either select *All repositories*, or keep *Only
+select repositories* and add it with **Select repositories**. Two traps: the
+search box only matches repositories **you own**, and the change does not
+apply until you press the green **Save** at the bottom.
+
+**3 — Railway is listed, `claudeMCP` is selected, and there is a yellow or
+grey banner saying the App is requesting new permissions** — wording along
+the lines of *"Railway is requesting updated permissions"* with a **Review
+request** or **Accept new permissions** button. This is the state that best
+matches your symptom: it worked for months, then stopped on one specific day
+without you touching anything. When an App adds a permission, GitHub
+**withholds the new one until you approve it**, and the App keeps running
+half-crippled in the meantime. Approving it is the whole fix.
+
+**4 — Railway is listed, `claudeMCP` is selected, no banner, and it still
+does not work.** Look for a **Suspended** badge next to the name. A suspended
+installation still shows every repository as granted — which is why "the repo
+is listed" proves nothing. If suspended, there is an **Unsuspend** option; if
+not, scroll to the bottom of the Configure page and **Uninstall**, then
+reinstall from Railway's side as in state 1.
+
+### Confirming it worked
+
+Not on GitHub — GitHub will happily show a healthy grant for an integration
+that is doing nothing. Go back to Railway → the service → **Settings →
+Source**:
+
+- the red *"Could not load branches"* is gone and the branch dropdown opens;
+- *"Auto deploy unavailable"* is gone;
+- the 🚫 beside the repository name is gone.
+
+Then push anything, or press **Deploy**, and check `/api/health` →
+`build_detail.commit` against what you pushed. That last step is the only one
+that proves it, and it is section 3c.
+
+### If none of it works
+
+You do not need Railway's GitHub connection to deploy. `RAILWAY_TOKEN` and
+section 3a make GitHub push the code instead, and that path cannot be broken
+by anything in this appendix. The App connection is a convenience; it is not
+the product.
