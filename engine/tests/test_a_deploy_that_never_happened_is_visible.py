@@ -135,8 +135,67 @@ def test_a_pushed_deploy_can_still_identify_its_commit():
     stamp = DOCKERFILE.split("ARG GIT_COMMIT")[1]
     assert "GIT_COMMIT" in stamp and "BUILD_COMMIT" in stamp, (
         "the host-provided commit must still win over the file")
-    assert "engine/BUILD_COMMIT" in (ROOT / ".gitignore").read_text(), (
-        "a committed BUILD_COMMIT is stale by exactly one commit, every time")
+    # It must NOT be gitignored, which is the opposite of what it was.
+    #
+    # `railway up` honours .gitignore when building the archive it uploads,
+    # so ignoring the file is what kept it out of the build: the container
+    # could not name its commit and the verification failed a deploy that
+    # had worked. An untracked file that is not ignored still uploads.
+    ignore_lines = [
+        line.strip() for line in (ROOT / ".gitignore").read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")]
+    assert "engine/BUILD_COMMIT" not in ignore_lines, (
+        "engine/BUILD_COMMIT is gitignored again, so `railway up` will strip "
+        "it from the upload and the container will not know its commit")
+    # And the environment route, which does not depend on which builder the
+    # host chose. The first real deploy produced a container with no
+    # BUILD_STAMP, so the file alone is not enough.
+    assert "GIT_COMMIT=${GITHUB_SHA}" in DEPLOY.read_text(), (
+        "nothing sets GIT_COMMIT on the service, so a build that did not use "
+        "Dockerfile.render has no way to report its commit")
+
+
+def test_a_successful_deploy_is_not_reported_as_a_failure():
+    """The live failure: this step went red on a deploy that had worked.
+
+    It demanded an exact commit match, and the container could not name its
+    commit — the file carrying it was being stripped from the upload by
+    .gitignore. So the operator was told the code was not running when it
+    was, one message after being told the opposite.
+
+    A check that fires on correct state is one its reader learns to skip.
+    This codebase refuses that in report sections and in style rules; the
+    deploy pipeline does not get an exemption.
+
+    The second signal is deliberately narrow: a build time only counts when
+    the container reports NO commit. If it names a different one, that is a
+    real mismatch and a recent build must not excuse it."""
+    body = DEPLOY.read_text()
+    verify = body.split("Verify the live site")[1]
+    assert "DEPLOY_STARTED_AT" in body, (
+        "nothing records when the deploy began, so a container that cannot "
+        "name its commit can never be shown to be this deploy's")
+    assert 'verified by build time' in verify, (
+        "there is only one way to pass, so an unidentifiable but correct "
+        "deploy still fails red")
+    assert '[ "$seen" = "-" ]' in verify, (
+        "the build-time fallback is not gated on the commit being absent, so "
+        "a genuinely stale container with a fresh build time would pass")
+    assert "exit 1" in verify, "a real mismatch must still fail"
+
+
+def test_the_drift_check_tells_two_unknowns_apart():
+    """`build_detail` absent means the code predates it. `build_detail`
+    present with a null commit means current code that cannot identify
+    itself. Both rendered as a dash, so the alarm reported today's build as
+    "older than 4646ce4" — a sentence about the wrong thing entirely."""
+    compare = DRIFT.read_text().split("Compare the branch head")[1]
+    assert "has_detail" in compare, (
+        "the drift check cannot distinguish a missing build_detail from a "
+        "null commit inside one")
+    assert "cannot_compare" in compare, (
+        "a container that cannot name its commit but was built after the "
+        "commit we expect is still reported as drift, which is crying wolf")
 
 
 def test_the_drift_answer_is_readable_without_opening_a_log():

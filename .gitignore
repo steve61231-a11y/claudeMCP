@@ -7,7 +7,11 @@ mock-data/fixtures/
 *.egg-info/
 .venv/
 
-# Written by .github/workflows/deploy.yml into the tree it uploads to
-# Railway, so the image can bake in the commit it was built from. Committing
-# it would make it stale by exactly one commit, every time.
-engine/BUILD_COMMIT
+# engine/BUILD_COMMIT is deliberately NOT listed here, and must not be.
+#
+# `railway up` honours .gitignore when it builds the archive it uploads, so
+# ignoring that file is what stopped it reaching the build — the container
+# then could not name its own commit, and the deploy verification failed on
+# a deploy that had in fact worked. An untracked file that is not ignored is
+# uploaded, which is exactly what is wanted. A test asserts git never starts
+# tracking it, which is the thing ignoring it was for.

@@ -63,9 +63,14 @@ jobs:
           # terminator would have to sit at column zero, which ends the
           # block and silently turns the rest of this file into YAML — the
           # exact accident that once removed db-backup.yml's manual trigger.
-          parsed=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print((b.get("commit") or "-"), (b.get("built_at") or "-"))' 2>/dev/null || echo "- -")
+          # Three tokens, because "the field is absent" and "the field is
+          # present with a null commit" are different findings. Conflating
+          # them is how the drift alarm came to report current code as
+          # running something older than 4646ce4.
+          parsed=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail"); print(((b or {}).get("commit") or "-"), ((b or {}).get("built_at") or "-"), ("yes" if b is not None else "no"))' 2>/dev/null || echo "- - no")
           live=$(printf '%s' "$parsed" | cut -d" " -f1)
           built=$(printf '%s' "$parsed" | cut -d" " -f2)
+          has_detail=$(printf '%s' "$parsed" | cut -d" " -f3)
           # Put the comparison in the run's ANNOTATIONS and its summary, not
           # only in the log body. GitHub serves raw logs from blob storage,
           # so the one fact this job exists to produce was readable from a
@@ -78,9 +83,12 @@ jobs:
           # the deployment, not an inconclusive reading. The first run of
           # this job returned exactly that, and it is how the 9 October
           # diagnosis stopped being an inference.
-          if [ "$live" = "-" ]; then
+          if [ "$has_detail" = "no" ]; then
             echo "verdict=no_build_detail" >> "$GITHUB_OUTPUT"
-            echo "::notice::the live service answered but reports no build identity — it is running code older than 4646ce4, the commit that added build_detail to /api/health. branch expects ${want}"
+            echo "::notice::the live service carries no build_detail field at all — it is running code older than 4646ce4, the commit that added it. branch expects ${want}"
+          elif [ "$live" = "-" ]; then
+            echo "verdict=no_commit" >> "$GITHUB_OUTPUT"
+            echo "::notice::the live service reports a build time (${built}) but no commit, so it cannot be compared by commit. branch expects ${want}"
           else
             echo "verdict=commit" >> "$GITHUB_OUTPUT"
             echo "::notice::live=${live} (built ${built}); branch expects ${want}"
@@ -117,6 +125,18 @@ jobs:
           if [ "$age" -lt 45 ]; then
             echo "state=in_flight" >> "$GITHUB_OUTPUT"
             echo "::notice::${want} is ${age} minutes old — a deploy may still be running."
+            exit 0
+          fi
+          # A container that cannot name its commit but was BUILT after the
+          # commit we expect is not evidence of drift — it is evidence the
+          # commit could not be read. Saying "the live site is not running
+          # this branch" on that basis is the cry-wolf failure this file
+          # warns about in its own comments, so it says what it knows
+          # instead.
+          if [ "$live" = "-" ] && [ "$built" != "-" ] \
+             && [ "$(printf '%s\n' "$want_at" "$built" | sort | head -1)" = "$want_at" ]; then
+            echo "state=cannot_compare" >> "$GITHUB_OUTPUT"
+            echo "::warning::The live container was built at ${built}, after ${want} was committed (${want_at}), so it is probably current — but it reports no commit, so this cannot be confirmed. Fix the identity, not the deploy: see 'Tell the service which commit it is' in deploy.yml."
             exit 0
           fi
           echo "state=stale" >> "$GITHUB_OUTPUT"

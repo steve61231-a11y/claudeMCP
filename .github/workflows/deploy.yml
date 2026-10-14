@@ -158,10 +158,41 @@ jobs:
             echo "SERVICE=muugi" >> "$GITHUB_ENV"
           fi
 
+      # Tell the service its commit through its environment as well as
+      # through the uploaded file.
+      #
+      # The file is read by Dockerfile.render, so it only works if that
+      # Dockerfile is what built the image. The first real deploy produced a
+      # container with no BUILD_STAMP at all, which means it was not — and
+      # rather than guess which builder Railway chose, give the running
+      # process a route that does not depend on the answer:
+      # `_build_identity` reads GIT_COMMIT from the environment first, under
+      # any builder.
+      #
+      # Never fatal. An unidentifiable build is a worse diagnosis later, not
+      # a reason to refuse to ship now.
+      - name: Tell the service which commit it is
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if railway variables --set "GIT_COMMIT=${GITHUB_SHA}" \
+               --service "$SERVICE" --skip-deploys 2>/dev/null; then
+            echo "::notice::GIT_COMMIT set on the service"
+          elif railway variables --set "GIT_COMMIT=${GITHUB_SHA}" \
+                 --service "$SERVICE" 2>/dev/null; then
+            echo "::notice::GIT_COMMIT set (older CLI, no --skip-deploys)"
+          else
+            echo "::warning::Could not set GIT_COMMIT on the service. The deploy continues; the container may not be able to name its commit."
+          fi
+
       - name: Deploy
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
+          # When this deploy began. The verification below needs it: a
+          # container that cannot name its commit can still prove it is
+          # THIS deploy's, by having been built after this moment.
+          echo "DEPLOY_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
           # --ci streams the build log and exits non-zero if the build or the
           # deploy fails, instead of returning the moment the upload lands.
           # Without it a broken build is a green tick here.
@@ -177,33 +208,77 @@ jobs:
 
       # A deploy that reported success and did not replace the running code
       # is the failure this whole file is about, so do not take the CLI's
-      # word for it. Ask the container which commit it is.
+      # word for it — ask the container.
+      #
+      # But it must not do the opposite either. This step failed red on a
+      # deploy that had worked: it demanded an exact commit match, and the
+      # container could not name its commit (the file carrying it was being
+      # excluded from the upload by .gitignore). A check that fires on
+      # correct state is one its reader learns to skip, and this codebase
+      # refuses that in report sections and in style rules — it does not get
+      # an exemption here.
+      #
+      # So: two signals, in order of strength, and it says which one
+      # answered, because a check that silently accepts the weaker one while
+      # appearing to use the stronger one is the same lie in the other
+      # direction.
+      #
+      #   commit  — the running container names this exact commit. Proof.
+      #   built   — the container cannot name a commit, but was BUILT after
+      #             this deploy began, so it cannot be an older one. Also
+      #             proof, of a slightly different thing: that the code
+      #             running is the code this run shipped.
       - name: Verify the live site is running this commit
         env:
           ENGINE_URL: ${{ vars.ENGINE_URL || 'https://muugi-production-8e01.up.railway.app' }}
         run: |
           want=$(printf '%s' "$GITHUB_SHA" | cut -c1-7)
           url="${ENGINE_URL%/}/api/health"
-          echo "want commit ${want}; asking ${url}"
-          seen=""
+          started="${DEPLOY_STARTED_AT:-}"
+          echo "want commit ${want}, or a build after ${started:-<unknown>}; asking ${url}"
+          seen=""; built=""
           for attempt in $(seq 1 40); do
             body=$(curl -fsS --max-time 20 "$url" 2>/dev/null || true)
             if [ -n "$body" ]; then
-              # One line on purpose. A multi-line script inside a YAML
-              # block scalar has to be indented to the block, and the first
+              # One line on purpose. A multi-line script inside a YAML block
+              # scalar has to be indented to the block, and the first
               # continuation line that is not ends the block and parses the
               # rest of this file as YAML.
-              seen=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print(b.get("commit") or "")' 2>/dev/null || true)
-              echo "attempt ${attempt}: live commit = ${seen:-<none reported>}"
+              pair=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print((b.get("commit") or "-"), (b.get("built_at") or "-"))' 2>/dev/null || true)
+              seen=$(printf '%s' "$pair" | cut -d" " -f1)
+              built=$(printf '%s' "$pair" | cut -d" " -f2)
+              echo "attempt ${attempt}: commit=${seen} built_at=${built}"
               if [ "$attempt" = "1" ] || [ "$attempt" = "40" ]; then
-                # The non-secret identity fields only. /api/health also
-                # carries the database hostname, and this annotation is
+                # The identity fields only. /api/health also carries the
+                # database hostname, and these annotations are
                 # world-readable on a public repository.
                 facts=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail"); print("ok=%s build=%s has_build_detail=%s detail=%s" % (d.get("ok"), d.get("build"), b is not None, b))' 2>/dev/null || true)
                 echo "::notice::attempt ${attempt} — live /api/health says: ${facts:-<unparseable>}"
               fi
               if [ "$seen" = "$want" ]; then
-                echo "::notice::${want} is live."
+                echo "::notice::verified by commit: ${want} is live."
+                echo "### Deployed and verified" >> "$GITHUB_STEP_SUMMARY"
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+                echo "The live service reports commit \`${want}\`." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              # The weaker signal. Only trusted when the container genuinely
+              # cannot name a commit — if it names a DIFFERENT one, that is a
+              # real mismatch and the build time must not excuse it.
+              if [ "$seen" = "-" ] && [ -n "$started" ] && [ "$built" != "-" ] \
+                 && [ "$(printf '%s\n' "$started" "$built" | sort | head -1)" = "$started" ]; then
+                echo "::notice::verified by build time: the live container cannot name a commit, but was built at ${built}, after this deploy began at ${started}. It is this deploy's code."
+                {
+                  echo "### Deployed and verified — by build time, not commit"
+                  echo
+                  echo "The live container was built at \`${built}\`, after this"
+                  echo "deploy started at \`${started}\`, so the running code is"
+                  echo "this run's."
+                  echo
+                  echo "It could not report a commit. That is a diagnosis"
+                  echo "problem for later, not a failed deploy: see"
+                  echo "\`Tell the service which commit it is\` above."
+                } >> "$GITHUB_STEP_SUMMARY"
                 exit 0
               fi
             else
@@ -211,12 +286,16 @@ jobs:
             fi
             sleep 15
           done
-          echo "::error::Railway reported a successful deploy but ${url} still reports commit '${seen:-unknown}', not ${want}. The code that is running is not the code that was pushed."
+          echo "::error::Railway reported a successful deploy but after ten minutes ${url} reports commit '${seen}' and build time '${built}' — neither matches ${want} nor a build after ${started:-<unknown>}. The code that is running is not the code that was pushed."
           {
             echo "### The deploy did not land"
             echo
-            echo "Railway's CLI exited 0, but after ten minutes the live service"
-            echo "still reports commit \`${seen:-unknown}\` rather than \`${want}\`."
+            echo "| | |"
+            echo "|---|---|"
+            echo "| wanted commit | \`${want}\` |"
+            echo "| live commit | \`${seen}\` |"
+            echo "| live build time | \`${built}\` |"
+            echo "| this deploy began | \`${started:-unknown}\` |"
             echo
             echo "Check, in order:"
             echo "1. \`RAILWAY_SERVICE\` — the token may have deployed a different service."
