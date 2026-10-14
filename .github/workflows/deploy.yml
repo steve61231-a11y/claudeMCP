@@ -129,9 +129,14 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           CONFIGURED: ${{ vars.RAILWAY_SERVICE }}
         run: |
+          # ::notice:: and not echo. Three times now this repository has
+          # printed the one fact a diagnosis needed into a log body that
+          # GitHub serves from blob storage, where no API, CLI or agent can
+          # read it. "Which service did it deploy to?" was unanswerable
+          # after the first real deploy, which is the whole category.
           if [ -n "$CONFIGURED" ]; then
             echo "SERVICE=${CONFIGURED}" >> "$GITHUB_ENV"
-            echo "using the configured service: ${CONFIGURED}"
+            echo "::notice::service (from the RAILWAY_SERVICE variable): ${CONFIGURED}"
             exit 0
           fi
           status=$(railway status --json 2>/dev/null || true)
@@ -142,7 +147,7 @@ jobs:
           count=$(printf '%s' "$names" | grep -c . || true)
           if [ "$count" = "1" ]; then
             echo "SERVICE=$(printf '%s' "$names" | head -1)" >> "$GITHUB_ENV"
-            echo "one service in this project: $(printf '%s' "$names" | head -1)"
+            echo "::notice::service (the only one in this project): $(printf '%s' "$names" | head -1)"
           elif [ "$count" -gt 1 ]; then
             # Not a guess. Picking one of several and deploying the code to
             # the wrong service is worse than stopping and saying so.
@@ -162,6 +167,13 @@ jobs:
           # Without it a broken build is a green tick here.
           echo "deploying to service: ${SERVICE}"
           railway up --ci --service "$SERVICE"
+          # `railway up --ci` can exit 0 on a successful BUILD while the
+          # container then fails its health check and the host keeps the
+          # previous deployment serving. That is indistinguishable from a
+          # successful deploy from out here, so record what Railway thinks
+          # the state is, in a place that can be read back.
+          state=$(railway status --json 2>/dev/null | head -c 2000 || true)
+          echo "::notice::railway status after deploy: ${state:-<none returned>}"
 
       # A deploy that reported success and did not replace the running code
       # is the failure this whole file is about, so do not take the CLI's
@@ -183,6 +195,13 @@ jobs:
               # rest of this file as YAML.
               seen=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail") or {}; print(b.get("commit") or "")' 2>/dev/null || true)
               echo "attempt ${attempt}: live commit = ${seen:-<none reported>}"
+              if [ "$attempt" = "1" ] || [ "$attempt" = "40" ]; then
+                # The non-secret identity fields only. /api/health also
+                # carries the database hostname, and this annotation is
+                # world-readable on a public repository.
+                facts=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail"); print("ok=%s build=%s has_build_detail=%s detail=%s" % (d.get("ok"), d.get("build"), b is not None, b))' 2>/dev/null || true)
+                echo "::notice::attempt ${attempt} — live /api/health says: ${facts:-<unparseable>}"
+              fi
               if [ "$seen" = "$want" ]; then
                 echo "::notice::${want} is live."
                 exit 0
