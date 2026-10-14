@@ -116,14 +116,51 @@ jobs:
           printf '%s\n' "$GITHUB_SHA" > engine/BUILD_COMMIT
           echo "stamped $GITHUB_SHA"
 
+      # Work out the service name rather than making someone supply it.
+      #
+      # The operator who has to fix this is not the person who wrote it, and
+      # every setting they are asked to get right is a way for a deploy to
+      # fail for a reason that has nothing to do with the code. A project
+      # token already names the project and environment, so the service is
+      # the only thing left to guess — and when there is exactly one, there
+      # is nothing to guess.
+      - name: Find the service to deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          CONFIGURED: ${{ vars.RAILWAY_SERVICE }}
+        run: |
+          if [ -n "$CONFIGURED" ]; then
+            echo "SERVICE=${CONFIGURED}" >> "$GITHUB_ENV"
+            echo "using the configured service: ${CONFIGURED}"
+            exit 0
+          fi
+          status=$(railway status --json 2>/dev/null || true)
+          # One line, for the third time: a continuation line at column zero
+          # inside a YAML block scalar ends the block and parses the rest of
+          # the file as YAML.
+          names=$(printf '%s' "$status" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(filter(None, ((e.get("node") or {}).get("name") for e in ((d.get("services") or {}).get("edges") or [])))))' 2>/dev/null || true)
+          count=$(printf '%s' "$names" | grep -c . || true)
+          if [ "$count" = "1" ]; then
+            echo "SERVICE=$(printf '%s' "$names" | head -1)" >> "$GITHUB_ENV"
+            echo "one service in this project: $(printf '%s' "$names" | head -1)"
+          elif [ "$count" -gt 1 ]; then
+            # Not a guess. Picking one of several and deploying the code to
+            # the wrong service is worse than stopping and saying so.
+            echo "::error::This Railway project has more than one service, so which to deploy cannot be inferred. Set a repository variable RAILWAY_SERVICE to one of: $(printf '%s' "$names" | tr '\n' ' ')"
+            exit 1
+          else
+            echo "::warning::Could not list the project's services; falling back to 'muugi'. If the deploy fails on an unknown service, set the RAILWAY_SERVICE repository variable."
+            echo "SERVICE=muugi" >> "$GITHUB_ENV"
+          fi
+
       - name: Deploy
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          SERVICE: ${{ vars.RAILWAY_SERVICE || 'muugi' }}
         run: |
           # --ci streams the build log and exits non-zero if the build or the
           # deploy fails, instead of returning the moment the upload lands.
           # Without it a broken build is a green tick here.
+          echo "deploying to service: ${SERVICE}"
           railway up --ci --service "$SERVICE"
 
       # A deploy that reported success and did not replace the running code
