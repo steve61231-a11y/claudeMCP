@@ -41,6 +41,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 DEPLOY = WORKFLOWS / "deploy.yml"
 DRIFT = WORKFLOWS / "deploy-drift.yml"
+IMAGE = WORKFLOWS / "image.yml"
 DOCKERFILE = (ROOT / "engine" / "Dockerfile.render").read_text()
 
 
@@ -154,6 +155,57 @@ def test_the_drift_answer_is_readable_without_opening_a_log():
         "this job produces cannot be read from the API")
     assert "GITHUB_STEP_SUMMARY" in compare, (
         "the comparison does not reach the run summary")
+
+
+def test_there_is_a_route_to_production_that_needs_no_credential():
+    """Both other routes depend on something outside this repository: the
+    host's GitHub App (which broke) or a RAILWAY_TOKEN somebody has to
+    create and paste (which is a step that can be got wrong, and was).
+
+    `GITHUB_TOKEN` is issued to the job automatically. A route built on it
+    alone cannot be blocked by a dashboard, so the image is always
+    available even when no host will deploy it — and the image is the thing
+    worth not losing.
+    """
+    assert IMAGE.exists(), (
+        "there is no credential-free way to produce a runnable artifact, so "
+        "every path to production depends on an integration or a secret")
+    spec = _yaml(IMAGE)
+    assert "push" in _triggers(spec)
+    body = IMAGE.read_text()
+    assert "secrets.GITHUB_TOKEN" in body
+    assert "packages: write" in body, (
+        "the job cannot publish, so it will fail at the registry")
+    # Any other secret would reintroduce the dependency this route removes.
+    others = [line for line in body.splitlines()
+              if "secrets." in line and "GITHUB_TOKEN" not in line]
+    assert not others, (
+        f"the image route now needs a secret of its own: {others}")
+
+
+def test_the_published_image_can_say_which_commit_it_is():
+    """An image that cannot identify itself puts the deployment back in the
+    state where every diagnosis is a guess — and building off-host is
+    precisely when the host can tell you nothing."""
+    body = IMAGE.read_text()
+    assert "GIT_COMMIT=${{ github.sha }}" in body, (
+        "the build does not pass the commit, so /api/health would report an "
+        "unidentifiable build and no deploy of it could be verified")
+
+
+def test_the_registry_path_is_lower_case():
+    """A registry path must be lower-case and this owner is not.
+    `github.repository` would publish `.../claudeMCP`, and every pull would
+    404 on a name that reads as correct — the exact shape of failure this
+    file exists for."""
+    body = IMAGE.read_text()
+    assert "${{ github.repository }}" not in body, (
+        "the image is tagged from github.repository, which contains capital "
+        "letters; the push or every later pull will fail on the name")
+    for line in body.splitlines():
+        if "ghcr.io/" in line:
+            path = line.split("ghcr.io/")[1].split(":")[0].strip()
+            assert path == path.lower(), f"not a valid registry path: {path}"
 
 
 def test_the_monitor_pings_the_host_that_is_actually_live():

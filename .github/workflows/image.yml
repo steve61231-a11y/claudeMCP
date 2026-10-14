@@ -1,0 +1,124 @@
+name: image
+
+# Build the container here and publish it, so deploying needs no credential
+# and no integration between the host and GitHub.
+#
+# ## Why a third route
+#
+# There are now two ways for code to reach production and both have a
+# dependency outside this repository:
+#
+#   - Railway pulling from GitHub needs its GitHub App to work. That broke
+#     on 9 October and cost three days.
+#   - `deploy.yml` pushing to Railway needs a RAILWAY_TOKEN, which has to be
+#     created in a dashboard and pasted into a settings page.
+#
+# This route needs neither. `GITHUB_TOKEN` is issued to the job
+# automatically, so nothing has to be created, copied or stored, and the
+# result is an ordinary public container image that ANY host can run —
+# Railway, Fly, Render, a VPS, a laptop. The image is the artifact; where it
+# runs becomes a detail rather than a dependency.
+#
+# It also means a host is never the only copy of a working build. If a
+# deployment is lost, the image that was running is still here, tagged with
+# the commit it came from.
+#
+# ## One click, once
+#
+# A package published by a public repository still starts PRIVATE. After the
+# first successful run:
+#
+#   GitHub -> your profile -> Packages -> claudemcp -> Package settings
+#     -> Change visibility -> Public
+#
+# Until that is done a host cannot pull it without credentials, which is the
+# whole point of this route. Nothing else about this workflow needs setting
+# up, ever.
+#
+# ## Pointing Railway at it
+#
+# Railway -> the service -> Settings -> Source -> deploy from a Docker image
+# instead of a repository, and give it:
+#
+#   ghcr.io/steve61231-a11y/claudemcp:latest
+#
+# GitHub sends no webhook when an image is published, so Railway will not
+# notice a new one by itself — press Deploy, or let `deploy.yml` do it. That
+# is a smaller gap than the one this route closes: a deploy you have to
+# click is still a deploy, where an integration that has silently stopped is
+# not.
+
+on:
+  push:
+    branches:
+      - claude/magical-mayer-yzxz5s
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch: {}
+
+concurrency:
+  group: image-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Issued to this job. Nothing to create, copy, or keep anywhere.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: engine/Dockerfile.render
+          push: true
+          # GIT_COMMIT is the point of doing it here rather than letting the
+          # host build: the image can state which commit it is, so
+          # /api/health -> build_detail is true however and wherever it is
+          # run, and a deploy can be verified rather than assumed.
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+          # Lower-case, because a registry path must be and this owner is
+          # not. `github.repository` would publish `.../claudeMCP` and every
+          # pull would 404 on a name that looks correct.
+          tags: |
+            ghcr.io/steve61231-a11y/claudemcp:latest
+            ghcr.io/steve61231-a11y/claudemcp:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Say what was published and how to run it
+        env:
+          SHA: ${{ github.sha }}
+        run: |
+          short=$(printf '%s' "$SHA" | cut -c1-7)
+          echo "::notice::published ghcr.io/steve61231-a11y/claudemcp:${short} (also :latest)"
+          {
+            echo "### Image published"
+            echo
+            echo '```'
+            echo "ghcr.io/steve61231-a11y/claudemcp:latest"
+            echo "ghcr.io/steve61231-a11y/claudemcp:${SHA}"
+            echo '```'
+            echo
+            echo "It reports \`${short}\` at \`/api/health\` -> \`build_detail.commit\`,"
+            echo "so a deploy of it can be verified rather than assumed."
+            echo
+            echo "If a host cannot pull it, the package is still private:"
+            echo "Profile -> Packages -> claudemcp -> Package settings ->"
+            echo "Change visibility -> Public. Once, then never again."
+          } >> "$GITHUB_STEP_SUMMARY"
