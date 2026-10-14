@@ -30,6 +30,7 @@ thin because the machine was broken and said nothing.
 
 from __future__ import annotations
 
+import os
 import threading
 from collections import Counter
 from dataclasses import dataclass, field
@@ -150,20 +151,64 @@ class PreflightFailed(RuntimeError):
         return {"error": str(self), "remedy": self.remedy, "provider_error": self.error}
 
 
+def _dashboard() -> str:
+    """The dashboard the operator is actually looking at.
+
+    This said "the Render dashboard" for weeks after the move to Railway,
+    and an operator with a dead report was sent to a product they do not
+    use. It is the same failure as naming a menu that cannot exist: they
+    go, do not find it, and conclude the advice is wrong — and then the
+    next diagnosis starts from a false fact.
+
+    Read from the environment rather than from a setting, because the host
+    is the one thing a host always tells you about itself.
+    """
+    if any(key.startswith("RAILWAY_") for key in os.environ):
+        return "the Railway dashboard (the service's Variables tab)"
+    if os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"):
+        return "the Render dashboard"
+    if os.environ.get("FLY_APP_NAME"):
+        return "fly.toml / `fly secrets set`"
+    return "this service's environment variables"
+
+
+def _key_variable(backend: str) -> str:
+    """Which variable actually holds the key for this backend.
+
+    Naming LLM_API_KEY to someone running the Anthropic path sends them to
+    set a variable that is never read.
+    """
+    return "ANTHROPIC_API_KEY" if backend == "anthropic" else "LLM_API_KEY"
+
+
 # Provider errors we can turn into an instruction instead of a stack trace.
 def _remedy_for(error: str, model: str, backend: str) -> str:
     lowered = error.lower()
+    dash = _dashboard()
+    key = _key_variable(backend)
     if "404" in lowered or "not found" in lowered or "thank you for participating" in lowered:
         return (
             f"The model {model!r} does not exist on this provider any more. OpenRouter's "
             "cloaked/stealth previews (names like 'stealth/…') are temporary and are "
             "retired without notice — when one ends the endpoint returns 404 with "
-            "'Thank you for participating'. Set LLM_MODEL to a current model id in the "
-            "Render dashboard and redeploy."
+            "'Thank you for participating'. Set LLM_MODEL to a current model id in "
+            f"{dash} and redeploy."
         )
+    # No key at all is NOT the same finding as a key that was refused, and
+    # they have different remedies: one is a variable that was never set,
+    # the other is a value that is wrong. Both arrive as HTTP 401, so the
+    # generic branch below would have called an unset variable "rejected"
+    # and sent the operator to check a key that does not exist.
+    if ("missing authentication" in lowered or "no auth" in lowered
+            or "missing bearer" in lowered or "no api key" in lowered):
+        return (f"No API key was sent at all, so {key} is not set on this service "
+                "— an empty value counts as unset. The provider never saw a key, "
+                f"which is different from a key being wrong. Add {key} in {dash} "
+                "and redeploy. Type it in there; never paste it into a chat.")
     if "401" in lowered or "unauthor" in lowered or "invalid api key" in lowered:
-        return ("The API key was rejected. Set a valid LLM_API_KEY in the Render dashboard "
-                "— type it into the dashboard, never paste it into a chat.")
+        return (f"The API key was rejected. The key in {key} reached the provider "
+                f"and was refused, so it is wrong, revoked or expired. Set a valid "
+                f"{key} in {dash} — type it in there, never paste it into a chat.")
     if "402" in lowered or "credit" in lowered or "quota" in lowered or "insufficient" in lowered:
         return "The account is out of credit for this model. Top up, or set LLM_MODEL to a cheaper one."
     if "429" in lowered or "rate" in lowered:
@@ -171,8 +216,8 @@ def _remedy_for(error: str, model: str, backend: str) -> str:
                 "use a model with more headroom.")
     if "timeout" in lowered or "connect" in lowered:
         return f"Could not reach the provider ({backend}). Check LLM_BASE_URL and outbound network access."
-    return (f"The provider rejected a minimal request for model {model!r}. Check LLM_MODEL, "
-            "LLM_BASE_URL and LLM_API_KEY in the Render dashboard.")
+    return (f"The provider rejected a minimal request for model {model!r}. Check "
+            f"LLM_MODEL, LLM_BASE_URL and {key} in {dash}.")
 
 
 #: Failures that mean the backend is MISCONFIGURED. There is no point

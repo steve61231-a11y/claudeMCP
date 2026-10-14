@@ -8,6 +8,7 @@ rendered a complete-looking report. Around 120 individually-correct `except`
 handlers added up to a system that could not report its own total failure.
 """
 
+import os
 import pytest
 
 from engine import health
@@ -156,3 +157,69 @@ def test_summary_is_json_safe_for_the_payload():
     tracker = health.current()
     tracker.record_failure(RuntimeError(RETIRED))
     json.dumps(tracker.summary())
+
+
+# ---------------------------------------------------------------------------
+# The remedy that sent an operator to the wrong product.
+#
+# A live run died with "Missing Authentication header" and the page answered:
+# "The API key was rejected. Set a valid LLM_API_KEY in the Render dashboard."
+# Two things wrong in one sentence, on the service's only error screen.
+#
+# The app had been on Railway for weeks, so the operator was sent to a
+# dashboard that is not theirs — the same failure as naming a menu that
+# cannot exist, which this repository has already lost an evening to. And
+# the key had not been rejected: the provider never received one. "Wrong
+# value" and "variable not set" are different problems with different fixes,
+# and both arrive as HTTP 401.
+# ---------------------------------------------------------------------------
+
+
+def test_the_remedy_names_the_host_the_operator_is_actually_on(monkeypatch):
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    remedy = health._remedy_for("HTTP 401 unauthorized", "m", "openai_compatible")
+    assert "Railway" in remedy
+    assert "Render" not in remedy, (
+        "the operator is being sent to a dashboard they do not use")
+
+
+def test_no_remedy_hardcodes_a_host(monkeypatch):
+    """Whatever the environment says, nothing may assume a host. This is the
+    property that failed, not any one string."""
+    for name in list(os.environ):
+        if name.startswith(("RAILWAY_", "RENDER", "FLY_")):
+            monkeypatch.delenv(name, raising=False)
+    for error in ("HTTP 404 not found", "HTTP 401 unauthorized",
+                  "HTTP 500 something else entirely"):
+        remedy = health._remedy_for(error, "m", "openai_compatible")
+        assert "Render" not in remedy and "Railway" not in remedy, (
+            f"a host is hardcoded into the remedy for {error!r}: {remedy}")
+
+
+def test_a_key_that_was_never_sent_is_not_a_key_that_was_rejected():
+    """The live error. OpenRouter said "Missing Authentication header" — it
+    received no key at all. Telling the operator their key was rejected
+    sends them to check a value that does not exist."""
+    missing = health._remedy_for(
+        'HTTP 401 from openrouter — {"error":{"message":"Missing Authentication '
+        'header","code":401}}', "deepseek/deepseek-v4-flash-0731", "openai_compatible")
+    assert "not set" in missing, "an unset variable is reported as a bad value"
+    assert "rejected" not in missing.split("which is different")[0], (
+        "the remedy still calls an absent key a rejected one")
+
+    rejected = health._remedy_for("HTTP 401 unauthorized: invalid api key",
+                                  "m", "openai_compatible")
+    assert "rejected" in rejected or "refused" in rejected
+    assert rejected != missing, (
+        "both 401s produce the same advice, so the one distinction that "
+        "changes what the operator does has been lost")
+
+
+def test_the_remedy_names_the_variable_this_backend_actually_reads():
+    """LLM_API_KEY is never read on the Anthropic path. Naming it there
+    sends someone to set a variable with no effect, and the next run fails
+    identically — which reads as the advice being wrong."""
+    assert "ANTHROPIC_API_KEY" in health._remedy_for(
+        "HTTP 401 unauthorized", "m", "anthropic")
+    assert "LLM_API_KEY" in health._remedy_for(
+        "HTTP 401 unauthorized", "m", "openai_compatible")
