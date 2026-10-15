@@ -16,8 +16,9 @@ def _no_keyless_network(monkeypatch):
     # These tests assert SocialCrawl/mock connector planning. GDELT/Wayback are
     # default-on in production but would add tasks and make real network calls,
     # so keep this module hermetic by turning them off.
-    for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
-                 "enable_google_news", "enable_reddit", "enable_youtube"):
+    # Discovered, not listed — see conftest.source_flags().
+    from engine.tests.conftest import source_flags
+    for flag in source_flags():
         monkeypatch.setattr(settings, flag, False, raising=False)
 
 

@@ -67,3 +67,45 @@ def db_session():
             conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
             conn.commit()
         engine.dispose()
+
+
+#: Settings flags that turn a SOURCE on, as opposed to an analysis stage.
+#:
+#: Discovered rather than listed. Six test files each kept their own copy of
+#: this list, so adding the Kenya Gazette and Kenya Law connectors left those
+#: two sources running in tests that believed they had disabled everything —
+#: and the symptom was not "a new source ran". It was `ingestion did not run`
+#: in four end-to-end tests, because a non-empty task list suppressed the
+#: mock-fixture fallback those tests depend on, three files away from
+#: anything mentioning Kenya.
+#:
+#: A hand-maintained list of everything is a promise to update six files
+#: every time one file gains a feature, and the failure it produces points
+#: anywhere but at the change that caused it.
+_NON_SOURCE_FLAGS = frozenset({
+    "enable_verification", "enable_resolution", "enable_investigator",
+    "enable_article_text", "enable_scrapling", "enable_scrapling_stealth",
+})
+
+
+def source_flags() -> set[str]:
+    """Every `enable_*` setting that plans ingestion tasks."""
+    from engine.config import settings
+
+    return {name for name in dir(settings)
+            if name.startswith("enable_") and name not in _NON_SOURCE_FLAGS}
+
+
+@pytest.fixture
+def no_live_sources(monkeypatch):
+    """Turn every real source off, leaving the mock fixtures.
+
+    The fixture form, so a test can ask for it by name instead of copying
+    the loop again.
+    """
+    from engine.config import settings
+
+    for flag in source_flags():
+        monkeypatch.setattr(settings, flag, False, raising=False)
+    monkeypatch.setattr(settings, "socialcrawl_api_key", "", raising=False)
+    monkeypatch.setattr(settings, "newsapi_key", "", raising=False)

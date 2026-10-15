@@ -71,8 +71,9 @@ def patch_pipeline_dependencies(monkeypatch):
     monkeypatch.setattr(config_settings, "newsapi_key", "")
     # Keep the suite hermetic: the keyless free sources (GDELT/Wayback) are
     # default-on in production, but tests must not make real network calls.
-    for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
-                 "enable_google_news", "enable_reddit", "enable_youtube"):
+    # Discovered, not listed — see conftest.source_flags().
+    from engine.tests.conftest import source_flags
+    for flag in source_flags():
         monkeypatch.setattr(config_settings, flag, False, raising=False)
     monkeypatch.setattr(llm, "call_json", fake_call_json)
     monkeypatch.setattr(sentiment_module, "local_sentiment", fake_local_sentiment)

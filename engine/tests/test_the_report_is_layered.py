@@ -219,3 +219,25 @@ def test_the_printed_file_still_contains_the_folded_sections(tmp_path):
         assert inside in text, (
             f"{inside!r} is inside a folded section and did not reach the "
             "printed file — layering is hiding content from the PDF")
+
+
+def test_a_moment_can_actually_be_hovered():
+    """"I'm trying to hover. Nothing is fucking happening."
+
+    The handler was wired correctly the whole time. The dot is r=6 — twelve
+    units wide — and with five moments across a 700-unit plot they sit 175
+    apart, so the reader had to land inside 12 of 175. A 7% chance of
+    hitting one by accident is not a control.
+
+    Each point now owns the vertical band reaching halfway to its
+    neighbours. The band must be `fill:transparent`, not `fill:none`: none
+    is not painted and receives no pointer events, which would reproduce
+    the original bug invisibly.
+    """
+    assert "tl-hit" in PAGE, "the moments have no hit target beyond the dot"
+    assert "bandFor" in PAGE, "nothing computes the band between neighbours"
+    css = PAGE[PAGE.index("#zenith .tl-hit"):][:120]
+    assert "fill:transparent" in css, (
+        "the hit band uses a fill that is not painted, so it takes no "
+        "pointer events and the dot is still the only target")
+    assert "fill:none" not in css

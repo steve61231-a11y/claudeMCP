@@ -65,10 +65,9 @@ def subject(db_session):
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
     """No network: this is about connection lifetime, not collectors."""
-    for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
-                 "enable_google_news", "enable_reddit", "enable_youtube",
-                 "enable_discovery", "enable_agentreach",
-                 "enable_facebook_scraper", "enable_twscrape", "enable_scweet"):
+    # Discovered, not listed — see conftest.source_flags().
+    from engine.tests.conftest import source_flags
+    for flag in source_flags():
         monkeypatch.setattr(settings, flag, False, raising=False)
     monkeypatch.setattr(settings, "socialcrawl_api_key", "")
     monkeypatch.setattr(settings, "newsapi_key", "")

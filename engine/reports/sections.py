@@ -13,8 +13,9 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports import (analysts, citations, grounding, protected_terms,
-                            style_check, triangulation)
+from engine.reports import (analysts, citations, dates, grounding,
+                            prose, protected_terms, style_check,
+                            triangulation)
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -35,7 +36,10 @@ def _context_blob(
     return json.dumps(
         {
             "politician": politician_name,
-            "window": f"{window_start.date()} to {window_end.date()}",
+            # "During the 2026-09-15 to 2026-10-15 window" opened the
+            # executive brief of a live report. The model used what it was
+            # handed, and what it was handed was a timestamp column.
+            "window": dates.window(window_start, window_end),
             "sentiment": sentiment_breakdown,
             "volume": {
                 "total_mentions": volume_trends["total_mentions"],
@@ -478,6 +482,10 @@ def enrich_report_payload(
         # shipping it with a footnote. Every removal is declared — see
         # protected_terms for why that keeps the founding rule intact.
         linked["protected_terms"] = protected_terms.redact(linked, mentions or [])
+        # And the backstop: a model told the window in words still quotes
+        # "2026-10-03" out of a headline it just read. Runs over every prose
+        # field, skips urls, refs and ids.
+        prose.map_prose(linked, dates.britishise)
         # House style, checked rather than merely instructed. This ran on the
         # issue map and never on the Search report, over three hand-named
         # fields — so the executive brief, the single most-read paragraph in

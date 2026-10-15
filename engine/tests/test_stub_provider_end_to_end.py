@@ -33,8 +33,9 @@ def _stub_pipeline(monkeypatch):
     monkeypatch.setattr(config_settings, "llm_provider", "stub")
     monkeypatch.setattr(config_settings, "socialcrawl_api_key", "")
     monkeypatch.setattr(config_settings, "newsapi_key", "")
-    for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
-                 "enable_google_news", "enable_reddit", "enable_youtube"):
+    # Discovered, not listed — see conftest.source_flags().
+    from engine.tests.conftest import source_flags
+    for flag in source_flags():
         monkeypatch.setattr(config_settings, flag, False, raising=False)
     monkeypatch.setattr(sentiment_module, "local_sentiment", fake_local_sentiment)
     monkeypatch.setattr(narratives_module, "embed_texts", fake_embed_texts)

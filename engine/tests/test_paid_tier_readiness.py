@@ -30,8 +30,10 @@ class _Fake:
 @pytest.fixture(autouse=True)
 def _quiet(monkeypatch):
     _Fake.calls = []
-    for flag in ("enable_gdelt", "enable_google_news", "enable_reddit", "enable_youtube"):
-        monkeypatch.setattr(issue_map.settings, flag, False)
+    # Discovered, not listed — see conftest.source_flags().
+    from engine.tests.conftest import source_flags
+    for flag in source_flags():
+        monkeypatch.setattr(issue_map.settings, flag, False, raising=False)
     monkeypatch.setattr("engine.ingestion.article_text.enrich_with_article_text",
                         lambda mentions: None)
     monkeypatch.setattr("engine.ingestion.socialcrawl_connector.SocialCrawlConnector", _Fake)

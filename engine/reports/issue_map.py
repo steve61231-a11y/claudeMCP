@@ -25,7 +25,7 @@ from engine.config import settings
 from engine.ingestion import http
 from engine.ingestion.base import IngestedMention
 from engine.ingestion.gdelt_connector import GdeltConnector
-from engine.reports import citations, decompose, grounding, issue_floor, issue_graph, protected_terms, relevance, style_check, triangulation
+from engine.reports import (citations, dates, decompose, grounding, issue_floor, issue_graph, prose, protected_terms, relevance, style_check, triangulation)
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _GDELT_MAX = 250
@@ -542,6 +542,7 @@ def build_issue_map(
     # every change in this product. An invented ethnic attribution is no
     # less defamatory for appearing on the intersection page.
     publish("protected_terms", protected_terms.redact(analysis, mentions))
+    prose.map_prose(analysis, dates.britishise)
 
     sample = [
         {

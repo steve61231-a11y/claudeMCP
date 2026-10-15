@@ -151,6 +151,14 @@
   #zenith .tl-strip{position:relative;padding:26px 14px 8px;overflow-x:auto;overflow-y:visible}
   #zenith .tl-strip svg{display:block;overflow:visible}
   #zenith .tl-strip-node{cursor:pointer}
+  /* Painted, therefore hit-testable. `fill:none` is not painted and takes
+     no pointer events, which is the bug this element exists to fix. */
+  #zenith .tl-hit{fill:transparent}
+  #zenith .tl-guide{stroke:var(--sky2);stroke-width:1;opacity:0;
+    transition:opacity .12s;pointer-events:none}
+  #zenith .tl-strip-node:hover .tl-guide,
+  #zenith .tl-strip-node:focus .tl-guide,
+  #zenith .tl-strip-node.sel .tl-guide{opacity:.45}
   #zenith .tl-strip-node circle{transition:r .15s,fill .15s}
   #zenith .tl-strip-node:hover circle,#zenith .tl-strip-node.sel circle{r:9}
   #zenith .tl-tip{position:absolute;z-index:20;max-width:260px;background:var(--panel2,#111);
@@ -1442,10 +1450,37 @@
       if(onSelect)onSelect(p.idx);
     };
 
+    // Hit bands, so a point can actually be hovered.
+    //
+    // The dot is r=6 — twelve units wide — and with five moments across a
+    // 700-unit plot they sit 175 apart. The reader had to land inside 12 of
+    // 175, which is a 7% chance of hitting one by accident, and the note
+    // that came back was "I'm trying to hover. Nothing is fucking
+    // happening." The handler was wired correctly the whole time; the
+    // target was the bug.
+    //
+    // So each point owns the vertical band reaching halfway to its
+    // neighbours, which is how every chart that works does it. The band is
+    // `fill:transparent` and NOT `fill:none`: none is not painted and
+    // receives no pointer events, which would reproduce the bug invisibly.
+    const xsSorted=points.map(xOf).sort((a,b)=>a-b);
+    const bandFor=x=>{
+      const i=xsSorted.indexOf(x);
+      const prev=i>0?xsSorted[i-1]:null, next=i<xsSorted.length-1?xsSorted[i+1]:null;
+      return [prev==null?0:(prev+x)/2, next==null?W:(x+next)/2];
+    };
+
     points.forEach(p=>{
       const x=xOf(p),tc=p.t&&p.t.corroboration;
       const g=mk('g',{class:'tl-strip-node','data-idx':p.idx,tabindex:'0',
                       role:'button'});
+      const [bl,br]=bandFor(x);
+      g.appendChild(mk('rect',{x:bl,y:0,width:Math.max(12,br-bl),height:H,
+                               class:'tl-hit'}));
+      // A guide the eye can follow to the dot it is about to read. Drawn
+      // inside the node so it appears and vanishes with the hover, with no
+      // second listener to keep in step.
+      g.appendChild(mk('line',{x1:x,x2:x,y1:8,y2:base,class:'tl-guide'}));
       g.setAttribute('aria-label',
         `${whenLabel(p.t)}: `
         +String((p.t&&p.t.event)||'').slice(0,80));

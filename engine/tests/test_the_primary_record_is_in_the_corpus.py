@@ -171,3 +171,31 @@ def test_the_long_budget_covers_them():
 
     assert _mention_budget("gazette") == _mention_budget("article")
     assert _mention_budget("judgment") == _mention_budget("article")
+
+
+def test_no_test_hand_lists_the_source_flags():
+    """Adding these two connectors broke four end-to-end tests in files that
+    never mention Kenya.
+
+    Six test files each kept their own copy of "every source flag", so two
+    new sources stayed ON in tests that believed they had disabled
+    everything. The symptom was not "a new source ran" — it was `ingestion
+    did not run`, because a non-empty task list suppresses the mock-fixture
+    fallback those tests depend on. The failure pointed three files away
+    from the change that caused it.
+
+    A hand-maintained list of everything is a promise to update six files
+    whenever one file gains a feature. `conftest.source_flags()` discovers
+    them instead, and this keeps it that way.
+    """
+    import re
+    from pathlib import Path
+
+    tests = Path(__file__).resolve().parent
+    pattern = re.compile(r'for flag in \(\s*"enable_')
+    offenders = [p.name for p in tests.glob("test_*.py")
+                 if pattern.search(p.read_text())]
+    assert not offenders, (
+        "these files hand-list the source flags and will silently stop "
+        f"disabling the next connector added: {offenders}. Use "
+        "conftest.source_flags().")

@@ -203,10 +203,9 @@ def test_the_loop_says_what_it_did():
 
 @pytest.fixture
 def only_google_news(monkeypatch):
-    for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
-                 "enable_reddit", "enable_youtube", "enable_discovery",
-                 "enable_agentreach", "enable_facebook_scraper",
-                 "enable_twscrape", "enable_scweet"):
+    # Discovered, not listed — see conftest.source_flags().
+    from engine.tests.conftest import source_flags
+    for flag in source_flags():
         monkeypatch.setattr(settings, flag, False, raising=False)
     monkeypatch.setattr(settings, "enable_google_news", True, raising=False)
     monkeypatch.setattr(settings, "socialcrawl_api_key", "")

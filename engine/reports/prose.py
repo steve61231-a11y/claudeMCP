@@ -132,3 +132,31 @@ def short_label(text: str, limit: int = LABEL_CHARS) -> str:
         return body.rstrip(".")
     cut = body[:limit].rsplit(" ", 1)[0]
     return (cut or body[:limit]).rstrip(",;:- ") + "…"
+
+
+#: Below this a string is a label, an id or an enum value, not analysis.
+PROSE_CHARS = 40
+
+
+def map_prose(payload, fn):
+    """Apply `fn` to every prose string in a report, in place.
+
+    Walks rather than naming fields, for the reason `citations.py` records:
+    a new analyst is added, nobody updates the list, and the one page that
+    needed the treatment is the page that does not get it.
+    """
+    if isinstance(payload, dict):
+        for key, value in list(payload.items()):
+            if isinstance(value, str):
+                if len(value) >= PROSE_CHARS:
+                    payload[key] = fn(value)
+            else:
+                map_prose(value, fn)
+    elif isinstance(payload, list):
+        for index, value in enumerate(payload):
+            if isinstance(value, str):
+                if len(value) >= PROSE_CHARS:
+                    payload[index] = fn(value)
+            else:
+                map_prose(value, fn)
+    return payload
