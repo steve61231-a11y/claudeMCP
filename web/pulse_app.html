@@ -593,6 +593,25 @@
     return `<span title="${fmt(count)} of ${fmt(of)} ${esc(noun)}">${p}%</span>`;
   }
 
+  /** The same figure for a slot that escapes its input.
+
+      `share()` returns MARKUP — a span carrying the raw counts as a tooltip.
+      Put it anywhere that escapes, and the reader sees
+      `<span title="69 of 699 mentions">10%</span> of mentions` on the page,
+      which is what a storyline card showed in production.
+
+      The tooltip cannot survive escaping, so the counts come inline instead
+      of being hidden behind a hover — which is the better trade in a card
+      subtitle anyway, where there is nothing to hover. */
+  function sharePlain(n, of, noun){
+    noun = noun || 'mentions';
+    if(n==null) return '—';
+    const count = Number(n);
+    if(!of || !Number(of) || Number(of) <= 0) return `${fmt(count)} ${noun}`;
+    const p = Math.round(100 * count / Number(of));
+    return `${p}% (${fmt(count)} of ${fmt(of)} ${noun})`;
+  }
+
   /** "2025-08-01 – 2026-07-13" -> "1st Aug 2025 – 13th Jul 2026".
       The window is assembled server-side as a single string, so it is
       reformatted here rather than giving the API a second date format to
@@ -3367,7 +3386,7 @@
       // needs to decide whether to open it.
       const opening=String(d.how_it_unfolded||'').split(/(?<=[.!?])\s/)[0]||'';
       const c=deepCard(`Storyline — ${d.label}`,
-        (d.mention_count?`${share(d.mention_count,CORPUS_TOTAL)} of mentions · `:'')
+        (d.mention_count?`${sharePlain(d.mention_count,CORPUS_TOTAL)} · `:'')
         +(opening.length>150?opening.slice(0,150)+'…':opening));
       c.appendChild(el('div','',
         `<p style="font-size:14.5px;margin:0">${linkifyRefs(esc(d.how_it_unfolded||''),d.how_it_unfolded_citations)}</p>`
@@ -3405,7 +3424,7 @@
   function renderSinceLastReport(d){
     if(!d)return null;
     const shift=d.sentiment_shift||{};
-    const c=deepCard('Since your last report',`Compared with ${esc(ukDate(d.previous_report_at))}`);
+    const c=deepCard('Since your last report',`Compared with ${ukDate(d.previous_report_at)}`);
     const g=el('div','grid');g.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';g.style.marginTop='12px';
     [['Positive',shift.positive,'pts'],['Negative',shift.negative,'pts'],['Mentions',d.mention_volume_change,'']]
       .forEach(([label,val,suffix])=>{

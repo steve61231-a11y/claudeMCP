@@ -381,6 +381,11 @@ def label_clusters(clusters: list[tuple[int, list[str]]], _depth: int = 0,
     return out
 
 
+#: Below this, the halves are too small for their difference to mean
+#: anything. Four mentions split 1/3 is not a 200% surge.
+MIN_MENTIONS_FOR_GROWTH = 8
+
+
 def _evidence_for(cluster_mentions: list[dict], limit: int = 8) -> list[dict]:
     """The receipts for a narrative: the mentions a reader can go and check.
 
@@ -454,13 +459,33 @@ def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None
             m["engagement"].get("likes", 0) + m["engagement"].get("shares", 0) * 2 + m["engagement"].get("comments", 0)
             for m in cluster_mentions_
         )
+        # Engagement is zero for news articles, and news articles are most of
+        # this corpus — so `strength_score` IS the mention count, the same
+        # number reported twice under two names. A model handed both wrote
+        # "(69 mentions, strength 69, strong growth 69%)": three measurements
+        # that were one, in the executive brief of a report meant to be sold.
+        # Say which it is, so a consumer can decline to print a tautology.
         strength_score = len(cluster_mentions_) * 1.0 + engagement_total * 0.01
+        strength_basis = ("mentions_and_engagement" if engagement_total
+                          else "mentions_only")
 
         timestamps = sorted(m["posted_at"] for m in cluster_mentions_)
         midpoint = timestamps[len(timestamps) // 2]
         first_half = sum(1 for t in timestamps if t < midpoint)
         second_half = len(timestamps) - first_half
-        growth_rate = (second_half - first_half) / max(first_half, 1)
+        # `max(first_half, 1)` turned "there was no earlier half" into a
+        # division by one, so a storyline that began inside the window came
+        # out as a growth rate equal to its own mention count — 69, printed
+        # as "69%". A thing that did not exist before is NEW; it has no
+        # growth rate, and inventing one is the same sin as a progress bar
+        # at 50% for anything in progress.
+        if first_half == 0:
+            growth_rate, growth_basis = None, "no_earlier_half"
+        elif len(timestamps) < MIN_MENTIONS_FOR_GROWTH:
+            growth_rate, growth_basis = None, "too_few_mentions"
+        else:
+            growth_rate = (second_half - first_half) / first_half
+            growth_basis = "measured"
 
         results.append(
             {
@@ -472,7 +497,12 @@ def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None
                 # page, so a reader can open it instead of taking it on faith.
                 "evidence": _evidence_for(cluster_mentions_),
                 "strength_score": strength_score,
+                # Whether that score carries anything the mention count does
+                # not. Where it does not, it must not be printed as a second
+                # finding.
+                "strength_basis": strength_basis,
                 "growth_rate": growth_rate,
+                "growth_basis": growth_basis,
                 "window_start": min(timestamps),
                 "window_end": max(timestamps),
             }

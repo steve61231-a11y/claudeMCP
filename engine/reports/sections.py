@@ -13,7 +13,8 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime
 
 from engine import llm, stages
-from engine.reports import analysts, citations, grounding, style_check, triangulation
+from engine.reports import (analysts, citations, grounding, protected_terms,
+                            style_check, triangulation)
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -470,6 +471,13 @@ def enrich_report_payload(
         # never was, so an analyst could write any sentence into the brief and
         # nothing mechanical looked at it.
         linked["grounding"] = grounding.check(linked, mentions or [])
+        # Identity the sources never raised. Runs BEFORE the grounding
+        # report is read by anyone, and unlike it, this one edits: a
+        # sentence attributing a Kenyan political outcome to a religion or
+        # an ethnic group the corpus never mentioned is not improved by
+        # shipping it with a footnote. Every removal is declared — see
+        # protected_terms for why that keeps the founding rule intact.
+        linked["protected_terms"] = protected_terms.redact(linked, mentions or [])
         # House style, checked rather than merely instructed. This ran on the
         # issue map and never on the Search report, over three hand-named
         # fields — so the executive brief, the single most-read paragraph in

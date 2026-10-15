@@ -172,6 +172,40 @@ authentication-shaped: a missing key does not explain a 404 for a retired
 model, and letting it try replaces a correct diagnosis with a plausible one,
 which is worse than none because it reads as an answer.
 
+**The analyst may not introduce identity the sources never raised.** A live
+report on a Kenyan politician came back referring to Jews. Nothing in the
+corpus did — the model reached for a conspiracy frame that exists in its
+training data and not in the evidence, and wrote it into a document meant
+for a paying client. Every other failure here costs time; this one is
+defamatory and one occurrence ends the product. The fix is NOT a forbidden
+word list: Kenyan political reporting legitimately concerns ethnic
+coalitions and religious communities, and a report that cannot say "Luo"
+cannot describe Kenyan politics. It is `grounding.py`'s rule pointed at
+identity — `reports/protected_terms.py` removes a sentence whose ethnic,
+religious, racial or other protected term appears nowhere in the corpus, and
+leaves untouched every term the sources themselves used. It is the one guard
+here that rewrites rather than reports, because a sentence blaming a
+religion is not improved by a footnote; the founding rule is kept by
+declaring every removal with its sentence and its trigger. Both products run
+it. With no corpus it refuses to judge rather than cut everything.
+
+**A number must not be reported twice under two names.** `strength_score` is
+mentions plus engagement×0.01, and engagement is zero across a news corpus —
+so it IS the mention count. `growth_rate` divided by `max(first_half, 1)`,
+so a storyline that began inside the window came out as a rate equal to its
+own mention count. Handed all three, a model wrote "(69 mentions, strength
+69, strong growth 69%)" into an executive brief: one number wearing three
+hats, each read by a client as separate corroboration. Both now carry a
+basis (`strength_basis`, `growth_basis`) and are withheld rather than
+zeroed where they measure nothing — a zero reads as "flat", which is a
+measurement nobody made. Same rule as `actions.py`'s `movement_basis`.
+
+**`share()` returns markup, so a slot that escapes shows it.** A storyline
+card rendered `<span title="69 of 699 mentions">10%</span> of mentions` to
+the reader, because `deepCard` escapes its subtitle. `sharePlain()` is the
+twin for text slots; it inlines the counts instead of hiding them in a
+tooltip nobody can hover in a card subtitle.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

@@ -489,8 +489,21 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "narratives": [
             {
                 "label": n["label"],
-                "strength": n["strength_score"],
-                "growth": n["growth_rate"],
+                # Withheld where they carry nothing the mention count does
+                # not. Engagement is zero across a news corpus, so `strength`
+                # IS the mention count there, and a storyline that began
+                # inside the window has no growth rate to report. Handed all
+                # three, a model wrote "(69 mentions, strength 69, strong
+                # growth 69%)" into an executive brief — one number wearing
+                # three hats, each read by a client as separate corroboration.
+                #
+                # Absent rather than zero: a zero would be read as "flat",
+                # which is a measurement nobody made.
+                **({"strength": n["strength_score"]}
+                   if n.get("strength_basis") == "mentions_and_engagement" else {}),
+                **({"growth": n["growth_rate"]}
+                   if n.get("growth_basis") == "measured" else {}),
+                "growth_basis": n.get("growth_basis"),
                 "mentions": n["mention_count"],
                 "description": n["description"],
                 "evidence": n.get("evidence", []),
