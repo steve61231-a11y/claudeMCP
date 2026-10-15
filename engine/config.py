@@ -164,6 +164,17 @@ class Settings(BaseSettings):
     # are picked up on the next incremental run. Raise for deeper single-run
     # analysis at the cost of longer report times.
     max_llm_mentions: int = 300
+    #: How many mentions the narrative clusterer reads, newest first.
+    #:
+    #: The corpus compounds by design — that is the product — and narrative
+    #: building embeds every mention it is given and then runs HDBSCAN over
+    #: the result. Both are CPU-bound and superlinear, so this stage grows on
+    #: every run while nothing bounds it: a live run sat here for an hour.
+    #:
+    #: A deadline cannot help, because neither call can be interrupted
+    #: part-way. The input is what has to be bounded. Newest-first, because
+    #: a report about the last month should cluster the last month.
+    narrative_corpus_cap: int = 1200
     # Recurring background ingestion for every tracked politician, so mention
     # history accumulates between report requests instead of each report only
     # seeing what one fetch returns. 0 disables (default: off, since each

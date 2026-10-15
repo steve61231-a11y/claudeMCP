@@ -330,6 +330,20 @@ means the provider *served* us. Counting those toward the circuit breaker is
 how one under-budgeted call took down an entire run. See
 `engine/tests/test_breaker_blames_the_right_thing.py`.
 
+**A compounding corpus makes a CPU stage slower every run, and a deadline
+cannot save it.** A live run read 819 new mentions and then sat for an hour
+against a 1800s ceiling. Two different kinds of unbounded. First,
+`out_of_time()` existed and was called at three points, ALL of them after
+the long middle — the ceiling was present and never asked, so narratives and
+the network ran unwatched; both are guarded now and degrade (empty set,
+empty snapshot) rather than skipping the report. Second, `build_narratives`
+embeds every mention it is handed and runs HDBSCAN over the result: both are
+CPU-bound, superlinear, and uninterruptible, so a clock would only notice
+afterwards. The INPUT is what has to be bounded — `narrative_corpus_cap`,
+newest first, because a report about the last month should cluster the last
+month — and the cap is disclosed in `narrative_corpus` when it bites and
+silent when it does not, because a note on every report is noise.
+
 **Every stage needs a deadline.** `try/except` does not bound a call that never
 returns — there is no exception to catch. The analyst fan-out, the tail after
 it, and the whole run each have a ceiling now. Without one, a report hangs

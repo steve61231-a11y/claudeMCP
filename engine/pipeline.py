@@ -198,6 +198,7 @@ def run_analysis(
     # live run reached twelve of fifteen sections and then stayed there: not
     # failing, just never coming back. A report that stops early and says so
     # beats one that never arrives.
+    import datetime as _dt
     import time as _time
 
     run_ends_at = _time.monotonic() + max(300, settings.report_deadline_seconds)
@@ -469,7 +470,42 @@ def run_analysis(
     # it is excluded from any label derived from cluster text.
     subject_terms = {w.lower() for w in (politician.name or "").split() if len(w) > 2}
     subject_terms.update(w.lower() for a in (politician.aliases or []) for w in str(a).split() if len(w) > 2)
-    built_narratives = narrative_module.build_narratives(stored_mentions, subject_terms=subject_terms)
+    # The run ceiling, consulted BEFORE the long middle — not only after it.
+    #
+    # `out_of_time` existed and was called at three points, all of them past
+    # this one. A live run spent an hour here and the ceiling never got a
+    # vote: narrative building embeds the WHOLE stored corpus, and the
+    # corpus compounds by design, so this stage grows every run while
+    # nothing bounds it. That is this repository's own rule — every stage
+    # needs a deadline — with the deadline present and unasked.
+    #
+    # Degrades rather than skips: an empty narrative set is a thing the rest
+    # of the pipeline already handles, and a report delivered without
+    # storylines beats one that never arrives. The ledger says which.
+    if out_of_time("narratives"):
+        built_narratives = []
+        narrative_corpus_note = None
+    else:
+        # Bounded INPUT, not a deadline. embed_texts and HDBSCAN cannot be
+        # interrupted part-way, so the only way to stop this growing with
+        # the corpus is to cap what it reads — newest first, because a
+        # report about the last month should cluster the last month.
+        _cap = max(50, settings.narrative_corpus_cap)
+        _ordered = sorted(stored_mentions,
+                          key=lambda m: m.get("posted_at") or _dt.datetime.min,
+                          reverse=True)
+        _for_clustering = _ordered[:_cap]
+        narrative_corpus_note = ({
+            "clustered": len(_for_clustering),
+            "available": len(stored_mentions),
+            "note": (f"Storylines were built from the most recent "
+                     f"{len(_for_clustering)} of {len(stored_mentions)} stored "
+                     "mentions. Clustering reads every item it is given and "
+                     "the stored corpus grows with every run, so it is capped "
+                     "to keep a report arriving at all."),
+        } if len(_for_clustering) < len(stored_mentions) else None)
+        built_narratives = narrative_module.build_narratives(
+            _for_clustering, subject_terms=subject_terms)
     for n in built_narratives:
         narrative_row = Narrative(politician_id=politician.id, label=n["label"], description=n["description"])
         db.add(narrative_row)
@@ -505,10 +541,13 @@ def run_analysis(
     # provisioned in the Render deployment (and is stubbed in tests/demo), so
     # a Neo4j-only snapshot silently renders an empty map in production.
     # Neo4j results, when present, only fill in anything Postgres lacks.
-    network_snapshot = {
-        **graph.get_network_snapshot(politician.id),
-        **_network_snapshot_from_db(db, politician, politician_entity),
-    }
+    if out_of_time("network_snapshot"):
+        network_snapshot = {}
+    else:
+        network_snapshot = {
+            **graph.get_network_snapshot(politician.id),
+            **_network_snapshot_from_db(db, politician, politician_entity),
+        }
 
     payload = generate_report_payload(
         politician.name,
@@ -611,6 +650,11 @@ def run_analysis(
 
     # What the disambiguation gate did. Filtering that nobody can see is
     # indistinguishable from data loss, so the counts travel with the report.
+    # Say it out loud when the clusterer did not read everything. A reader
+    # comparing storylines across runs must know the window they cover.
+    if narrative_corpus_note:
+        payload["narrative_corpus"] = narrative_corpus_note
+        publish("narrative_corpus", narrative_corpus_note)
     payload["evidence_gate"] = gate_stats
     publish("evidence_gate", gate_stats)
 
