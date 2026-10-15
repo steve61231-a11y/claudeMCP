@@ -231,6 +231,11 @@ def _ensure_politician(db, name: str, subject_type: str = "politician") -> Polit
     return politician
 
 
+#: How many source items the evidence section shows. Half of it is
+#: reserved for the primary record, which has no engagement to compete
+#: with and would otherwise never appear.
+MENTION_SAMPLE = 10
+
 def _extract_url(raw_payload: dict) -> str | None:
     """Best-effort link extraction — SocialCrawl's URL field location varies by
     surface (flat on brand-mentions, nested under `post` on TikTok/YouTube)."""
@@ -337,11 +342,40 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
                 "author": mention.author_handle,
                 "posted_at": mention.posted_at.isoformat() if mention.posted_at else None,
                 "url": url,
+                # What KIND of document this is, so the page can say so. A
+                # Gazette notice and a tweet are both "a mention" to this
+                # loop and are not the same kind of evidence to a reader.
+                "source_type": mention.source_type,
+                "record": (mention.raw_payload or {}).get("record"),
                 "_score": score,
+                "_primary": (mention.raw_payload or {}).get("record") == "primary",
             }
         )
     scored_mentions.sort(key=lambda m: m["_score"], reverse=True)
-    top_mentions = [{k: v for k, v in m.items() if k != "_score"} for m in scored_mentions[:10]]
+
+    # Engagement ranks popularity. This product sells evidence.
+    #
+    # A Gazette notice has no likes, no views and no shares, because the
+    # state does not post for engagement — so sorting on engagement alone
+    # put the most citable document in the corpus last and cut it from the
+    # top ten. The primary record was collected, stored, and then
+    # structurally excluded from the one section a client opens to check
+    # the work.
+    #
+    # Not fixed by inventing a score for it: a fabricated engagement figure
+    # is the kind of number this codebase removes. Fixed by reserving room,
+    # the same way `learning.py` reserves a share of every budget for
+    # questions never asked — a guaranteed slot cannot be out-competed by
+    # the category that is always plentiful.
+    primary = [m for m in scored_mentions if m["_primary"]]
+    rest = [m for m in scored_mentions if not m["_primary"]]
+    reserved = min(len(primary), MENTION_SAMPLE // 2)
+    chosen = primary[:reserved] + rest[:MENTION_SAMPLE - reserved]
+    # Primary record first within the sample: a reader scanning it should
+    # meet the state's own document before anyone's commentary on it.
+    chosen.sort(key=lambda m: (m["_primary"], m["_score"]), reverse=True)
+    top_mentions = [{k: v for k, v in m.items() if not k.startswith("_")}
+                    for m in chosen]
 
     # Grassroots highlights: the most-engaged citizen comments, verbatim.
     db = SessionLocal()

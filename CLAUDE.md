@@ -230,6 +230,21 @@ zero rows, and a subject with genuinely no record are three different
 findings — "this person has no court record" is a publishable claim and must
 never be produced by a connection error.
 
+**Engagement ranks popularity; this product sells evidence.**
+"Representative mentions" sorted by views plus likes×5, and the state does
+not post for engagement — so a Gazette notice scores zero, sorted last, and
+was cut from the top ten every time. The primary record was collected,
+stored, and then structurally excluded from the one section a client opens
+to check the work. Not fixed by inventing a score for it, which would be
+the kind of fabricated number this codebase removes: half the sample is
+RESERVED for `record == "primary"`, the way `learning.py` reserves a share
+of every budget for questions never asked, and capped at half so it cannot
+flood the sample either. The page marks it — `.mentr.is-primary` and a
+badge naming the kind — because the whole argument for collecting the
+state's own publications is that a reader can tell "a newspaper reported an
+appointment" from "here is the notice that made it", and that argument is
+worth nothing if the two render identically.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

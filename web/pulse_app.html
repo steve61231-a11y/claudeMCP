@@ -91,6 +91,16 @@
   #zenith canvas{display:block;width:100%;border-radius:12px;touch-action:none;cursor:grab}
   #zenith canvas:active{cursor:grabbing}
   #zenith .mentr{padding:12px 0;border-top:1px solid var(--line2)}
+  /* The state's own document, told apart from someone's report of it.
+     Deliberately a quiet, authoritative treatment rather than a loud one:
+     this is the part of the page that should read as a record, not as a
+     highlight. */
+  #zenith .mentr.is-primary{border-left:3px solid var(--sky2);padding-left:11px;
+    background:linear-gradient(90deg,rgba(125,211,252,.07),transparent 55%)}
+  #zenith .rec-badge{display:inline-block;font-size:9.5px;letter-spacing:.1em;
+    text-transform:uppercase;font-weight:700;color:var(--bg,#0a0e14);
+    background:var(--sky2);border-radius:3px;padding:2px 6px;
+    vertical-align:middle;margin-right:2px}
   #zenith .mentr:first-child{border-top:none}
   /* Verbatim source quotes — the evidence under an analyst claim. Rendered so a
      reader can tell at a glance what is the analyst's wording and what is the
@@ -1783,8 +1793,19 @@
       const when=item.posted_at?ukDate(item.posted_at):'';
       const tone=(item.sentiment||'').toLowerCase();
       const pill=tone==='positive'?'pos':tone==='negative'?'neg':tone?'sky':'';
+      // The primary record, marked as such.
+      //
+      // A Gazette notice and a tweet rendered identically, so the most
+      // citable document in the corpus looked exactly like the least. The
+      // whole argument for collecting the state's own publications is that
+      // a reader can tell the difference between "a newspaper reported an
+      // appointment" and "here is the notice that made it" — and that
+      // argument is only worth anything if the page says which is which.
+      const RECORD_KIND={gazette:'Gazette notice',judgment:'Judgment'};
+      const isPrimary=item.record==='primary';
+      const kind=RECORD_KIND[item.source_type]||'Official record';
       const head=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
-          <b style="font-size:13.5px">${esc(item.author||item.platform||'unattributed')}</b>
+          <b style="font-size:13.5px">${isPrimary?`<span class="rec-badge">${esc(kind)}</span> `:''}${esc(item.author||item.platform||'unattributed')}</b>
           <span class="muted" style="font-size:12px">${esc(item.platform||'')}${when?' · '+esc(when):''}${item.engagement?' · '+fmt(item.engagement)+' engagements':''}${tone?' · ':''}${tone?`<span class="pill ${pill}">${esc(tone)}</span>`:''}</span>
         </div>`;
       const quote=item.excerpt?`<div style="font-size:13px;margin-top:5px;white-space:pre-wrap">${esc(item.excerpt)}</div>`:'';
@@ -1792,7 +1813,7 @@
       // that looks live is worse than no link: it reads as a citation.
       const link=item.url?`<div style="margin-top:6px"><a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" class="src-link">open the original ↗</a></div>`
         :`<div class="muted" style="font-size:12px;margin-top:6px">no link captured for this item</div>`;
-      body.appendChild(el('div','mentr',head+quote+link));
+      body.appendChild(el('div','mentr'+(isPrimary?' is-primary':''),head+quote+link));
     });
     box.appendChild(btn);box.appendChild(body);
     return box;
