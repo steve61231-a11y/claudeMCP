@@ -16,7 +16,7 @@ The rule this must not break is the one the whole product is built on: a
 section that failed must never look like a section with nothing to say. A
 folded section is now a third state, so it has to be distinguishable from
 both. Three things keep that true and are pinned below — every head carries
-its own item count (including "nothing to show"), failures stay as banners
+its own item count (and an empty one says so AND says why), failures stay as banners
 outside the folding mechanism entirely, and the printed file has everything
 open, because paper has no chevrons to click.
 """
@@ -102,7 +102,20 @@ def test_every_folded_head_says_how_much_is_inside():
     assert "labelSections" in PAGE
     body = PAGE[PAGE.index("function labelSections("):]
     body = body[:body.index("\n  }")]
-    assert "nothing to show" in body, "an empty section is indistinguishable when folded"
+    assert "'empty'" in body, "an empty section is indistinguishable when folded"
+    # And it must not merely say "empty" and then open onto a blank panel.
+    # The reader's note was: "you go and drop down and it's like nothing to
+    # see, and you're like, what the fuck". A click that is not worth making
+    # teaches the reader not to make the next one.
+    assert "data-empty" in body, (
+        "an empty section is not marked, so it looks like a closed one "
+        "holding something")
+    assert "sect-empty-note" in body, (
+        "opening an empty section still shows nothing — it must say whether "
+        "there was nothing to report or a stage did not finish")
+    assert "sect-empty-note" in body.split("const rows=")[1].split("count.textContent")[0], (
+        "the note this function appends is counted as content, so the "
+        "section reads '1 item' on the next pass and the note is removed")
 
 
 def test_an_item_count_never_adds_containers_to_their_own_contents():

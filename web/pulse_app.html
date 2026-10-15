@@ -250,8 +250,27 @@
 #zenith .sect-meta{display:flex;gap:8px;align-items:center;flex-shrink:0}
 #zenith .sect-count{font-size:11.5px;color:var(--mut2,#6b7a8d);
   font-variant-numeric:tabular-nums;white-space:nowrap}
-#zenith .sect-chev{font-size:11px;color:var(--sky2);transition:transform .15s}
-#zenith .sect[open] .sect-chev{transform:rotate(180deg)}
+/* A control nobody recognises is not a control.
+   This was an 11px chevron and a grey item count, and the reader's note was
+   "even their drop down is so small that I can't see, sometimes I don't even
+   know it's a drop down". A section that holds the evidence is worthless if
+   the reader never learns it opens. So: a bordered pill, a word that says
+   what clicking does, and a hover that moves. */
+#zenith .sect-chev{display:inline-flex;align-items:center;gap:6px;
+  font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--sky2);border:1px solid rgba(125,211,252,.38);
+  border-radius:999px;padding:4px 10px;background:rgba(125,211,252,.07);
+  transition:background .15s,border-color .15s}
+#zenith .sect-head:hover .sect-chev{background:rgba(125,211,252,.16);
+  border-color:rgba(125,211,252,.7)}
+#zenith .sect-chev .arw{transition:transform .15s;font-size:10px}
+#zenith .sect[open] .sect-chev .arw{transform:rotate(180deg)}
+#zenith .sect-chev .w-close{display:none}
+#zenith .sect[open] .sect-chev .w-open{display:none}
+#zenith .sect[open] .sect-chev .w-close{display:inline}
+/* An empty section must not look like a closed one holding something. */
+#zenith .sect[data-empty] .sect-chev{color:var(--amber);
+  border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.07)}
 #zenith .sect-body{padding:0 16px 14px}
 #zenith .sect:not([open]) .sect-body{display:none}
 
@@ -554,8 +573,24 @@
   /** The attribution line under a quote: "nation.africa · 2026-03-12 ↗".
       An untraceable ref must not render like a traceable one — the same rule
       linkifyRefs follows for an unresolved citation. */
-  function sourceLine(ref, extra){
-    const found = REF_INDEX[ref] || {};
+  function sourceLine(ref, extra, own){
+    // The quote's OWN source first, the index second.
+    //
+    // `_validate_quotes` only keeps a quote whose ref resolved to a real
+    // mention, and it copies that mention's url, platform and author onto
+    // the quote. This function ignored all of it and looked the ref up
+    // again — so a quote that had already been proved traceable, carrying
+    // its link, rendered as "source not traced". Five headlines in a row,
+    // in the section a client reads to check the work.
+    //
+    // A ref is a pointer to the corpus; the quote's own fields are what
+    // the pointer resolved to. Preferring the pointer over the thing it
+    // already resolved to is how a page loses evidence it was handed.
+    // Only fields that are actually present. A plain Object.assign would
+    // let an undefined `url` on the quote clobber a good one from the
+    // index — turning the fix into a second way to lose the link.
+    const found = Object.assign({}, REF_INDEX[ref] || {});
+    ['url','platform','posted_at'].forEach(k=>{ if(own && own[k]) found[k] = own[k]; });
     const outlet = outletOf(found.url) || found.platform || '';
     const when = found.posted_at ? ukDate(found.posted_at) : '';
     const parts = [extra, outlet, when].filter(Boolean).map(esc);
@@ -1629,7 +1664,7 @@
     if(quotes.length){
       box.appendChild(el('div','lbl','In their own words'));
       quotes.slice(0,5).forEach(q=>box.appendChild(el('div','',
-        `<div class="qt">“${esc(q.text)}”<span class="qt-ref">${sourceLine(q.ref,q.stance)}</span></div>`)));
+        `<div class="qt">“${esc(q.text)}”<span class="qt-ref">${sourceLine(q.ref,q.stance,q)}</span></div>`)));
     }
     const o=ev.origin||{};
     if(o.first_seen&&o.first_seen.date)box.appendChild(el('div','',
@@ -3053,7 +3088,7 @@
      they came from. So they render as evidence, not as summary.
      ================================================================= */
 
-  const quoteBlock = q => `<div class="qt">“${esc(q&&q.text||'')}”<span class="qt-ref">${sourceLine(q&&q.ref)}</span></div>`;
+  const quoteBlock = q => `<div class="qt">“${esc(q&&q.text||'')}”<span class="qt-ref">${sourceLine(q&&q.ref,null,q)}</span></div>`;
   const quotesHTML = qs => (qs||[]).map(quoteBlock).join('');
   const handle = h => '@'+esc(String(h||'').replace(/^@/,''));
 
@@ -3079,7 +3114,8 @@
     head.innerHTML=`<span><span class="lbl">${esc(label)}</span>`
       +`${sub?`<span class="sect-sub">${esc(sub)}</span>`:''}</span>`
       +`<span class="sect-meta"><span class="sect-count"></span>`
-      +`<span class="sect-chev">▾</span></span>`;
+      +`<span class="sect-chev"><span class="w-open">Show</span>`
+      +`<span class="w-close">Hide</span><span class="arw">▾</span></span></span>`;
     const body=el('div','sect-body');
 
     // Attach with the real method: `c.appendChild` is replaced below, and
@@ -3117,9 +3153,31 @@
       // inside them, which is not a number of anything.
       const rows=body.querySelectorAll('.mentr').length
                  || body.querySelectorAll('.stance-col,.tl-item,.qt').length
-                 || body.children.length;
-      count.textContent=rows?`${rows} ${rows===1?'item':'items'}`:'nothing to show';
-      if(!rows)count.style.color='var(--amber)';
+                 // The explanation this function itself appends to an
+                 // empty section is not content. Counting it would make the
+                 // section read "1 item" on the next pass, and the note
+                 // would then be removed as unnecessary — a check that
+                 // cancels itself out one render later.
+                 || [...body.children].filter(n=>!n.classList.contains('sect-empty-note')).length;
+      count.textContent=rows?`${rows} ${rows===1?'item':'items'}`:'empty';
+      if(rows){c.removeAttribute('data-empty');return;}
+      // An empty section that still opens onto nothing is this product's one
+      // forbidden failure wearing a UI costume: the reader clicks, gets a
+      // blank panel, and cannot tell a quiet week from a stage that died.
+      // The ledger knows which — so point at it, inside the panel, rather
+      // than leaving the click unrewarded.
+      c.setAttribute('data-empty','');
+      count.style.color='var(--amber)';
+      if(!body.querySelector('.sect-empty-note')){
+        const note=el('div','sect-empty-note',
+          `<div class="muted" style="font-size:12.5px;padding:2px 0 6px">`
+          +`Nothing was produced for this section in this run. That is either `
+          +`because there was nothing to report, or because the stage that `
+          +`writes it did not finish — <b>“What was read, and what was set `
+          +`aside”</b> and <b>“Where this data came from”</b> below say which, `
+          +`with the actual error where there was one.</div>`);
+        body.appendChild(note);
+      }
     });
     // "Open all" on a zone holding one section is a button that does what
     // clicking the section does.

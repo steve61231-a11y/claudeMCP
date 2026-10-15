@@ -271,7 +271,16 @@ def _validate_quotes(quotes: list, mentions_by_ref: dict[str, dict]) -> list[dic
                 "author": src.get("author_handle"),
                 "platform": src.get("platform"),
                 "source_type": src.get("source_type"),
-                "url": src.get("source_url"),
+                # raw_payload first, exactly as build_ref_index reads it.
+                # GDELT stores an article's address there and leaves
+                # source_url empty, so reading only source_url handed the
+                # page a quote with no link — and the page then said
+                # "source not traced" about a quote whose source it had
+                # just proved. Two readers of the same fact must read it
+                # the same way.
+                "url": ((src.get("raw_payload") or {}).get("url")
+                        or src.get("source_url")),
+                "posted_at": src.get("posted_at"),
                 "ref": ref,
             }
         )
