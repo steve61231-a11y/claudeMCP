@@ -14,8 +14,11 @@ from datetime import datetime
 
 from engine import llm, stages
 from engine.reports import (analysts, citations, dates, grounding,
-                            prose, protected_terms, style_check,
-                            triangulation)
+                            protected_terms, style_check, triangulation)
+# Imported under its own name: a local variable called `prose`
+# already exists in build_sections, and `from ... import prose`
+# loses to it at runtime with an error naming a dict.
+from engine.reports import prose as prose_tools
 
 # These four sections were capped at 400-500 tokens, so the cap — not the
 # evidence — decided how much they said. They read aggregate statistics, so
@@ -485,7 +488,7 @@ def enrich_report_payload(
         # And the backstop: a model told the window in words still quotes
         # "2026-10-03" out of a headline it just read. Runs over every prose
         # field, skips urls, refs and ids.
-        prose.map_prose(linked, dates.britishise)
+        prose_tools.map_prose(linked, dates.britishise)
         # House style, checked rather than merely instructed. This ran on the
         # issue map and never on the Search report, over three hand-named
         # fields — so the executive brief, the single most-read paragraph in
