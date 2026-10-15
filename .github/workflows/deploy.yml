@@ -252,7 +252,7 @@ jobs:
                 # The identity fields only. /api/health also carries the
                 # database hostname, and these annotations are
                 # world-readable on a public repository.
-                facts=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail"); print("ok=%s build=%s has_build_detail=%s detail=%s" % (d.get("ok"), d.get("build"), b is not None, b))' 2>/dev/null || true)
+                facts=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail"); l=d.get("llm") or {}; print("ok=%s build=%s has_build_detail=%s detail=%s | llm: provider=%s key_variable=%s key_present=%s production_grade=%s problems=%s" % (d.get("ok"), d.get("build"), b is not None, b, l.get("provider"), l.get("key_variable"), l.get("key_present"), l.get("production_grade"), l.get("problems")))' 2>/dev/null || true)
                 echo "::notice::attempt ${attempt} — live /api/health says: ${facts:-<unparseable>}"
               fi
               if [ "$seen" = "$want" ]; then
