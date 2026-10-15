@@ -248,7 +248,13 @@ jobs:
               seen=$(printf '%s' "$pair" | cut -d" " -f1)
               built=$(printf '%s' "$pair" | cut -d" " -f2)
               echo "attempt ${attempt}: commit=${seen} built_at=${built}"
-              if [ "$attempt" = "1" ] || [ "$attempt" = "40" ]; then
+              # On the FIRST attempt that gets an answer, not on attempt
+              # number one. The container is often not up yet at attempt 1,
+              # so the condition never held on the attempt that actually
+              # had something to report — and the one fact this was added
+              # to surface went unreported on a green run.
+              if [ -z "${reported:-}" ]; then
+                reported=yes
                 # The identity fields only. /api/health also carries the
                 # database hostname, and these annotations are
                 # world-readable on a public repository.
