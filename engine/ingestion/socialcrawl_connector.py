@@ -45,6 +45,10 @@ def credit_cost(path: str) -> float:
     return ENDPOINT_CREDIT_COST.get(path, DEFAULT_CREDIT_COST)
 
 
+#: Set when the account is out of credits, so the stage can say
+#: that rather than reporting three failures of unknown cause.
+#: Declared on the class so a reader of the attribute always
+#: gets a meaningful answer.
 class SocialCrawlConnector(IngestionConnector):
     """Real ingestion source backed by the SocialCrawl API.
 
@@ -67,6 +71,12 @@ class SocialCrawlConnector(IngestionConnector):
     try/except: a failure on one platform (credits exhausted, rate limit,
     no data) must not drop mentions already gathered from the others.
     """
+
+    #: True once the account has reported no credits remaining.
+    #: Declared here so `getattr(connector, "credits_exhausted")` is
+    #: meaningful before any request has been made — the same contract
+    #: `last_error` has, and for the same reason.
+    credits_exhausted: bool = False
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.socialcrawl_api_key
@@ -232,8 +242,28 @@ class SocialCrawlConnector(IngestionConnector):
             # video's spoken words; it must not raise into the run, and the
             # reason has to be recorded or a systematically broken parameter
             # looks like videos that simply have no transcript.
-            self.last_error = (f"transcript {platform}/{post_id}: HTTP "
-                               f"{response.status_code} {response.text[:120]}")[:200]
+            # An exhausted account is a CONFIGURATION fact, not a stage that
+            # failed, and the two read very differently to an operator.
+            #
+            # A live report showed "Some sections could not be produced —
+            # transcripts: stopped after 3 consecutive failures … HTTP 402
+            # INSUFFICIENT_CREDITS", which reads as something broken. Nothing
+            # was broken: SOCIALCRAWL_API_KEY is set and the account behind it
+            # has no credits, so this endpoint cannot work until it is topped
+            # up or the key is removed. Saying that costs nothing and saves
+            # the operator hunting for a bug.
+            body_text = response.text[:200]
+            if response.status_code == 402 or "INSUFFICIENT_CREDITS" in body_text:
+                self.credits_exhausted = True
+                self.last_error = (
+                    "SocialCrawl reports no credits remaining on this account, "
+                    "so transcripts cannot be fetched. This is the key in "
+                    "SOCIALCRAWL_API_KEY — top the account up, or remove the "
+                    "variable to turn the stage off cleanly. Nothing else in "
+                    "the report depends on it.")
+            else:
+                self.last_error = (f"transcript {platform}/{post_id}: HTTP "
+                                   f"{response.status_code} {body_text[:120]}")[:200]
             self._transcript_failures = getattr(self, "_transcript_failures", 0) + 1
             return None
         body = response.json()

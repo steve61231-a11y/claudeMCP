@@ -288,6 +288,20 @@ labelled a working section as failed — the forbidden failure pointed
 backwards. `labelSections` now reads `.sect-sub` before deciding, and
 removes a stale note if one was added.
 
+**An exhausted account is configuration, not a failed stage.** A live
+report showed "Some sections could not be produced — transcripts: stopped
+after 3 consecutive failures … HTTP 402 INSUFFICIENT_CREDITS", and the
+operator went looking for a bug that did not exist. Nothing was broken:
+`SOCIALCRAWL_API_KEY` is set, the account behind it has no credits, and the
+stage is gated on the variable EXISTING rather than on the account working.
+The message also never named SocialCrawl — the `youtube/<id>` in it is the
+video being asked about, not the service being called, which is a trap for
+anyone reading it, including the author of this file. It now names the
+service, the variable, both remedies (top up, or remove the variable to turn
+the stage off cleanly) and the fact that nothing else in the report depends
+on it, which is the operator's real question. A genuine 400 still reports as
+a genuine 400, so this cannot swallow a real fault.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname
