@@ -302,6 +302,22 @@ the stage off cleanly) and the fact that nothing else in the report depends
 on it, which is the operator's real question. A genuine 400 still reports as
 a genuine 400, so this cannot swallow a real fault.
 
+**One excuse over every missing section is a guess wearing a card.**
+A finished run listed "Sentiment over time" and "Sentiment Framework V1.0"
+under one sentence: "a first report has no earlier one to compare against …
+Waiting will not add them; another run might." True for the first. False
+for the second — Sentiment Framework is gated on
+`out_of_time("sentiment_framework")`, so it had been SKIPPED FOR TIME, the
+ledger said exactly that in words, and `finishedSections` threw the ledger
+away. The founding rule broken twice in one card: a section skipped for
+time made to look like one with nothing to say, and the remedy stated
+backwards for the one section another run probably WOULD produce. The card
+now reads `sectionStatus` and gives each section its own reason — ran out
+of time (retry), the stage failed (with the error), needs an earlier report
+(`COMPARISON_SECTIONS`, named not inferred, because telling someone to
+re-run for something that needs a previous run is a loop with no exit),
+nothing in the corpus supported it, or honestly "no reason was recorded".
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

@@ -3929,21 +3929,60 @@
    *  page could not say "this one is not coming" — it only knew "not here
    *  yet". A finished run says which sections it produced and which it did
    *  not, and stops implying that waiting will help. */
-  function finishedSections(ready){
+  /* Why each one is missing, not one sentence over all of them.
+     ---------------------------------------------------------------
+     This printed "a first report has no earlier one to compare against,
+     and some sections need data this subject does not have yet. Waiting
+     will not add them" across EVERY missing section.
+
+     For "Sentiment over time" that is true. For "Sentiment Framework" it
+     was false and actively misleading: that section is gated on the run
+     ceiling, so it had been SKIPPED FOR TIME — and the ledger said so, in
+     words, while this function threw the ledger away and told the reader
+     another run would not help. It is the founding rule broken twice over:
+     a section skipped for time rendered as a section with nothing to say,
+     and the remedy stated backwards.
+
+     The ledger knows. Read it. */
+  function missingReason(key, ledger){
+    const rec=((ledger&&ledger.stages)||[]).find(r=>r&&r.stage===key);
+    const err=String((rec&&(rec.error||rec.detail))||'');
+    if(/ceiling|passed its|timed out|deadline|did not finish within/i.test(err))
+      return {kind:'time',
+              text:'ran out of time before this stage — another run should produce it'};
+    if(rec&&rec.status==='failed')
+      return {kind:'failed', text:err?`the stage failed: ${err}`:'the stage failed'};
+    if(COMPARISON_SECTIONS.has(key))
+      return {kind:'first',
+              text:'needs an earlier report to compare against — it arrives on the next run'};
+    if(rec&&rec.status==='empty')
+      return {kind:'empty', text:'nothing in the corpus supported it this time'};
+    return {kind:'unknown', text:'no reason was recorded for this one'};
+  }
+
+  //: Sections that CANNOT exist on a first report, however long it runs.
+  //: Named, rather than inferred, because telling a reader to run again for
+  //: something that needs a previous run is a loop with no exit.
+  const COMPARISON_SECTIONS=new Set(['sentiment_history','since_last_report','deltas']);
+
+  function finishedSections(ready, ledger){
     const _keys=new Set(SECTION_ORDER.map(([k])=>k));
     const have=new Set((ready||[]).filter(k=>_keys.has(k)));
     const missing=SECTION_ORDER.filter(([k])=>!have.has(k));
     if(!missing.length)return null;
+    const rows=missing.map(([k,label])=>({k,label,why:missingReason(k,ledger)}));
+    const retryable=rows.some(r=>r.why.kind==='time'||r.why.kind==='failed');
     const c=el('div','card');
     c.innerHTML=`<div class="lbl">Sections this run did not produce</div>
       <div class="muted" style="font-size:13.5px;margin-top:6px">
-        The run has finished. These were not produced — a first report has no
-        earlier one to compare against, and some sections need data this
-        subject does not have yet. Waiting will not add them; another run
-        might.</div>`;
-    const list=el('div','row');list.style.cssText='margin-top:10px;flex-wrap:wrap;gap:6px';
-    missing.forEach(([,label])=>{list.innerHTML+=`<span class="chip">${esc(label)}</span>`;});
-    c.appendChild(list);
+        The run has finished. Each one below says why it is missing${
+          retryable?' — the ones that ran out of time or failed are worth another run'
+                   :', and none of them will change by waiting'}.</div>`;
+    const list=el('div','');list.style.cssText='margin-top:10px;display:grid;gap:7px';
+    rows.forEach(r=>{
+      list.innerHTML+=`<div style="font-size:13px"><b>${esc(r.label)}</b>`
+        +`<span class="muted"> — ${esc(r.why.text)}</span></div>`;
+    });
     c.appendChild(list);
     return c;
   }
@@ -3980,7 +4019,7 @@
     else if(meta&&meta.sections_ready){
       // Finished. Say what did not get produced instead of leaving the reader
       // to notice the absence and assume it is still coming.
-      const gaps=finishedSections(meta.sections_ready);
+      const gaps=finishedSections(meta.sections_ready, r.sectionStatus);
       if(gaps)wrap.appendChild(gaps);
     }
     // Nothing was collected. Rendering the usual empty sections made this look
