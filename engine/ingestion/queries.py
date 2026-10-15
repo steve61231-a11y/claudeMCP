@@ -240,11 +240,28 @@ def intersection_discovery_variants(
 #:
 #: Raising any of these trades run time for coverage. Zero disables the
 #: expansion for that source and returns it to a single bare-name query.
+# Raised after a live report came back at 699 mentions and read, to the
+# person who commissioned it, as "too short" — with the page itself already
+# saying "some sources did not deliver".
+#
+# The ceiling here was never the sources' limits. Google News RSS and Reddit's
+# public JSON are not metered at all; the cost of another query is one HTTP
+# request and the deduplication that follows. GDELT IS paced, at ~1 request /
+# 5s per IP, so its budget buys seconds of wall clock directly — doubled
+# rather than tripled for that reason, and still kept under Google News, which
+# `test_the_search_is_more_than_a_name` asserts.
+#
+# What this does NOT fix is depth. More queries against the same four
+# keyword sources returns more of the same KIND of material — news coverage
+# about events. The primary record those events are reported FROM (the
+# Gazette notice that made an appointment, the court filing, the Hansard
+# exchange) is absent from this corpus entirely, and no budget here reaches
+# it. See the connectors list.
 SOURCE_VARIANT_BUDGET = {
-    "google_news": 12,
-    "gdelt": 6,
-    "reddit": 4,
-    "youtube": 3,
+    "google_news": 20,
+    "gdelt": 12,
+    "reddit": 7,
+    "youtube": 5,
     # X, through either backend. Both drive a logged-in burner account and X
     # rate-limits scrapers hard, so this is deliberately modest — the cost of
     # being greedy here is not a slow run, it is a locked account and no
