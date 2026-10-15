@@ -26,7 +26,7 @@ from engine.intelligence import graph, influence, narratives as narrative_module
 # engine.agents.score, which is batched. A dead import reads as a live stage.
 from engine.processing import cleaning, entities, sentiment
 from engine.reports.generator import generate_report_payload
-from engine.reports.sections import enrich_report_payload
+from engine.reports.sections import _bounded, enrich_report_payload
 
 # The expensive per-mention work is LLM round-trips (entity link, people
 # extraction, sentiment). They're pure computation, so run them concurrently
@@ -202,6 +202,15 @@ def run_analysis(
     import time as _time
 
     run_ends_at = _time.monotonic() + max(300, settings.report_deadline_seconds)
+
+    def _time_left(minimum: float = 30.0) -> float:
+        """What is left of the run's ceiling, for a stage that can hang.
+
+        Floored, because handing a stage zero seconds is a different way of
+        skipping it and the ledger would then blame a timeout for a decision
+        the clock made.
+        """
+        return max(minimum, run_ends_at - _time.monotonic())
 
     def out_of_time(stage_name: str) -> bool:
         """True when the run has spent its budget. Records why, so a skipped
@@ -709,97 +718,119 @@ def run_analysis(
     # Resolve the corpus into entities and events: many reports of one happening
     # become ONE event carrying its evidence, so repetition stops masquerading
     # as significance. Runs on the gated corpus and is idempotent across runs.
+    # Bounded, not merely gated. `out_of_time` stops a stage being
+    # ENTERED; it does nothing once inside, so a stage entered at
+    # minute 29 of a 30-minute ceiling ran for another twenty. A live
+    # run sat at 12/15 sections for fifty minutes on exactly this.
+    # `_bounded` is already how the analyst fan-out is held to its
+    # clock, and its own docstring describes this bug: the work is
+    # not failing, it is simply not coming back.
     if settings.enable_resolution and not out_of_time("entity_event_resolution"):
-        try:
-            from engine.agents import resolve as resolve_agent
+        def _run_entity_event_resolution():
+            try:
+                from engine.agents import resolve as resolve_agent
 
-            payload["resolution"] = resolve_agent.resolve_corpus(db, politician, corpus)
+                payload["resolution"] = resolve_agent.resolve_corpus(db, politician, corpus)
 
-            # Score the sources behind that evidence. Runs after resolution
-            # because corroboration is measured through shared events, and it
-            # must precede verification so claim confidence reflects source
-            # quality rather than raw count.
-            from engine.agents import credibility as credibility_agent
+                # Score the sources behind that evidence. Runs after resolution
+                # because corroboration is measured through shared events, and it
+                # must precede verification so claim confidence reflects source
+                # quality rather than raw count.
+                from engine.agents import credibility as credibility_agent
 
-            payload["source_credibility"] = credibility_agent.score_sources(db, politician)
+                payload["source_credibility"] = credibility_agent.score_sources(db, politician)
 
-            # Extend the knowledge graph. It persists between runs, so each
-            # report leaves the picture of the subject's world richer than it
-            # found it — connections are what single documents can't show.
-            from engine.agents import knowledge_graph as kg_agent
+                # Extend the knowledge graph. It persists between runs, so each
+                # report leaves the picture of the subject's world richer than it
+                # found it — connections are what single documents can't show.
+                from engine.agents import knowledge_graph as kg_agent
 
-            payload["knowledge_graph"] = kg_agent.build_graph(db, politician, corpus)
+                payload["knowledge_graph"] = kg_agent.build_graph(db, politician, corpus)
 
-            # What moved since last time, and what deserves attention before it
-            # becomes obvious. Both run after resolution/graph so they can see
-            # events, entities and relationships — the things that change.
-            from engine.agents import anomaly as anomaly_agent
-            from engine.agents import temporal as temporal_agent
+                # What moved since last time, and what deserves attention before it
+                # becomes obvious. Both run after resolution/graph so they can see
+                # events, entities and relationships — the things that change.
+                from engine.agents import anomaly as anomaly_agent
+                from engine.agents import temporal as temporal_agent
 
-            payload["temporal"] = temporal_agent.temporal_summary(
-                db, politician, run_id=ingestion_run.id if ingestion_run else None
-            )
-            payload["signals"] = anomaly_agent.detect_all(db, politician)
-            for _key in ("resolution", "source_credibility", "knowledge_graph", "temporal", "signals"):
-                publish(_key, payload.get(_key))
-        except Exception as exc:  # noqa: BLE001 — resolution must never break a report
-            # ROLL BACK before anything else touches the session. A failed
-            # flush leaves it in a state where EVERY later statement raises
-            # PendingRollbackError, so catching the exception here without
-            # rolling back did not contain the failure — it just moved the
-            # error to whichever innocent stage queried next, and the run died
-            # with "report generation failed" instead of one absent section.
-            # The comment on this handler says resolution must never break a
-            # report; that was only true of the exception, not of its wreckage.
-            _rollback_quietly(db)
-            stages.current().failed("entity_event_resolution", exc)
-            traceback.print_exc()
-            payload["resolution"] = {"error": "entity/event resolution failed"}
+                payload["temporal"] = temporal_agent.temporal_summary(
+                    db, politician, run_id=ingestion_run.id if ingestion_run else None
+                )
+                payload["signals"] = anomaly_agent.detect_all(db, politician)
+                for _key in ("resolution", "source_credibility", "knowledge_graph", "temporal", "signals"):
+                    publish(_key, payload.get(_key))
+            except Exception as exc:  # noqa: BLE001 — resolution must never break a report
+                # ROLL BACK before anything else touches the session. A failed
+                # flush leaves it in a state where EVERY later statement raises
+                # PendingRollbackError, so catching the exception here without
+                # rolling back did not contain the failure — it just moved the
+                # error to whichever innocent stage queried next, and the run died
+                # with "report generation failed" instead of one absent section.
+                # The comment on this handler says resolution must never break a
+                # report; that was only true of the exception, not of its wreckage.
+                _rollback_quietly(db)
+                stages.current().failed("entity_event_resolution", exc)
+                traceback.print_exc()
+                payload["resolution"] = {"error": "entity/event resolution failed"}
 
 
+            return True
+
+        _bounded("entity_event_resolution", _time_left(), _run_entity_event_resolution, fallback=None)
     # Client-facing deliverable, shaped to the Sentiment Analysis Framework
     # V1.0 exactly — same parameter numbering, ordering and terminology, so an
     # analyst reads their own structure rather than our interpretation of it.
+    # Bounded, not merely gated. `out_of_time` stops a stage being
+    # ENTERED; it does nothing once inside, so a stage entered at
+    # minute 29 of a 30-minute ceiling ran for another twenty. A live
+    # run sat at 12/15 sections for fifty minutes on exactly this.
+    # `_bounded` is already how the analyst fan-out is held to its
+    # clock, and its own docstring describes this bug: the work is
+    # not failing, it is simply not coming back.
     if not out_of_time("sentiment_framework"):
-        try:
-            from engine.reports import sentiment_framework
+        def _run_sentiment_framework():
+            try:
+                from engine.reports import sentiment_framework
 
-            previous_report = (
-                db.query(IntelligenceReport)
-                .filter(IntelligenceReport.politician_id == politician.id)
-                .order_by(IntelligenceReport.generated_at.desc())
-                .first()
-            )
-            prior = previous_report.payload if previous_report else None
-            payload["sentiment_framework"] = sentiment_framework.build(
-                politician,
-                payload,
-                corpus,
-                previous=prior,
-                sentiments=sentiments_by_mention,
-            )
-            publish("sentiment_framework", payload["sentiment_framework"])
+                previous_report = (
+                    db.query(IntelligenceReport)
+                    .filter(IntelligenceReport.politician_id == politician.id)
+                    .order_by(IntelligenceReport.generated_at.desc())
+                    .first()
+                )
+                prior = previous_report.payload if previous_report else None
+                payload["sentiment_framework"] = sentiment_framework.build(
+                    politician,
+                    payload,
+                    corpus,
+                    previous=prior,
+                    sentiments=sentiments_by_mention,
+                )
+                publish("sentiment_framework", payload["sentiment_framework"])
 
-            # The worklist. The dashboard has read `payload["actions"]`
-            # since it was built and nothing had ever written it, so the
-            # section that tells a client what to do rendered "no actions
-            # recorded for this period" on every report this engine has
-            # produced — a section that was never wired up, reading as a
-            # quiet week.
-            #
-            # Built from the previous report as well as this one, because
-            # "in progress" has to mean something: it was on the list last
-            # time, and here is what the issue it addresses has done since.
-            from engine.reports import actions as actions_module
+                # The worklist. The dashboard has read `payload["actions"]`
+                # since it was built and nothing had ever written it, so the
+                # section that tells a client what to do rendered "no actions
+                # recorded for this period" on every report this engine has
+                # produced — a section that was never wired up, reading as a
+                # quiet week.
+                #
+                # Built from the previous report as well as this one, because
+                # "in progress" has to mean something: it was on the list last
+                # time, and here is what the issue it addresses has done since.
+                from engine.reports import actions as actions_module
 
-            payload["actions"] = actions_module.build(payload, prior)
-            publish("actions", payload["actions"])
-        except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
-            # The client deliverable. Silently absent, this tab simply never
-            # appeared and nobody could tell whether it was empty or broken.
-            stages.current().failed("sentiment_framework", exc)
-            traceback.print_exc()
+                payload["actions"] = actions_module.build(payload, prior)
+                publish("actions", payload["actions"])
+            except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
+                # The client deliverable. Silently absent, this tab simply never
+                # appeared and nobody could tell whether it was empty or broken.
+                stages.current().failed("sentiment_framework", exc)
+                traceback.print_exc()
 
+            return True
+
+        _bounded("sentiment_framework", _time_left(), _run_sentiment_framework, fallback=None)
     # The run's own account of whether the model answered. Stamped onto the
     # payload so a reader is never shown empty sections without being told the
     # backend was down, and so a broken run cannot be presented as an analysis.
@@ -825,43 +856,54 @@ def run_analysis(
     # what the report actually says, and records a status + citations for every
     # factual claim. A claim the evidence can't support is labelled, not deleted:
     # a thin spot in the file is itself a finding worth seeing.
+    # Bounded, not merely gated. `out_of_time` stops a stage being
+    # ENTERED; it does nothing once inside, so a stage entered at
+    # minute 29 of a 30-minute ceiling ran for another twenty. A live
+    # run sat at 12/15 sections for fifty minutes on exactly this.
+    # `_bounded` is already how the analyst fan-out is held to its
+    # clock, and its own docstring describes this bug: the work is
+    # not failing, it is simply not coming back.
     if settings.enable_verification and not out_of_time("claim_verification"):
-        try:
-            from engine.agents import verify
+        def _run_claim_verification():
+            try:
+                from engine.agents import verify
 
-            audit = verify.verify_payload(db, politician, payload, report_id=report.id)
-            payload["verification"] = {
-                k: audit.get(k) for k in
-                ("checked", "verified", "unverified", "contradicted", "measurements")
-            }
-            payload["claims"] = audit["claims"]
-            publish("verification", payload["verification"])
-            publish("claims", payload["claims"])
+                audit = verify.verify_payload(db, politician, payload, report_id=report.id)
+                payload["verification"] = {
+                    k: audit.get(k) for k in
+                    ("checked", "verified", "unverified", "contradicted", "measurements")
+                }
+                payload["claims"] = audit["claims"]
+                publish("verification", payload["verification"])
+                publish("claims", payload["claims"])
 
-            # Finally, refuse to call the file finished: name what is missing and
-            # turn those gaps into concrete queries for the NEXT run. This runs
-            # after verification because unverified claims are the richest source
-            # of "what still needs establishing".
-            if settings.enable_investigator:
-                from engine.agents import investigator
+                # Finally, refuse to call the file finished: name what is missing and
+                # turn those gaps into concrete queries for the NEXT run. This runs
+                # after verification because unverified claims are the richest source
+                # of "what still needs establishing".
+                if settings.enable_investigator:
+                    from engine.agents import investigator
 
-                agenda = investigator.build_agenda(db, politician)
-                investigator.store_follow_up_queries(
-                    db, politician, agenda.get("follow_up_queries") or []
-                )
-                payload["investigation"] = agenda
+                    agenda = investigator.build_agenda(db, politician)
+                    investigator.store_follow_up_queries(
+                        db, politician, agenda.get("follow_up_queries") or []
+                    )
+                    payload["investigation"] = agenda
 
-            report.payload = payload
-            flag_modified(report, "payload")
-            db.commit()
-        except Exception as exc:  # noqa: BLE001 — an audit failure must not lose the report
-            # This guard wraps a db.commit(). A commit that fails leaves the
-            # session unusable, so without this the next innocent query is the
-            # one that raises and the report dies far from the real cause.
-            _rollback_quietly(db)
-            stages.current().failed("verification", exc)
-            traceback.print_exc()
+                report.payload = payload
+                flag_modified(report, "payload")
+                db.commit()
+            except Exception as exc:  # noqa: BLE001 — an audit failure must not lose the report
+                # This guard wraps a db.commit(). A commit that fails leaves the
+                # session unusable, so without this the next innocent query is the
+                # one that raises and the report dies far from the real cause.
+                _rollback_quietly(db)
+                stages.current().failed("verification", exc)
+                traceback.print_exc()
 
+            return True
+
+        _bounded("claim_verification", _time_left(), _run_claim_verification, fallback=None)
     return report
 
 

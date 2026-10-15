@@ -374,6 +374,21 @@ newest first, because a report about the last month should cluster the last
 month — and the cap is disclosed in `narrative_corpus` when it bites and
 silent when it does not, because a note on every report is noise.
 
+**A gate is not a ceiling.** `out_of_time()` stops a stage being ENTERED
+and does nothing once inside, so a stage entered at minute 29 of a
+30-minute ceiling ran for another twenty — a live run sat at 12/15 sections
+for fifty minutes with the last three stages (entity/event resolution, the
+sentiment framework, claim verification) each gated on entry and then
+unbounded. They now run under `_bounded`, the same runner the analyst
+fan-out uses, handed `_time_left()` — what is LEFT of the run's ceiling,
+not a fresh budget each, because three stages with the full ceiling is one
+unbounded run wearing three hats. Floored at 30s, because handing a stage
+zero seconds is a different way of skipping it and the ledger would blame a
+timeout for a decision the clock made. Wrapping a block in a closure has
+one real hazard — anything assigned inside and read after becomes local,
+and the NameError lands long after the tests for that stage pass — so a
+test walks the AST for exactly that.
+
 **Every stage needs a deadline.** `try/except` does not bound a call that never
 returns — there is no exception to catch. The analyst fan-out, the tail after
 it, and the whole run each have a ceiling now. Without one, a report hangs
