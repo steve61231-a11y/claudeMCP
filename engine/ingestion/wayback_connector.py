@@ -85,7 +85,14 @@ class WaybackConnector(IngestionConnector):
             if original in seen or row[idx.get("statuscode", 0)] not in ("200", "-"):
                 continue
             seen.add(original)
-            posted = self._parse_ts(timestamp) or window_end
+            # An unparseable date is NOT a date. Falling back to the
+            # window end keeps ordering and windowing working, and it
+            # also stamps every undated item onto one day — so the
+            # volume chart drew a spike that never happened and the
+            # peak-day figure counted it. Say which it is; the
+            # consumer decides what to do with an unknown.
+            _parsed = self._parse_ts(timestamp)
+            posted = _parsed or window_end
             title = self._title_from_slug(original)
             if not title:
                 continue
@@ -98,6 +105,7 @@ class WaybackConnector(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
+                        "date_estimated": not _parsed,
                         "url": original,
                         "archived_url": SNAPSHOT_URL.format(timestamp=timestamp, url=original),
                         "source": "wayback",

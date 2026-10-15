@@ -612,11 +612,24 @@ def narrative_genealogy(members: list[dict]) -> dict:
         if platform not in seen_platforms:
             seen_platforms.add(platform)
             spread_path.append({"platform": platform, "date": m["posted_at"].date().isoformat()})
+    # Days built only from items whose date is KNOWN.
+    #
+    # A connector that cannot parse a date falls back to the window end, so
+    # every undated item lands on the same day. Counting those produced a
+    # "peak 380 mentions in a day" out of a 699-item corpus — a cliff on
+    # the last day of every report, which is an artefact of missing data
+    # presented as the single most dramatic finding on the page.
+    #
+    # The founding rule: an unknown must not render as a value.
+    confirmed = [m for m in dated if not m.get("date_estimated")]
+    estimated_count = len(dated) - len(confirmed)
     by_day: dict[str, int] = {}
-    for m in dated:
+    for m in confirmed:
         key = m["posted_at"].date().isoformat()
         by_day[key] = by_day.get(key, 0) + 1
-    peak_day = max(by_day.items(), key=lambda kv: kv[1])
+    # With nothing datable there is no peak. Reporting the window end as
+    # the busiest day would be the same lie in a smaller font.
+    peak_day = max(by_day.items(), key=lambda kv: kv[1]) if by_day else (None, 0)
     return {
         "first_seen": {
             "date": first["posted_at"].date().isoformat(),
@@ -626,7 +639,14 @@ def narrative_genealogy(members: list[dict]) -> dict:
             "text": (first.get("text") or "")[:200],
         },
         "spread_path": spread_path,
+        # `date` is None when nothing in the corpus could be dated. The
+        # page must render that as "no datable peak", not as a day.
         "peak": {"date": peak_day[0], "mentions": peak_day[1]},
+        # How much of the corpus this reading rests on. A peak drawn from
+        # 60 datable items out of 699 is a different claim from one drawn
+        # from all of them, and the reader is entitled to know which.
+        "dated_mentions": len(confirmed),
+        "undated_mentions": estimated_count,
         "platforms_reached": len(seen_platforms),
     }
 

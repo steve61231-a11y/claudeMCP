@@ -103,6 +103,13 @@ def _as_corpus_dicts(rows) -> list[dict]:
             "engagement": m.engagement_json or {},
             "language": m.language,
             "source_url": m.source_url,
+            # Whether this item's date is known or was assumed. Eleven
+            # connectors fall back to the window end when a date will not
+            # parse, which keeps ordering working and piles every undated
+            # item onto one day — so a volume chart counted them as a real
+            # spike. Carried as a flag rather than the whole raw_payload,
+            # which is large and has no other reader here.
+            "date_estimated": bool((m.raw_payload or {}).get("date_estimated")),
         }
         for m in rows
     ]

@@ -63,7 +63,14 @@ class YouTubeConnector(IngestionConnector):
             seen.add(vid)
             desc = (entry.get("description") or "").strip()
             text = f"{title}\n\n{desc}".strip() if desc else title
-            posted = self._parse_upload(entry.get("upload_date")) or window_end
+            # An unparseable date is NOT a date. Falling back to the
+            # window end keeps ordering and windowing working, and it
+            # also stamps every undated item onto one day — so the
+            # volume chart drew a spike that never happened and the
+            # peak-day figure counted it. Say which it is; the
+            # consumer decides what to do with an unknown.
+            _parsed = self._parse_upload(entry.get("upload_date"))
+            posted = _parsed or window_end
             posted = min(max(posted, window_start), window_end)
             channel = entry.get("channel") or entry.get("uploader") or "youtube"
             mentions.append(
@@ -79,6 +86,7 @@ class YouTubeConnector(IngestionConnector):
                         "comments": int(entry.get("comment_count") or 0),
                     },
                     raw_payload={
+                        "date_estimated": not _parsed,
                         "url": entry.get("webpage_url") or f"https://www.youtube.com/watch?v={vid}",
                         "video_id": vid,
                         "channel": channel,

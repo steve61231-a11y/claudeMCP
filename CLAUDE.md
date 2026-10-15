@@ -245,6 +245,22 @@ state's own publications is that a reader can tell "a newspaper reported an
 appointment" from "here is the notice that made it", and that argument is
 worth nothing if the two render identically.
 
+**An undated item is not a busy day.** Eleven connectors fall back to
+`window_end` when a date will not parse. That is the right fallback — it
+keeps ordering and windowing working — and it stamps every undated item
+onto the same day, so the volume chart counted the pile as real and a live
+report drew "peak 380 mentions in a day" over a 699-item corpus, a cliff on
+the last day of every report presented as its most striking number. The
+founding rule again: "we could not date this" had become "this happened on
+15 October". Connectors now set `raw_payload["date_estimated"]`, the flag
+travels explicitly through `_mention_dicts` (raw_payload is not carried
+there and has no other reader), and `by_day` counts only items whose date
+is known. With nothing datable there is NO peak — `peak.date` is None, and
+the page checks it rather than the truthiness of the object around it,
+which printed "peaked —". The reading also carries `dated_mentions` and
+`undated_mentions`, because a peak resting on a tenth of the corpus is a
+different claim from one resting on all of it.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

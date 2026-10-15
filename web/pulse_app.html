@@ -1713,7 +1713,7 @@
     }
     const o=ev.origin||{};
     if(o.first_seen&&o.first_seen.date)box.appendChild(el('div','',
-      `<div class="muted" style="font-size:12px;margin-top:10px">First seen ${esc(ukDate(o.first_seen.date))} on ${esc(o.first_seen.platform||'—')}${o.peak?` · peaked ${esc(ukDate(o.peak.date))}`:''}${o.platforms_reached?` · reached ${o.platforms_reached} platform(s)`:''}</div>`));
+      `<div class="muted" style="font-size:12px;margin-top:10px">First seen ${esc(ukDate(o.first_seen.date))} on ${esc(o.first_seen.platform||'—')}${o.peak&&o.peak.date?` · peaked ${esc(ukDate(o.peak.date))}`:''}${o.platforms_reached?` · reached ${o.platforms_reached} platform(s)`:''}</div>`));
     return box.children.length?box:null;
   }
 
@@ -3512,7 +3512,7 @@
         `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13.5px;margin-top:6px">${linkifyRefs(esc(d.critic_framing),d.critic_framing_citations)}</div>`));
       if(fr.children.length)c.appendChild(fr);
       if(fs.date)c.appendChild(el('div','',`<div class="muted" style="font-size:12.5px;margin-top:12px">
-        First seen ${esc(ukDate(fs.date))} · ${handle(fs.author)} on ${esc(fs.platform||'—')}${origin.peak?` · peaked ${esc(ukDate(origin.peak.date))} (${share(origin.peak.mentions,CORPUS_TOTAL)} of mentions)`:''}${origin.platforms_reached?` · reached ${origin.platforms_reached} platform(s)`:''}</div>`));
+        First seen ${esc(ukDate(fs.date))} · ${handle(fs.author)} on ${esc(fs.platform||'—')}${origin.peak&&origin.peak.date?` · peaked ${esc(ukDate(origin.peak.date))} (${share(origin.peak.mentions,origin.dated_mentions||CORPUS_TOTAL)} of dated mentions)`:''}${origin.undated_mentions?` · ${fmt(origin.undated_mentions)} item(s) could not be dated and are not in this reading`:''}${origin.platforms_reached?` · reached ${origin.platforms_reached} platform(s)`:''}</div>`));
       if((origin.spread_path||[]).length)c.appendChild(el('div','',
         `<div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${origin.spread_path.map(sp=>`<span class="chip">${esc(sp.platform)} · ${esc(ukDate(sp.date))}</span>`).join('')}</div>`));
       if((d.quotes||[]).length)c.appendChild(el('div','',quotesHTML(d.quotes)));

@@ -67,7 +67,14 @@ class GdeltConnector(IngestionConnector):
             if not url or url in seen:
                 continue
             seen.add(url)
-            posted = self._parse_seendate(art.get("seendate")) or window_end
+            # An unparseable date is NOT a date. Falling back to the
+            # window end keeps ordering and windowing working, and it
+            # also stamps every undated item onto one day — so the
+            # volume chart drew a spike that never happened and the
+            # peak-day figure counted it. Say which it is; the
+            # consumer decides what to do with an unknown.
+            _parsed = self._parse_seendate(art.get("seendate"))
+            posted = _parsed or window_end
             if not (window_start <= posted <= window_end):
                 # GDELT occasionally returns slightly out-of-window items; keep
                 # them anyway (still historical signal) but clamp the date.
@@ -84,6 +91,7 @@ class GdeltConnector(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
+                        "date_estimated": not _parsed,
                         "url": url,
                         "title": title,
                         "language": art.get("language"),

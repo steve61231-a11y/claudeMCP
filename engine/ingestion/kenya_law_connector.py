@@ -169,7 +169,14 @@ class _KenyaLawBase(IngestionConnector):
             if link in seen:
                 continue
             seen.add(link)
-            posted = _parse_date(text) or window_end
+            # An unparseable date is NOT a date. Falling back to the
+            # window end keeps ordering and windowing working, and it
+            # also stamps every undated item onto one day — so the
+            # volume chart drew a spike that never happened and the
+            # peak-day figure counted it. Say which it is; the
+            # consumer decides what to do with an unknown.
+            _parsed = _parse_date(text)
+            posted = _parsed or window_end
             # A judgment from 1998 is a real finding about a subject and is
             # NOT in this report's window. Clamping it to the window would
             # date it to this month, which is a false fact; it is carried
@@ -183,6 +190,7 @@ class _KenyaLawBase(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
+                        "date_estimated": not _parsed,
                         "url": link,
                         "title": text,
                         "outlet": "Kenya Law",

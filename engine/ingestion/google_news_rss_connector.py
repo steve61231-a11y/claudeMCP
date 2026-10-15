@@ -61,7 +61,14 @@ class GoogleNewsRssConnector(IngestionConnector):
             if not title or not link or link in seen:
                 continue
             seen.add(link)
-            posted = self._parse_date(item.findtext("pubDate")) or window_end
+            # An unparseable date is NOT a date. Falling back to the
+            # window end keeps ordering and windowing working, and it
+            # also stamps every undated item onto one day — so the
+            # volume chart drew a spike that never happened and the
+            # peak-day figure counted it. Say which it is; the
+            # consumer decides what to do with an unknown.
+            _parsed = self._parse_date(item.findtext("pubDate"))
+            posted = _parsed or window_end
             posted = min(max(posted, window_start), window_end)
             source_el = item.find("source")
             outlet = (source_el.text if source_el is not None else None) or "google_news"
@@ -74,6 +81,7 @@ class GoogleNewsRssConnector(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
+                        "date_estimated": not _parsed,
                         "url": link,
                         "title": title,
                         "outlet": outlet,
