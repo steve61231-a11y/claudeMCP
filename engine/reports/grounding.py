@@ -59,9 +59,82 @@ _MIN_TOKEN = 4
 
 _TOKEN = re.compile(r"[A-Za-z][A-Za-z'’-]+")
 
+#: A possessive is not part of the name.
+#:
+#: "Kenya Kwanza's" tokenised to `kwanza's`, which does not appear in a
+#: corpus that says "Kenya Kwanza" constantly — so a live report accused
+#: itself of inventing the governing coalition.
+_POSSESSIVE = re.compile(r"[’']s$")
+
+#: A machine identifier is not a name, whatever an entity model labels it.
+#:
+#: `0e01efc4-cdc0-4200-aed1-59abce9b926a` yields the four-letter token
+#: `abce` — long enough to count as distinctive, and present in no corpus
+#: ever written. Five mention ids were reported to a live operator as
+#: invented names.
+_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+_HEXISH = re.compile(r"^[0-9a-f]{8,}$", re.I)
+
+#: A code identifier is not a name either. `HTTPError` and `SocialCrawl` are
+#: this engine's OWN vocabulary — an exception class and a connector —
+#: reaching prose through a diagnostic field and then being accused of
+#: being fabricated people.
+_CODE_IDENT = re.compile(r"^(?:[A-Z]{2,}[A-Za-z]*|[A-Z][a-z]+(?:[A-Z][a-z]+)+)$")
+
+#: A fragment ending in a conjunction or preposition is a heading that got
+#: cut, not a name: "Dominant Narratives and".
+_TRAILING_JOIN = {"and", "or", "of", "for", "in", "on", "with", "to", "the"}
+
 
 def _tokens(name: str) -> list[str]:
-    return [t.lower() for t in _TOKEN.findall(name or "")]
+    return [_POSSESSIVE.sub("", t.lower()) for t in _TOKEN.findall(name or "")]
+
+
+def is_checkable(name: str) -> tuple[bool, str]:
+    """Can this candidate be judged at all?
+
+    Returns the reason, because the founding rule applies to this file as
+    much as to any report section: "we could not check this" and "this was
+    invented" must never render the same. A live report listed fifteen
+    ungrounded names, every one of them a machine identifier, this engine's
+    own vocabulary, a heading fragment or a possessive — and told the
+    operator not to send a clean report to a client.
+    """
+    text = (name or "").strip()
+    if not text:
+        return False, "empty"
+    if _UUID.search(text) or _HEXISH.match(text.replace("-", "")):
+        return False, "machine identifier"
+    words = text.split()
+    if len(words) == 1 and _CODE_IDENT.match(text):
+        return False, "code identifier"
+    if words[-1].lower() in _TRAILING_JOIN:
+        return False, "sentence fragment"
+    return True, ""
+
+
+def is_accusable(name: str) -> bool:
+    """May an UNGROUNDED result for this name be reported as an invention?
+
+    Single-word candidates come only from the entity model — the
+    capitalised-pair fallback requires two, by design, because every
+    sentence starts with a capital.
+
+    They cannot simply be excluded: "Treasury", "Parliament" and "Mudavadi"
+    are real, single-word, and worth checking, and dropping them would make
+    the entity model no more thorough than the pattern it is recommended
+    over.
+
+    So the asymmetry is the answer, because the two errors are not equal.
+    A single word that IS in the corpus is a check that passed, and costs
+    nothing. A single word that is NOT could be an invented person or it
+    could be "Videos" at the start of a sentence — and accusing a report of
+    fabricating "Recognition" is how an operator learns to ignore the one
+    banner that matters.
+
+    Checked either way; accused only with corroboration.
+    """
+    return len((name or "").split()) > 1
 
 
 def _distinctive(name: str) -> list[str]:
@@ -159,9 +232,26 @@ def check(payload: dict, mentions: list[dict]) -> dict:
 
     seen, how, why = _names_in(strings)
 
-    ungrounded = sorted({name for name in seen.values()
-                         if not is_grounded(name, haystack)})
-    checked = len(seen)
+    # Judge only what can be judged, and say how much was set aside.
+    judgeable, set_aside = {}, {}
+    for key, name in seen.items():
+        # NOT `why`: that name already holds the extractor's reason from
+        # `_names_in` three lines up, and reusing it here erased it — so
+        # `method_reason` vanished and the page went back to guessing why
+        # the cheap extractor had run, which is the exact failure this
+        # function's own comments were written about.
+        ok, verdict = is_checkable(name)
+        (judgeable if ok else set_aside)[key] = (name, verdict)
+
+    ungrounded = sorted({name for name, _ in judgeable.values()
+                         if not is_grounded(name, haystack)
+                         and is_accusable(name)})
+    # Checked, found absent, and not corroborated enough to accuse. Counted
+    # so the number is not silently different from the one above it.
+    unverified = sorted({name for name, _ in judgeable.values()
+                         if not is_grounded(name, haystack)
+                         and not is_accusable(name)})
+    checked = len(judgeable)
     result = {
         "checked": checked,
         "ungrounded": ungrounded,
@@ -170,6 +260,15 @@ def check(payload: dict, mentions: list[dict]) -> dict:
         # are different results, and an operator comparing two reports needs
         # to know which they are looking at.
         "method": how,
+        # Single words the corpus does not contain. Not an accusation —
+        # "Videos" at the start of a sentence looks exactly like this — but
+        # not hidden either.
+        "unverified_single_words": unverified,
+        # Candidates that are not names at all. Reported rather than
+        # dropped in silence: a reader comparing "300 checked" between two
+        # runs is entitled to know what was excluded and why.
+        "not_checkable": len(set_aside),
+        "not_checkable_reasons": sorted({v for _, v in set_aside.values()}),
     }
     # And WHY, when it was the cheap one. The page used to guess, and a guess
     # that names the wrong cause is worse than saying nothing: it sends the

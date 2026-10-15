@@ -3215,8 +3215,24 @@
                  // would then be removed as unnecessary — a check that
                  // cancels itself out one render later.
                  || [...body.children].filter(n=>!n.classList.contains('sect-empty-note')).length;
-      count.textContent=rows?`${rows} ${rows===1?'item':'items'}`:'empty';
-      if(rows){c.removeAttribute('data-empty');return;}
+      // A section whose finding IS its subtitle is not empty.
+      //
+      // "Sentiment coverage" says "459 of 459 mentions read by the analyst
+      // (100%) across 19 batches" in its heading and appends a body only
+      // when something is WRONG. Labelling that "empty — nothing was
+      // produced" told an operator a working section had failed, which is
+      // this product's forbidden failure pointed backwards: a section that
+      // succeeded must not look like one that broke.
+      const sub=c.querySelector('.sect-sub');
+      const saysItInTheHead=!!(sub&&sub.textContent.trim());
+      count.textContent=rows?`${rows} ${rows===1?'item':'items'}`
+                            :(saysItInTheHead?'in the heading':'empty');
+      if(rows||saysItInTheHead){
+        c.removeAttribute('data-empty');
+        const stale=body.querySelector('.sect-empty-note');
+        if(stale)stale.remove();
+        return;
+      }
       // An empty section that still opens onto nothing is this product's one
       // forbidden failure wearing a UI costume: the reader clicks, gets a
       // blank panel, and cannot tell a quiet week from a stage that died.

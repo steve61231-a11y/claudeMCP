@@ -261,6 +261,33 @@ which printed "peaked —". The reading also carries `dated_mentions` and
 `undated_mentions`, because a peak resting on a tenth of the corpus is a
 different claim from one resting on all of it.
 
+**The grounding banner told an operator not to send a clean report.**
+A live run ended "15 names in this report do not appear in any source", and
+not one was an invented name: five mention UUIDs, `HTTPError`, our own
+`SocialCrawl`, sentence-case nouns like `Videos`, a cut heading, and
+`Kenya Kwanza's` — the governing coalition, which tokenised with the
+possessive attached and so could not match the "Kenya Kwanza" the sources
+say constantly. A UUID yields the four-letter token `abce`, long enough to
+count as distinctive and present in no corpus ever written. The
+capitalised-pair fallback could never produce any of them; the ENTITY MODEL
+did, and it runs whenever LOW_MEMORY is false — so the guard has to sit
+after both extractors. `is_checkable()` rejects machine identifiers, code
+identifiers and fragments outright and gives the reason; `is_accusable()`
+is the asymmetry that keeps the check thorough: a single word is still
+CHECKED, because "Treasury" and "Parliament" are real and dropping them
+would make the entity model no better than the pattern it is recommended
+over, but a single word the corpus lacks is reported as unverified rather
+than as an invention, because it looks identical to sentence case. Possessives
+are stripped before matching. The founding rule pointed at this file: "we
+could not check this" must never render as "this was invented".
+
+**A section whose finding is its subtitle is not empty.** "Sentiment
+coverage" says "459 of 459 mentions read by the analyst" in its heading and
+appends a body only when something is WRONG, so the empty-section note
+labelled a working section as failed — the forbidden failure pointed
+backwards. `labelSections` now reads `.sect-sub` before deciding, and
+removes a stale note if one was added.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname
