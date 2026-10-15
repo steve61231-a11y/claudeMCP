@@ -277,7 +277,44 @@ SOURCE_VARIANT_BUDGET = {
     # is, and because every query is billed, which is the operator's own
     # ceiling to raise.
     "agentreach": 6,
+    # The primary record. Paced at 2s to be a good guest on a free public
+    # service, so ten requests across the two is twenty seconds of wall
+    # clock — cheap for the most citable material in the corpus.
+    "kenya_gazette": 5,
+    "kenya_law": 5,
 }
+
+#: Probes for the primary-record sources, used instead of the news ones.
+#:
+#: DISCOVERY_PROBES asks a search engine what the press said — "scandal",
+#: "criticised", "reaction". Kenya Law has no press. Asking it for "scandal"
+#: wastes a slot on a word that appears in no judgment and no gazette notice,
+#: and the learning loop would then correctly retire a source that was asked
+#: the wrong question rather than being wrong.
+#:
+#: These are the words these documents actually contain.
+PRIMARY_RECORD_PROBES = {
+    "kenya_gazette": ("appointment", "revocation", "commission of inquiry",
+                      "nomination", "gazette notice", "board"),
+    "kenya_law": ("petition", "judicial review", "judgment", "ruling",
+                  "constitutional petition", "tribunal", "appeal"),
+}
+
+
+def probes_for(source: str) -> list[str]:
+    """The probe list this source should be asked from.
+
+    One function so the planner and anything checking the planner read the
+    same answer. A test that asserted against DISCOVERY_PROBES while the
+    planner used a different list would pass or fail for reasons unrelated
+    to the behaviour either cared about.
+
+    A source that holds no journalism must not be asked journalism's
+    questions — see PRIMARY_RECORD_PROBES.
+    """
+    if source in PRIMARY_RECORD_PROBES:
+        return list(PRIMARY_RECORD_PROBES[source])
+    return list(DISCOVERY_PROBES) + list(DISCOVERY_TIMESPAN_PROBES)
 
 
 def connector_variants(politician: Politician, source: str, budget: int | None = None,
@@ -334,7 +371,7 @@ def connector_variants(politician: Politician, source: str, budget: int | None =
     out.extend(_pending_leads(politician)[:lead_slots])
     out.extend([v for v in text_variants(politician) if v != name][:identity_slots])
 
-    probes = DISCOVERY_PROBES + DISCOVERY_TIMESPAN_PROBES
+    probes = probes_for(source)
     if probes and probe_slots:
         # Advance by exactly what the last run consumed, so run N and run
         # N+1 share no probe at all. A fixed stride would either repeat

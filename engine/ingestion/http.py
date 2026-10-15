@@ -33,6 +33,11 @@ HOST_MIN_INTERVAL = {
     "web.archive.org": 2.0,        # CDX is slow and 500s under pressure
     "www.reddit.com": 2.0,
     "newsapi.org": 1.0,
+    # Kenya Law publishes the primary record for free and has no commercial
+    # interest in serving us. Being a good guest is the whole price of
+    # admission, and the cost of being greedy is losing the source.
+    "new.kenyalaw.org": 2.0,
+    "kenyalaw.org": 2.0,
 }
 
 _PACE_LOCK = threading.Lock()

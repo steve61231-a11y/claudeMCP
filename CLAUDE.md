@@ -52,7 +52,8 @@ engine/
   stages.py         The ledger: what ran, what failed, what was empty.
   config.py         Every setting, with its default and why.
   reports/          Analysts, digest, issue map, citations, PDF export.
-  ingestion/        Connectors (GDELT, Google News, Reddit, YouTube, X…) + http.py
+  ingestion/        Connectors (GDELT, Google News, Reddit, YouTube, X,
+                    Kenya Law + Kenya Gazette…) + http.py
   agents/           Resolution, verification, credibility, knowledge graph.
   intelligence/     Narratives, embeddings, people graph, simulator.
   processing/       Sentiment, entities.
@@ -206,6 +207,29 @@ the reader, because `deepCard` escapes its subtitle. `sharePlain()` is the
 twin for text slots; it inlines the counts instead of hiding them in a
 tooltip nobody can hover in a card subtitle.
 
+**A press summary is not intelligence.** A live report's biggest storyline
+was "Ruto board appointments" — sixty-nine news items about appointments to
+EPRA, LAPSSET and the TSC — and the corpus held not one Gazette notice. It
+also carried the headline "High Court rules presidential advisory offices
+and appointments unconstitutional" and not the judgment. That is what "this
+report is too short" meant: not volume, kind. More queries against four
+keyword sources return more coverage OF events; the documents those events
+are reported FROM were absent by construction, and no budget on a news
+connector reaches them. `ingestion/kenya_law_connector.py` reads the two
+that are free and keyless — the Kenya Gazette (appointments, revocations,
+commissions) and Kenya Law case law. They carry `source_type` `gazette` and
+`judgment`, `raw_payload["record"] = "primary"`, and the long mention budget,
+because truncating a gazette notice to a tweet's budget discards the part a
+client is buying. They get their OWN probes: DISCOVERY_PROBES asks what the
+press said, those words appear in no judgment, and the learning loop would
+retire a source that had been asked the wrong question rather than being
+wrong. Written without network access to kenyalaw.org, so the parser is
+structural (anchors and their text) rather than selector-based, and the one
+hard requirement is the founding rule: a refused host, a page that parsed to
+zero rows, and a subject with genuinely no record are three different
+findings — "this person has no court record" is a publishable claim and must
+never be produced by a connection error.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname
@@ -341,6 +365,11 @@ LLM_PRICE_OUT=3.75       # in Mission Control. Set them to your model's rates.
 else is stamped "Test-grade — not for a client" in the UI, deliberately, because
 the prompts and anti-hallucination guarantees are tuned against that model. If
 you are selling a report, run it on Anthropic.
+
+Free primary-record sources, on by default and needing no key:
+`ENABLE_KENYA_GAZETTE`, `ENABLE_KENYA_LAW` (both kenyalaw.org, paced at 2s).
+Turn them off only to make a run faster; they are the most citable material
+in the corpus.
 
 Optional sources: `SOCIALCRAWL_API_KEY` (TikTok/Instagram/LinkedIn/X — the
 paid social backbone; without it there is no social media in the corpus at all,

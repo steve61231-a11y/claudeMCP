@@ -131,7 +131,11 @@ _MENTION_CHARS_ARTICLE = 700   # headline + lede is the story's claim
 
 def _mention_budget(source_type: str | None) -> int:
     return (_MENTION_CHARS_ARTICLE
-            if source_type in ("article", "news", "reference", "video")
+            # judgment/gazette are primary record: long, dense, and the
+            # most citable thing in the corpus. Truncating a gazette notice
+            # to a tweet's budget throws away the part a client is buying.
+            if source_type in ("article", "news", "reference", "video",
+                               "judgment", "gazette")
             else _MENTION_CHARS_SOCIAL)
 
 

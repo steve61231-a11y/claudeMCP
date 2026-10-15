@@ -41,7 +41,7 @@ WINDOW = (datetime(2026, 6, 1), datetime(2026, 6, 30, 23, 59, 59))
 #: filter over fixed domains) and Wikipedia (a title lookup) are not keyword
 #: searches and are deliberately absent.
 KEYWORD_SOURCES = ("gdelt", "google_news", "reddit", "youtube",
-                   "agentreach")
+                   "agentreach", "kenya_gazette", "kenya_law")
 
 
 def _subject(db):
@@ -63,11 +63,25 @@ def _subject(db):
 def only(monkeypatch):
     """Enable exactly one source, so the queries observed are its own."""
     def _enable(name):
-        for flag in ("enable_gdelt", "enable_wayback", "enable_wikipedia",
-                     "enable_google_news", "enable_reddit", "enable_youtube",
-                     "enable_discovery", "enable_agentreach",
-                     "enable_facebook_scraper", "enable_twscrape",
-                     "enable_scweet"):
+        # Every source flag, found rather than listed.
+        #
+        # This was a hand-maintained list, so adding the Kenya Gazette and
+        # Kenya Law connectors silently broke it: their tasks still ran, the
+        # recorder caught their queries, and the assertion blamed gdelt for
+        # running four queries it had never been given. A test whose setup
+        # has to be updated for every new connector is a test that reports
+        # the next connector as a bug in the last one.
+        #
+        # `enable_verification` and friends are not sources, so only flags
+        # the orchestrator actually plans tasks from are touched.
+        source_flags = {
+            f for f in dir(settings)
+            if f.startswith("enable_") and f not in (
+                "enable_verification", "enable_resolution",
+                "enable_investigator", "enable_article_text",
+                "enable_scrapling", "enable_scrapling_stealth")
+        }
+        for flag in source_flags:
             monkeypatch.setattr(settings, flag, False, raising=False)
         monkeypatch.setattr(settings, "socialcrawl_api_key", "")
         monkeypatch.setattr(settings, "newsapi_key", "")
@@ -128,7 +142,11 @@ def test_the_probes_are_among_the_queries_that_run(db_session, monkeypatch, only
     monkeypatch.setattr(orchestrator, "_store_mentions", lambda *a, **k: 0)
     orchestrator.execute_run(db_session, run.id)
 
-    probes = set(queries.DISCOVERY_PROBES) | set(queries.DISCOVERY_TIMESPAN_PROBES)
+    # The probes THIS source is asked from. Kenya Law holds no journalism,
+    # so "scandal" and "reaction" appear in none of its documents; asserting
+    # the news list against it would demand the planner ask a question that
+    # can only come back empty.
+    probes = set(queries.probes_for(source))
     ran = " | ".join(q for q in recorder.asked if q).lower()
     assert any(probe in ran for probe in probes), (
         f"{source} ran no probe query at all: {recorder.asked[:4]}")

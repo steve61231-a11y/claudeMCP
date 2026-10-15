@@ -253,6 +253,14 @@ def plan_run(
             IngestionTask(run_id=run.id, connector="wikipedia", platform="wikipedia", endpoint="rest", query=politician.name)
         )
 
+    # Primary record before press coverage, so that when a budget or a
+    # deadline bites it is the commentary that is lost, not the evidence.
+    if settings.enable_kenya_gazette:
+        _keyword_tasks("kenya_gazette", "kenyalaw", "search")
+
+    if settings.enable_kenya_law:
+        _keyword_tasks("kenya_law", "kenyalaw", "search")
+
     if settings.enable_google_news:
         _keyword_tasks("google_news", "news", "rss")
 
@@ -598,7 +606,7 @@ def _execute_newsapi_task(session: Session, run: IngestionRun, task: IngestionTa
 #: empty one.
 KEYWORD_CONNECTORS = frozenset({
     "gdelt", "google_news", "reddit", "youtube", "scweet", "twscrape",
-    "agentreach",
+    "agentreach", "kenya_law", "kenya_gazette",
 })
 
 
@@ -615,6 +623,12 @@ def _build_connector(task: IngestionTask):
         from engine.ingestion.curated_source import CuratedResearchConnector
 
         return CuratedResearchConnector()
+    if task.connector in ("kenya_law", "kenya_gazette"):
+        from engine.ingestion.kenya_law_connector import (KenyaGazetteConnector,
+                                                          KenyaLawConnector)
+
+        return (KenyaGazetteConnector() if task.connector == "kenya_gazette"
+                else KenyaLawConnector())
     if task.connector == "agentreach":
         from engine.ingestion.agentreach_connector import AgentReachConnector
 

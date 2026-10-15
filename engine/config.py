@@ -298,6 +298,13 @@ class Settings(BaseSettings):
     # Documents fed into the deep-reading layer per report. The map-reduce
     # digest chunks whatever it is given, so this bounds run time, not coverage.
     document_corpus_limit: int = 400
+    # The primary record. Free, keyless, and the thing that separates an
+    # intelligence product from a press summary: "The Standard says he
+    # appointed X" is journalism; "Gazette Notice No. 1234 of 3 October
+    # appointed X" is evidence. A live report's biggest storyline was about
+    # board appointments and the corpus held not one gazette notice.
+    enable_kenya_gazette: bool = True   # kenyalaw.org — appointments, revocations
+    enable_kenya_law: bool = True       # kenyalaw.org — judgments and rulings
     enable_google_news: bool = True   # Google News RSS (Nation/Standard/Citizen/Star)
     enable_reddit: bool = True        # Reddit public JSON search (+ r/Kenya)
     enable_youtube: bool = True       # YouTube via yt-dlp (search + top comments)
