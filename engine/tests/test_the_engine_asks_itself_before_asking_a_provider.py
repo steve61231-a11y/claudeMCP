@@ -164,3 +164,43 @@ def test_the_startup_guard_is_wired_to_the_app_that_is_actually_served():
         "the served app has no way to report the configuration it is "
         "running under, which is how a container ran for days with no model "
         "credential and never said so")
+
+
+def test_the_health_payload_has_no_duplicate_keys():
+    """A duplicate key in a dict literal is not an error — the last one
+    simply wins. The credential block was added beside an existing "llm"
+    key, shipped, deployed, verified green, and was discarded on the way
+    out, reporting None for every field it was built to answer.
+
+    Nothing in Python objects to this, so the test has to."""
+    import ast
+
+    source = (ROOT / "engine" / "api_server.py").read_text()
+    offenders = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Dict):
+            continue
+        literals = [k.value for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+        seen = set()
+        for key in literals:
+            if key in seen:
+                offenders.append((node.lineno, key))
+            seen.add(key)
+    assert not offenders, (
+        "a later key silently overwrites an earlier one: "
+        + ", ".join(f"{key!r} at line {line}" for line, key in offenders))
+
+
+def test_health_still_reports_whether_output_may_be_sold():
+    """The credential fields were merged into an existing block. Merging is
+    where the other half gets dropped, so both halves are asserted."""
+    from fastapi.testclient import TestClient
+
+    from engine.api_server import app
+
+    llm = TestClient(app).get("/api/health").json()["llm"]
+    for field in ("backend", "model", "bulk_model"):      # the original half
+        assert field in llm, f"{field} was lost in the merge"
+    for field in ("key_present", "key_variable", "problems"):   # the new half
+        assert field in llm, f"{field} was lost in the merge"

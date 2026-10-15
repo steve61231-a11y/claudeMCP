@@ -2532,16 +2532,21 @@ def health():
         # than the raw variable because the parse is the thing that matters:
         # a typo in the value is exactly the failure this is for.
         "analysis": _analysis_capability(),
-        # Whether the model backend has a credential at all, and whether a
-        # report from this deployment would be production-grade. Both were
-        # only discoverable by running a report and reading the failure.
-        "llm": _model_backend_state(),
         # Did the last deploy's migration actually run? See `_schema_state`.
         "schema": schema,
         "uptime_seconds": int(time.time() - _PROCESS_START),
         # Which model backend is actually live, so a provider switch can be
         # confirmed from outside without generating a report to find out.
-        "llm": _llm.report_grade(),
+        # `report_grade()` says which backend serves calls and whether its
+        # output may be sold. `_model_backend_state()` adds the question that
+        # could previously only be answered by generating a report and
+        # reading how it died: is there a credential at all?
+        #
+        # Merged rather than added as a second "llm" key. A duplicate key in
+        # a dict literal is not an error — the last one simply wins — so the
+        # first attempt at this shipped, deployed, verified green, and was
+        # silently discarded on the way out.
+        "llm": {**_llm.report_grade(), **_model_backend_state()},
         # When true, matched names are served the stored pre-generated report and
         # the live pipeline never runs — so a provider switch appears to have
         # done nothing. Surfaced here because that is otherwise invisible.
