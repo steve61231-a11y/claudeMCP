@@ -146,6 +146,32 @@ rather than trusting the deploying tool's exit code.
 `.github/workflows/deploy-drift.yml` catches the one case a deploy workflow
 structurally cannot: the deploy that was never triggered at all.
 
+**A guard wired to a module nothing serves is worse than no guard.**
+`settings.validate_for_startup()` exists to refuse a container with no model
+credential. It is registered on `engine/main.py`'s app and the container
+runs `engine.api_server:app`, so it has never executed in a deployment — and
+it reads, to anyone who finds it, as proof the case is handled. A deployment
+therefore ran for days with no key and said nothing until a report died
+against someone else's 401. `/api/health` now reports `llm` — the backend,
+whether the credential it needs is PRESENT (never any part of its value;
+the endpoint is public), and whether a report from this deployment would be
+production-grade. `configuration_problems()` is the non-raising half, because
+a startup check wants to refuse and a health endpoint wants to report.
+
+**Explain a failure with what you know, not only with what a stranger said.**
+A run died on OpenRouter's "Missing Authentication header" and the page told
+the operator their key had been rejected. It had not: no key existed, the
+provider never received one, and the engine could have said so from its own
+configuration. A third party has no opinion about a variable it was never
+shown, so it can only describe the symptom — where a credential is absent
+that is the finding, and the 401 is a consequence of it. `llm` owns the
+question (`missing_credentials()`), because it owns the backend and builds
+the Authorization header, and it is the seam a test replaces when it stands
+in for the model. The explanation is gated on the error being
+authentication-shaped: a missing key does not explain a 404 for a retired
+model, and letting it try replaces a correct diagnosis with a plausible one,
+which is worse than none because it reads as an answer.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

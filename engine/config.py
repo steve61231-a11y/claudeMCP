@@ -335,10 +335,17 @@ class Settings(BaseSettings):
             return "password"
         raise RuntimeError("NEO4J_PASSWORD must be set explicitly when APP_ENV is not 'local-dev'")
 
-    def validate_for_startup(self) -> None:
-        """Fail-closed startup checks: outside local-dev, refuse to run with
-        missing shared secrets or credential fallbacks."""
-        problems = []
+    def configuration_problems(self) -> list[str]:
+        """What is missing, without raising.
+
+        Split out of `validate_for_startup` because the same question has
+        two callers with opposite needs. A startup check wants to refuse;
+        a health endpoint and a preflight want to REPORT — and the report
+        is the one that was missing, so a container ran for days with no
+        model credential and said nothing until a report died against
+        someone else's 401.
+        """
+        problems: list[str] = []
         provider = (self.llm_provider or "anthropic").strip().lower()
         if provider == "anthropic" and not self.anthropic_api_key:
             problems.append("ANTHROPIC_API_KEY is not set")
@@ -358,6 +365,12 @@ class Settings(BaseSettings):
                 problems.append("DATABASE_URL is not set (required outside local-dev)")
             if not self.neo4j_password:
                 problems.append("NEO4J_PASSWORD is not set (required outside local-dev)")
+        return problems
+
+    def validate_for_startup(self) -> None:
+        """Fail-closed startup checks: outside local-dev, refuse to run with
+        missing shared secrets or credential fallbacks."""
+        problems = self.configuration_problems()
         if problems:
             raise RuntimeError("Engine refusing to start: " + "; ".join(problems))
 

@@ -79,6 +79,33 @@ def provider() -> str:
     return (settings.llm_provider or "anthropic").strip().lower()
 
 
+def missing_credentials() -> list[str]:
+    """Which variables this backend needs and does not have.
+
+    Lives here rather than in the health module because this module owns
+    the backend: it decides which provider is called and builds the
+    Authorization header, so it is the thing that knows whether there is
+    anything to put in one.
+
+    It is also the seam a test replaces when it stands in for the model.
+    Anything faking `call_json` is saying "assume the model works", and
+    that assumption has to cover the credential too — otherwise a stubbed
+    run fails on a key it was never going to use.
+    """
+    backend = provider()
+    if backend == "anthropic":
+        return [] if (settings.anthropic_api_key or "").strip() else ["ANTHROPIC_API_KEY"]
+    if backend == "openai_compatible":
+        wanted = {"LLM_API_KEY": settings.llm_api_key,
+                  "LLM_BASE_URL": settings.llm_base_url,
+                  "LLM_MODEL": settings.llm_model}
+        return sorted(name for name, value in wanted.items()
+                      if not (value or "").strip())
+    # The stub backend makes no calls, so it needs no credential; demanding
+    # one would defeat the point of a zero-cost test mode.
+    return []
+
+
 def is_test_grade() -> bool:
     """True when calls are NOT being served by the production model.
 

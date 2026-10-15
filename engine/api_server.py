@@ -2350,6 +2350,51 @@ def _schema_state(db) -> dict:
         out["error"] = f"{type(exc).__name__}: {exc}"[:200]
     return out
 
+def _model_backend_state() -> dict:
+    """Is there a credential for the model backend at all?
+
+    A live run died with "Missing Authentication header" — the provider
+    received no key. The engine already knew: `configuration_problems()`
+    says LLM_API_KEY is required and unset. Nobody asked it.
+
+    Two reasons nobody asked, both fixed here. `validate_for_startup()` is
+    registered on `engine/main.py`'s app and production runs
+    `engine.api_server:app`, so the fail-closed check has never run in a
+    deployment. And nothing reported configuration anywhere an operator
+    could see it, so "is my key set?" could only be answered by generating
+    a whole report and reading the error.
+
+    Presence only. Never the value, never a prefix, never a length — this
+    endpoint is public, and a key is not less leaked for being leaked four
+    characters at a time.
+    """
+    provider = (settings.llm_provider or "anthropic").strip().lower()
+    key = (settings.anthropic_api_key if provider == "anthropic"
+           else settings.llm_api_key)
+    state = {
+        "provider": provider,
+        # Whether a report run on this deployment may be sold. Everything
+        # but the Anthropic path is stamped test-grade in the UI, and an
+        # operator should be able to see that before spending a run.
+        "production_grade": provider == "anthropic",
+        "key_variable": ("ANTHROPIC_API_KEY" if provider == "anthropic"
+                         else "LLM_API_KEY"),
+        "key_present": bool((key or "").strip()),
+        "model": (settings.anthropic_model if provider == "anthropic"
+                  else settings.llm_model),
+        "problems": settings.configuration_problems(),
+    }
+    if not state["key_present"]:
+        state["hint"] = (
+            f"{state['key_variable']} is empty or unset in this container, so "
+            "requests go out with no credential and the provider answers 401 "
+            "'Missing Authentication header'. If you believe you set it, check "
+            "you set it on THIS service and environment, and that the service "
+            "was redeployed afterwards — a variable added after the running "
+            "deployment was created does not reach it.")
+    return state
+
+
 def _analysis_capability() -> dict:
     """Can this deployment do the fuller entity analysis, and if not, why?
 
@@ -2487,6 +2532,10 @@ def health():
         # than the raw variable because the parse is the thing that matters:
         # a typo in the value is exactly the failure this is for.
         "analysis": _analysis_capability(),
+        # Whether the model backend has a credential at all, and whether a
+        # report from this deployment would be production-grade. Both were
+        # only discoverable by running a report and reading the failure.
+        "llm": _model_backend_state(),
         # Did the last deploy's migration actually run? See `_schema_state`.
         "schema": schema,
         "uptime_seconds": int(time.time() - _PROCESS_START),

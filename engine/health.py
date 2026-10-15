@@ -283,6 +283,44 @@ def reset_probe_cache() -> None:
     _last_good_probe = None
 
 
+#: Errors that are about WHO is asking, as opposed to what was asked for.
+#: A missing credential explains one of these. It does not explain a 404 for
+#: a retired model or a 429 from a busy provider, and letting it try would
+#: replace a correct diagnosis with a plausible one — which is worse than no
+#: diagnosis, because it reads as an answer.
+_AUTH_MARKERS = ("401", "403", "unauthor", "forbidden", "missing authentication",
+                 "no api key", "invalid api key", "missing bearer",
+                 "authentication_error", "api key")
+
+
+def _looks_like_auth(error: str) -> bool:
+    lowered = (error or "").lower()
+    return any(marker in lowered for marker in _AUTH_MARKERS)
+
+
+def _remedy_for_missing_configuration(problems: list[str], backend: str) -> str:
+    """What to set, where, said without involving the provider.
+
+    Deliberately separate from `_remedy_for`: that one translates what a
+    provider said, and a provider cannot have an opinion about a variable
+    it was never shown.
+    """
+    dash = _dashboard()
+    names = sorted({p.split()[0] for p in problems})  # tolerates either form
+    listed = ", ".join(names)
+    return (
+        f"{listed} " + ("is" if len(names) == 1 else "are")
+        + f" not set on this service, so no request was made. Add "
+        + ("it" if len(names) == 1 else "them")
+        + f" in {dash} and redeploy — type values in there, never paste them "
+        "into a chat. If you believe you already set this, check you set it on "
+        "THIS service and environment: a variable added after the running "
+        "deployment was created does not reach it until the next deploy. "
+        "`/api/health` reports `llm.key_present`, which answers it without "
+        "generating a report."
+    )
+
+
 def preflight() -> dict:
     """One cheap real call before an expensive run.
 
@@ -317,6 +355,26 @@ def preflight() -> dict:
             )
     except Exception as exc:  # noqa: BLE001 — classified below
         error = f"{type(exc).__name__}: {exc}"[:500]
+        # Explain the failure with what we know, not only with what the
+        # provider said.
+        #
+        # A run died on "Missing Authentication header" and the page told
+        # the operator their API key had been rejected. It had not: no key
+        # existed, the provider never received one, and the engine could
+        # have said so from its own configuration the whole time. A third
+        # party can only ever describe the symptom — it has no opinion
+        # about a variable it was never shown — so where a credential is
+        # absent, that is the finding, and the provider's 401 is a
+        # consequence of it rather than the cause.
+        missing = llm.missing_credentials() if _looks_like_auth(error) else []
+        if missing:
+            raise PreflightFailed(
+                "The model backend is not configured, so this run was "
+                "stopped before it collected anything. Nothing was "
+                "generated because nothing could be.",
+                _remedy_for_missing_configuration(missing, backend),
+                ", ".join(missing) + " not set — " + error,
+            )
         if not _is_fatal(error):
             # Busy, not broken. Proceed, and say so loudly enough that a thin
             # report is not mistaken for a quiet subject.
