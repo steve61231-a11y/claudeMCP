@@ -23,7 +23,23 @@ from engine.config import settings
 from engine.processing.sentiment import lexicon_sentiment
 
 _MAX_ITEM_CHARS = 600
-_BATCH_WORKERS = 4
+
+#: How many scoring batches run at once.
+#:
+#: This was 4 — the narrowest pool in the pipeline, on the stage that walks
+#: the MOST items. Scoring runs over every unscored mention in a corpus that
+#: compounds by design, 25 to a batch, so a 1,500-mention backlog is 60
+#: batches: fifteen sequential waves at four workers, against a deadline of
+#: 150 seconds. It could not finish, the remainder stayed unscored, and
+#: unscored mentions carry into the next run — so the backlog grew on every
+#: report and the stage got further behind itself forever.
+#:
+#: These threads are blocked on an HTTP response, not allocating: the same
+#: reasoning `low_memory` was corrected for. Widening them is latency, not
+#: memory. The real ceiling on spend is `LLM_MAX_CONCURRENCY`, which is
+#: process-wide and enforced in `llm.call_json`, so this cannot run away
+#: from an operator who has set one.
+_BATCH_WORKERS = 12
 
 VALID_SENTIMENTS = {"positive", "neutral", "negative"}
 

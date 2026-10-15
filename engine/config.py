@@ -147,7 +147,13 @@ class Settings(BaseSettings):
     # rate-limited or metered backend the right knob is LLM_MAX_CONCURRENCY,
     # which is now a real process-wide in-flight limit rather than a
     # per-stage one that overlapping stages could multiply.
-    llm_fanout_workers: int = 8
+    # Raised from 8. Fifteen analyst sections at eight workers is two waves,
+    # and the second wave is pure wall-clock the reader waits through for no
+    # reason — these threads sit on an HTTP response. One wave instead of
+    # two is the single biggest latency win in the run, and it costs about
+    # 200KB. See `LLM_MAX_CONCURRENCY` for the limit that actually bounds
+    # spend; this one only decides how long the waiting takes.
+    llm_fanout_workers: int = 16
     # The same separation for the collectors.
     #
     # A scraper worker holds a response body, which is a real allocation —
@@ -157,7 +163,11 @@ class Settings(BaseSettings):
     # than accumulated, and three workers against a dozen sources is most of
     # why collection is the longest phase of a run. Lower this, not
     # LOW_MEMORY, if a small instance is actually running out of room.
-    ingestion_workers: int = 8
+    # Collectors are I/O-bound and mostly on DIFFERENT hosts, so widening
+    # them overlaps the waiting rather than multiplying it. The per-host gap
+    # in `ingestion/http.py` still paces GDELT at one request per five
+    # seconds whatever this says — a polite source stays polite.
+    ingestion_workers: int = 14
     # Full-power (2GB) cap on per-mention LLM work (entity-linking + sentiment)
     # per run, so a heavily-covered subject still finishes in a few minutes. The
     # map-reduce digest reads 100% of the corpus regardless; uncapped mentions

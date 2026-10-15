@@ -328,6 +328,23 @@ degrades, the code that knows WHY must say so — `grounding.check` returns
 `method_reason`, and `/api/health` reports `analysis` so a deployment's real
 capability can be confirmed without generating a report.
 
+**The narrowest pool was on the busiest stage.** Sentiment scoring walks
+every unscored mention in the window, 25 to a batch, and ran them through
+FOUR workers — fewer than the digest's six, on the stage with the most
+items. A 1,500-mention backlog is sixty batches: fifteen sequential waves
+against a 150s deadline, so it could not finish, the remainder stayed
+unscored, unscored mentions carry into the next run, and the backlog grew
+on every report while the stage fell further behind itself. The analyst
+fan-out ran fifteen sections through eight workers — two waves, the second
+of which is wall-clock for nothing. Now 12 / 16 / 14 (scoring, fan-out,
+collectors). Every one of these threads is blocked on an HTTP response, not
+allocating: the correction `low_memory` already received, applied to the
+pools that were still narrow. Width is LATENCY; spend is bounded by
+`LLM_MAX_CONCURRENCY`, which is process-wide and enforced in
+`llm.call_json`, and a test asserts it still clamps the widened pools. The
+per-host gap in `ingestion/http.py` is unaffected, so a polite source stays
+polite however wide the pool.
+
 **One setting must not govern two unrelated costs.** `low_memory` protected
 RAM on a 512MB instance *and* set the width of every model fan-out in the
 product — two workers on the corpus digest instead of six, three analysts
