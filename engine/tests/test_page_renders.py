@@ -104,6 +104,15 @@ def rendered():
             page.evaluate(OPEN_EVERY_SECTION)
             text = page.evaluate("() => document.body.innerText")
             cards = page.evaluate("() => document.querySelectorAll('.card').length")
+            # The same report through the OPERATOR's eyes. Diagnostics are
+            # for whoever runs the engine and are off by default — a CEO
+            # reading "Failed: reddit — HTTPError 403" under a complete
+            # report concludes the product is broken. Both views are
+            # asserted: the reader's must be clean, the operator's complete.
+            page.evaluate("() => document.getElementById('zenith').classList.add('operator')")
+            page.evaluate(OPEN_EVERY_SECTION)
+            operator_text = page.evaluate("() => document.body.innerText")
+            page.evaluate("() => document.getElementById('zenith').classList.remove('operator')")
             # Leave the tab and come back. `go()` used to do v.innerHTML='' on
             # every switch, which destroyed the view a run was still writing
             # into — the run continued, its output went nowhere, and returning
@@ -131,7 +140,7 @@ def rendered():
             browser.close()
     finally:
         server.shutdown()
-    return {"errors": errors, "text": text, "cards": cards,
+    return {"errors": errors, "text": text, "operator_text": operator_text, "cards": cards,
             "issue_tab": issue_tab, "after_return": after_return,
             "lookback": lookback, "section_count": section_count}
 
@@ -149,14 +158,27 @@ def test_the_report_actually_draws(rendered):
 # --- a broken run must announce itself, loudly and first --------------------
 
 def test_a_broken_run_says_it_is_not_an_analysis(rendered):
-    assert "This is not an analysis" in rendered["text"]
-    assert "45 of 75" in rendered["text"]
+    """To the operator, with the numbers; to the reader, in a plain sentence.
+    Neither may be left to infer it from a page of empty sections."""
+    assert "This is not an analysis" in rendered["operator_text"]
+    assert "45 of 75" in rendered["operator_text"]
+    assert "This edition could not be completed" in rendered["text"]
+    assert "45 of 75" not in rendered["text"], "the reader was shown the call counts"
 
 
 def test_failed_sections_are_named_with_their_error(rendered):
-    assert "Some sections could not be produced" in rendered["text"]
-    assert "public_voice" in rendered["text"]
-    assert "HTTP 429" in rendered["text"]
+    assert "Some sections could not be produced" in rendered["operator_text"]
+    assert "public_voice" in rendered["operator_text"]
+    assert "HTTP 429" in rendered["operator_text"]
+
+
+def test_the_reader_is_not_shown_the_engine_s_errors(rendered):
+    """The live complaint, verbatim: "when you show me like this failed and
+    that failed, bro, I don't give a fuck." A provider's error code on a
+    client's page is a stack trace with better typography."""
+    for diagnostic in ("Some sections could not be produced", "HTTP 429",
+                       "Some sources did not deliver"):
+        assert diagnostic not in rendered["text"], f"the reader sees {diagnostic!r}"
 
 
 def test_the_test_grade_warning_still_appears(rendered):
@@ -183,7 +205,9 @@ def test_narratives_render_with_a_real_label_and_a_way_in(rendered):
 
 
 def test_source_failures_reach_the_page(rendered):
-    assert "Some sources did not deliver" in rendered["text"]
+    """They reach the OPERATOR's page. The reader's shows what the report
+    rests on, not which doors were closed."""
+    assert "Some sources did not deliver" in rendered["operator_text"]
 
 
 # --- a run must survive the reader looking at something else ----------------

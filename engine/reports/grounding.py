@@ -85,9 +85,25 @@ _CODE_IDENT = re.compile(r"^(?:[A-Z]{2,}[A-Za-z]*|[A-Z][a-z]+(?:[A-Z][a-z]+)+)$"
 #: cut, not a name: "Dominant Narratives and".
 _TRAILING_JOIN = {"and", "or", "of", "for", "in", "on", "with", "to", "the"}
 
+#: Quotation marks are punctuation around a name, never part of it.
+#:
+#: A live report on Rigathi Gachagua was flagged for inventing "sio utumwa'":
+#: a Swahili phrase from a quoted slogan, with the closing quote mark caught
+#: in the token. The token pattern allows an apostrophe INSIDE a word
+#: (O'Neill, Ng'ang'a), so a trailing one rode along, and `utumwa'` with its
+#: quote matched nothing in a corpus that says `utumwa` — the slogan the
+#: report was quoting.
+_QUOTES = "'\"‘’“”`´"
+
 
 def _tokens(name: str) -> list[str]:
-    return [_POSSESSIVE.sub("", t.lower()) for t in _TOKEN.findall(name or "")]
+    return [_POSSESSIVE.sub("", t.lower()).strip(_QUOTES + "-")
+            for t in _TOKEN.findall(name or "")]
+
+
+def _clean(name: str) -> str:
+    """The candidate without the punctuation an extractor caught around it."""
+    return (name or "").strip().strip(_QUOTES + ".,;:()[]").strip()
 
 
 def is_checkable(name: str) -> tuple[bool, str]:
@@ -100,7 +116,7 @@ def is_checkable(name: str) -> tuple[bool, str]:
     own vocabulary, a heading fragment or a possessive — and told the
     operator not to send a clean report to a client.
     """
-    text = (name or "").strip()
+    text = _clean(name)
     if not text:
         return False, "empty"
     if _UUID.search(text) or _HEXISH.match(text.replace("-", "")):
@@ -110,6 +126,11 @@ def is_checkable(name: str) -> tuple[bool, str]:
         return False, "code identifier"
     if words[-1].lower() in _TRAILING_JOIN:
         return False, "sentence fragment"
+    # A name in English prose carries a capital. An all-lowercase phrase is
+    # a phrase — usually Swahili or Sheng the English entity model could not
+    # parse, which it labels a PERSON because it has no better guess.
+    if not any(w[:1].isupper() for w in words):
+        return False, "not a proper name"
     return True, ""
 
 
@@ -231,6 +252,9 @@ def check(payload: dict, mentions: list[dict]) -> dict:
     _prose(payload, strings)
 
     seen, how, why = _names_in(strings)
+    # Judged — and reported — without the quotes an extractor caught around
+    # them, so the page never shows a name with a stray mark attached.
+    seen = {key: _clean(name) or name for key, name in seen.items()}
 
     # Judge only what can be judged, and say how much was set aside.
     judgeable, set_aside = {}, {}
@@ -276,6 +300,56 @@ def check(payload: dict, mentions: list[dict]) -> dict:
     if why:
         result["method_reason"] = why
     return result
+
+
+def redact(payload: dict, verdict: dict) -> dict:
+    """Remove every sentence that names someone the sources never mention.
+
+    `check` reports; this acts on the report. The banner it fed told the
+    operator "do not send this to a client until it is clean" — and then
+    left the cleaning to them, in a product whose reader is a CEO who will
+    never open a diagnostics panel. A name that appears nowhere in a corpus
+    of hundreds of documents did not come from the evidence; the sentence
+    carrying it is not a finding, and printing it with a footnote does not
+    make it one.
+
+    Only ACCUSABLE names are acted on — multi-word, capitalised, with a
+    distinctive part absent from every source. Single words the corpus lacks
+    stay reported as unverified and untouched, for the reason `is_accusable`
+    gives. Every removal is declared with its sentence and the name that
+    triggered it, which is what keeps the founding rule: the operator view
+    shows exactly what was taken out and why.
+    """
+    names = [n for n in (verdict.get("ungrounded") or []) if n]
+    if not names:
+        return verdict
+    from engine.reports import protected_terms
+    from engine.reports import prose as prose_tools
+
+    cut: set[tuple[str, str]] = set()
+    removed: list[dict] = []
+    for path, text in protected_terms._prose_fields(payload):
+        for sentence in prose_tools.sentences(text):
+            hit = next((n for n in names if n in sentence), None)
+            if hit and (path, sentence) not in cut:
+                cut.add((path, sentence))
+                removed.append({"field": path, "sentence": sentence, "name": hit})
+    if cut:
+        protected_terms._rewrite(payload, cut)
+    out = dict(verdict)
+    out["removed"] = len(cut)
+    out["removed_sentences"] = removed[:50]
+    out["touched_fields"] = sorted({_top_key(f["field"]) for f in removed})
+    if cut:
+        out["note"] = (
+            f"{len(cut)} sentence(s) naming someone who appears in none of the "
+            "collected sources were removed before this report was shown. "
+            "They are listed here so the removal can be checked.")
+    return out
+
+
+def _top_key(path: str) -> str:
+    return re.split(r"[.\[]", path, maxsplit=1)[0]
 
 
 #: A capitalised multi-word name: "Peter Kamau", "National Treasury".

@@ -406,6 +406,90 @@ one real hazard — anything assigned inside and read after becomes local,
 and the NameError lands long after the tests for that stage pass — so a
 test walks the AST for exactly that.
 
+**Order is a fix that speed cannot be.** Six deployments tried to get the
+Sentiment Framework onto the page by shortening the queue in front of it —
+deadlines on the analysts, ceilings on the tail, wider pools — and a live
+report on Rigathi Gachagua still showed "Overview" and "Weekly Dashboard"
+and no framework tab, while the run went on behind them. Each fix was right
+and none helped, because the framework was still LAST: after the analyst
+fan-out, after entity resolution and the knowledge graph, gated on whatever
+time those left. It needs none of them — it is arithmetic over the scored
+corpus, the storylines and the emergent items, all of which exist before the
+first analyst is asked anything. `_build_framework` now runs before the
+fan-out, publishes, and runs again after it with what the analysts wrote; it
+is never gated on the clock, because a stage that costs milliseconds and IS
+the deliverable is the last thing a deadline should take away. When
+something the client asked for is late, ask what it actually depends on
+before asking how to make the things ahead of it faster.
+
+**Deliver first, enrich after.** Entity and event resolution, credibility,
+the knowledge graph, temporal signals, the claim audit and the investigator
+serve the PLATFORM — they are how the corpus compounds and how the next run
+knows what to ask — and none is a section a client reads first. They held
+"Still building this report" open for as long as they took.
+`pipeline.run_back_office` runs them after the report is saved and the job
+marked done (`run_analysis(..., defer_back_office=list)`), each stage on a
+session of its own (an abandoned worker must not hold a session someone else
+is using), against `BACK_OFFICE_DEADLINE_SECONDS`, and folds the results into
+the stored report. Because a reader can start another report while the last
+one's back office runs, `engine/runctx.py` binds each thread to its own run's
+ledger and health tracker and `carry()` takes that into pool workers —
+otherwise one report's failures land on another's page. `_upsert_entity`
+inserts inside a SAVEPOINT for the same reason: the back office is now a
+concurrent writer of the same keys.
+
+**Collection had no ceiling, and a budget applied per call is not a budget
+per run.** Collection was the longest phase of every run and nothing bounded
+it: GDELT is paced at 5s and learns to go slower, and `article_text_max_fetch`
+— documented as "max URLs enriched per run" — was applied once per QUERY, so
+thirty-two GDELT and Google News tasks could attempt thirty-two times the
+documented downloads at twenty seconds each. Now `INGESTION_DEADLINE_SECONDS`
+stops it: unstarted tasks become `skipped_deadline` (never an empty result),
+in-flight ones stop at their next page or download, and the budget is
+claimed per run. Every phase is also timed — `StageLedger.lap()` —
+and the operator view shows "Where the time went", because a run that takes
+too long has to say WHERE or every fix is a guess.
+
+**A server refused is not a question unanswered.** Kenya Law's bot wall
+refuses the python-requests fingerprint ("403 Forbidden") and Reddit refuses
+every keyless request from a cloud address ("403 Blocked"). Each run asked a
+dozen times, printed every URL under "Failed" — and the learning loop read
+each refusal as a query that had been asked and found nothing, so two runs
+behind a block would retire every one of those queries. Now
+`http.remember_refusal` keeps a host's verdict on this SERVER for a few
+hours and nothing asks again meanwhile (`fetch_backend` included); Kenya Law
+goes through the tiered fetcher, whose second tier presents Chrome's TLS
+fingerprint; Reddit signs in app-only when `REDDIT_CLIENT_ID`/`SECRET` exist;
+and `learning.recall` skips a task that finished empty WITH a recorded
+reason. The development sandbox cannot reach either host, so
+`.github/workflows/source-probe.yml` asks from GitHub's datacenter network on
+every ingestion change and annotates the run — read it before guessing why a
+source is down.
+
+**Two readers, one page.** The person who RUNS the engine needs to know which
+source refused it, which stage failed, which name was not found. The person
+who READS the report — a CEO, a client — needs none of it, and a page that
+shows them "Failed: kenyalaw, reddit — HTTPError 403" under a complete report
+reads as a broken product. Diagnostics carry `.op-only` and appear only when
+"Show operator diagnostics" is on in Settings; downloaded PDFs never include
+them. This is not hiding failure: a section with nothing in it is removed
+from the reader's view rather than shown empty, so a failed section can never
+pass for a quiet one — it is simply not there, and the operator view says
+why. Where the reader must know (the model did not answer at all; the run
+died partway), they get one plain sentence instead of the stack trace.
+
+**A guard that reports and stops is half a guard.** The grounding banner told
+the operator "do not send this to a client until it is clean" and left the
+cleaning to them — in a product whose reader never opens a diagnostics
+panel. `grounding.redact` now removes each sentence naming someone who
+appears in none of the sources, and declares the removal with its sentence;
+only ACCUSABLE names (multi-word, capitalised, a distinctive part absent
+from every source) are acted on. The live trigger was "sio utumwa'": a
+Swahili slogan with its closing quote mark caught in the token, flagged as
+an invented person. Quote marks are now stripped before matching, and a
+phrase with no capital letter is not a name, whatever an English entity
+model labels it.
+
 **Every stage needs a deadline.** `try/except` does not bound a call that never
 returns — there is no exception to catch. The analyst fan-out, the tail after
 it, and the whole run each have a ceiling now. Without one, a report hangs
@@ -480,6 +564,8 @@ Worth setting on anything larger than a 512MB instance:
 | `LLM_FANOUT_WORKERS` | How wide a parallel stage of model calls runs. Default 8. Raising it is latency, not memory. |
 | `INGESTION_WORKERS` | The same for collectors. Default 8. |
 | `LLM_MAX_CONCURRENCY` | A hard ceiling on model calls in flight across the whole process. Unset means none, which is what the paid Anthropic path wants; set it on a metered or rate-limited backend. |
+| `INGESTION_DEADLINE_SECONDS` | Ceiling on collection. Default 240. Unstarted queries are recorded as not asked; the corpus compounds, so the next run finds what this one left. |
+| `BACK_OFFICE_DEADLINE_SECONDS` | Ceiling on the work that runs after delivery (resolution, knowledge graph, claim audit). Default 900. Nobody waits on it. |
 
 Model backend — either Anthropic directly, or anything OpenAI-compatible:
 
@@ -508,7 +594,10 @@ in the corpus.
 Optional sources: `SOCIALCRAWL_API_KEY` (TikTok/Instagram/LinkedIn/X — the
 paid social backbone; without it there is no social media in the corpus at all,
 which skews reports toward news coverage and away from supportive voices),
-`NEWSAPI_KEY`, `SEARXNG_URL`, `X_USERNAME`/`X_EMAIL`/`X_PASSWORD`.
+`NEWSAPI_KEY`, `SEARXNG_URL`, `X_USERNAME`/`X_EMAIL`/`X_PASSWORD`,
+`REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` (a free "script" app at
+reddit.com/prefs/apps — Reddit refuses keyless requests from cloud servers,
+so without these it contributes nothing in production).
 
 ---
 

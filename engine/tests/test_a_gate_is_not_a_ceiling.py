@@ -27,8 +27,13 @@ PIPELINE_SRC = (Path(__file__).resolve().parents[1] / "pipeline.py").read_text()
 TREE = ast.parse(PIPELINE_SRC)
 RUN = next(n for n in ast.walk(TREE)
            if isinstance(n, ast.FunctionDef) and n.name == "run_analysis")
+# The heavy stages now run after delivery, in their own function. The
+# Sentiment Framework left this list altogether: it is arithmetic, built
+# before the analysts, and was never heavy — only badly placed.
+BACK_OFFICE = next(n for n in ast.walk(TREE)
+                   if isinstance(n, ast.FunctionDef) and n.name == "run_back_office")
 
-TAIL = ("entity_event_resolution", "sentiment_framework", "claim_verification")
+TAIL = ("entity_event_resolution", "claim_verification")
 
 
 def test_the_tail_stages_are_bounded_not_only_gated():
@@ -42,9 +47,15 @@ def test_the_tail_stages_are_bounded_not_only_gated():
 def test_each_is_handed_what_is_left_of_the_run():
     """Not a fresh budget each. Three stages each given the full ceiling is
     the same unbounded run wearing three hats — the mistake
-    `LLM_MAX_CONCURRENCY` was introduced to fix, one layer up."""
-    assert "_time_left()" in PIPELINE_SRC
-    assert PIPELINE_SRC.count("_bounded(") >= len(TAIL)
+    `LLM_MAX_CONCURRENCY` was introduced to fix, one layer up. The back
+    office shares ONE budget across its stages, and the analyst phase is
+    handed what is left of the run rather than its own fixed twelve minutes."""
+    back_office = ast.get_source_segment(PIPELINE_SRC, BACK_OFFICE)
+    assert "ends_at - _time.monotonic()" in back_office
+    for name in TAIL:
+        assert f'_bounded("{name}", left()' in back_office
+    run = ast.get_source_segment(PIPELINE_SRC, RUN)
+    assert "deadline_seconds=_time_left(" in run
     body = PIPELINE_SRC[PIPELINE_SRC.index("def _time_left"):][:600]
     assert "run_ends_at - _time.monotonic()" in body
 
@@ -62,16 +73,22 @@ def test_no_variable_is_trapped_in_the_new_closures():
     assigned inside and read after the block becomes local, and the read
     after it raises NameError at runtime — long after the tests that
     exercise the stage itself have passed."""
-    inner = [n for n in ast.walk(RUN)
+    inner = [n for n in ast.walk(BACK_OFFICE)
              if isinstance(n, ast.FunctionDef) and n.name.startswith("_run_")]
     assert inner, "the tail stages are no longer wrapped at all"
     for node in inner:
         assigned = {t.id for a in ast.walk(node) if isinstance(a, ast.Assign)
                     for t in ast.walk(a)
                     if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)}
-        read_after = {n2.id for n2 in ast.walk(RUN)
+        read_after = {n2.id for n2 in ast.walk(BACK_OFFICE)
                       if isinstance(n2, ast.Name) and isinstance(n2.ctx, ast.Load)
                       and n2.lineno > node.end_lineno}
+        # A name the enclosing function assigns for itself after the block
+        # (found = _bounded(...)) is its own variable, not a trapped one.
+        assigned -= {t.id for a in ast.walk(BACK_OFFICE) if isinstance(a, ast.Assign)
+                     and a.lineno > node.end_lineno
+                     for t in ast.walk(a)
+                     if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)}
         trapped = sorted(assigned & read_after)
         assert not trapped, (
             f"{node.name} assigns {trapped} and something after the block "

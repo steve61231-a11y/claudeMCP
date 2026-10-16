@@ -245,6 +245,19 @@
    A class, not an inline style, so the print block can overrule it. */
 #zenith .mode-off{display:none}
 
+/* Two readers, one page. The person who RUNS the engine needs to know which
+   source refused it, which stage failed and why, and whether a name in the
+   brief was found in the corpus. The person who READS the report — a CEO, a
+   client — needs none of that, and a page that shows it to them reads as a
+   broken product: "Failed: kenyalaw, reddit — HTTPError 403" under a report
+   that is in fact complete. Diagnostics are therefore operator-only, switched
+   on in Settings, and never printed. A section with nothing in it is hidden
+   from the reader rather than shown empty, so a failed section can never pass
+   for a quiet one — it simply is not there, and the operator view says why. */
+#zenith:not(.operator) .op-only{display:none!important}
+#zenith.operator .client-only{display:none!important}
+#zenith:not(.operator) .sect[data-empty]{display:none!important}
+
 /* Analyst prose. The opening sentence is the finding; the rest is how they
    got there, and setting both at caption size said neither. */
 #zenith .prose-lead{font-size:16px;line-height:1.6;color:var(--txt);
@@ -384,6 +397,9 @@
      paper, so a reader can tell where one framework ends and the next
      begins. */
   #zenith .mode-off{display:block!important}
+  /* A printed report is for a client, whichever view was on screen. */
+  #zenith .op-only,#zenith.operator .op-only,#zenith .sect[data-empty]{display:none!important}
+  #zenith .client-only,#zenith.operator .client-only{display:revert!important}
   #zenith .mode-host[data-mode]{border-top:2px solid #999;margin-top:22px;
     padding-top:6px;break-before:page;page-break-before:always}
   #zenith .mode-host[data-mode]::before{
@@ -721,9 +737,19 @@
     // the entire script before a single element was drawn — a blank page with
     // nothing on it to explain itself.
     base: store('zenith_base') || ((location.protocol.startsWith('http') && !/claude\.ai|claudeusercontent/.test(location.host)) ? location.origin : 'https://pulse-engine-efnd.onrender.com'),
-    key:  store('zenith_key')  || ''
+    key:  store('zenith_key')  || '',
+    // The operator view: diagnostics on. Off by default, so a report opened
+    // by anyone who has not asked for the engine's working is a report.
+    operator: store('zenith_operator') === '1'
   };
   let LIVE = false;
+  function applyView(){
+    const root=document.getElementById('zenith');
+    if(root)root.classList.toggle('operator', !!CFG.operator);
+    // Section counts depend on who is reading; recount what is on screen.
+    try{const v=document.getElementById('view'); if(v)labelSections(v);}catch(e){}
+  }
+  applyView();
 
   /** Fetch a PDF (authenticated via header, never in the URL) and hand it to
       the browser's own download flow — createObjectURL + a synthetic click,
@@ -2959,13 +2985,19 @@
        reader to reconcile them.
     */
     /* 10 — Status. */
-    const c10=dashCard('Status','Pipeline health behind these numbers');
+    const c10=dashCard('Status','How much evidence sits behind these numbers');
     const ver=r.verification||{}, gate=r.evidence_gate||{};
     const g10=el('div','grid');g10.style.gridTemplateColumns='repeat(auto-fit,minmax(160px,1fr))';
     g10.appendChild(kpiCard('Evidence examined',fmt(gate.examined),(gate.on_topic!=null?gate.on_topic+' on topic':'')));
-    g10.appendChild(kpiCard('Claims verified',fmt(ver.verified),(ver.unverified!=null?ver.unverified+' unverified':'')));
+    // The claim audit runs after delivery, so on a fresh report it may not
+    // have landed yet. A dash under "Claims verified" reads as "none were";
+    // say nothing until there is something to say.
+    if(ver.verified!=null)
+      g10.appendChild(kpiCard('Claims verified',fmt(ver.verified),(ver.unverified!=null?ver.unverified+' unverified':'')));
     g10.appendChild(kpiCard('Coverage',cov.complete?'Complete':'Partial',fmt(cov.mentions_analyzed)+' analysed'));
-    g10.appendChild(kpiCard('Connection',meta&&meta.live?'Live':'Cached',esc(ukDate(r.generatedAt))));
+    const conn=kpiCard('Connection',meta&&meta.live?'Live':'Cached',esc(ukDate(r.generatedAt)));
+    conn.classList.add('op-only');
+    g10.appendChild(conn);
     c10.appendChild(g10);
     out.appendChild(c10);
 
@@ -3199,6 +3231,12 @@
       a chevron. Run once after a render, over whatever is actually in the
       DOM, so it cannot drift from what each section built. */
   function labelSections(root){
+    // Count what THIS reader can see. A section whose only content is
+    // operator diagnostics is empty to a client — counted as "5 items" it
+    // promised rows that are not there for them.
+    const zroot=document.getElementById('zenith');
+    const hiddenCls=(zroot&&zroot.classList.contains('operator'))?'.client-only':'.op-only';
+    const shown=(nodes)=>[...nodes].filter(n=>!n.closest(hiddenCls));
     root.querySelectorAll('.sect').forEach(c=>{
       const body=c.querySelector('.sect-body');
       const count=c.querySelector('.sect-count');
@@ -3207,14 +3245,14 @@
       // order and never added together. A combined selector counted Public
       // Voice as "7 items": three stance columns PLUS the four themes
       // inside them, which is not a number of anything.
-      const rows=body.querySelectorAll('.mentr').length
-                 || body.querySelectorAll('.stance-col,.tl-item,.qt').length
+      const rows=shown(body.querySelectorAll('.mentr')).length
+                 || shown(body.querySelectorAll('.stance-col,.tl-item,.qt')).length
                  // The explanation this function itself appends to an
                  // empty section is not content. Counting it would make the
                  // section read "1 item" on the next pass, and the note
                  // would then be removed as unnecessary — a check that
                  // cancels itself out one render later.
-                 || [...body.children].filter(n=>!n.classList.contains('sect-empty-note')).length;
+                 || shown(body.children).filter(n=>!n.classList.contains('sect-empty-note')).length;
       // A section whose finding IS its subtitle is not empty.
       //
       // "Sentiment coverage" says "459 of 459 mentions read by the analyst
@@ -3578,15 +3616,37 @@
 
   /** Which sources delivered and which didn't. A thin report has to say why it
       is thin — otherwise a collection failure reads as an absence of coverage. */
+  //: How a source is named to a reader. "twitter" and "x" are one platform
+  //: under two names, and listing both read as two sources.
+  const SOURCE_LABEL={x:'X',twitter:'X',youtube:'YouTube',news:'News',reddit:'Reddit',
+    kenyalaw:'Kenya Law',kenya_law:'Kenya Law',kenya_gazette:'Kenya Gazette',
+    wikipedia:'Wikipedia',tiktok:'TikTok',instagram:'Instagram',linkedin:'LinkedIn',
+    facebook:'Facebook',web:'Web',wayback:'Web archive',gdelt:'News',google_news:'News'};
+  function sourceLabels(items){
+    const seen=new Set(),out=[];
+    (items||[]).forEach(i=>{
+      const name=SOURCE_LABEL[String(i).toLowerCase()]||String(i);
+      if(!seen.has(name)){seen.add(name);out.push(name);}
+    });
+    return out;
+  }
+
   function renderDataCoverage(dc){
     if(!dc||!(dc.sources_ok||dc.sources_down||dc.sources_degraded))return null;
     const down=dc.sources_down||[], deg=dc.sources_degraded||[], ok=dc.sources_ok||[];
     if(!down.length&&!deg.length&&!ok.length)return null;
-    const c=deepCard('Where this data came from',dc.complete?'Every enabled source delivered this run':'Some sources did not deliver — this report is thinner than it should be');
+    // The reader's heading says what the report rests on. The operator's
+    // line underneath says what did not deliver — which is a fact about the
+    // engine, not about the subject, and only one of those two readers can
+    // do anything with it.
+    const c=deepCard('Where this data came from','The sources this report draws on');
+    if(!dc.complete)c.appendChild(el('div','muted op-only',
+      'Some sources did not deliver this run — this report is thinner than it should be.'));
     const row=(label,items,cls)=>items.length?`<div style="margin-top:10px"><div class="muted" style="font-size:12px">${label}</div>
       <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:6px">${items.map(i=>`<span class="pill ${cls}">${esc(i)}</span>`).join('')}</div></div>`:'';
-    c.appendChild(el('div','',row('Delivered',ok,'pos')+row('Partial',deg,'amber')+row('Failed',down,'neg')));
-    if((dc.notes||[]).length)c.appendChild(el('div','',
+    c.appendChild(el('div','client-only',row('Sources',sourceLabels([...ok,...deg]),'pos')));
+    c.appendChild(el('div','op-only',row('Delivered',ok,'pos')+row('Partial',deg,'amber')+row('Failed',down,'neg')));
+    if((dc.notes||[]).length)c.appendChild(el('div','op-only',
       `<div class="lbl" style="margin-top:14px">Notes</div><ul class="muted" style="font-size:13px;margin:8px 0 0 18px"><li>${dc.notes.map(esc).join('</li><li>')}</li></ul>`));
     // What this subject's own history changed about the questions this run
     // asked.
@@ -3618,6 +3678,9 @@
           `<b style="font-size:13.5px">${esc(source)}</b>
            <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(note)}</div>`));
       });
+      // The engine's own learning loop: how the queries are chosen. Worth
+      // seeing for whoever tunes it; noise to whoever reads the report.
+      f.classList.add('op-only');
       c.appendChild(f);
     }
     return c;
@@ -3763,7 +3826,8 @@
       indistinguishable from data loss. */
   function renderEvidenceGate(gate){
     if(!gate||gate.examined==null)return null;
-    const c=deepCard('What was read, and what was set aside',gate.error||null);
+    const c=deepCard('What was read, and what was set aside',null);
+    if(gate.error)c.appendChild(el('div','muted op-only',esc(gate.error)));
     // The gate scores documents the DISCOVERY sweep brought in this run. When
     // the sweep found nothing new, every number here is legitimately zero —
     // and rendering four zeros beside a corpus of 109 said "nothing was read",
@@ -3848,7 +3912,7 @@
       renderDataCoverage(r.dataCoverage),
       renderTopMentions(r)].filter(Boolean);
     if(working.length){
-      zone(host,'03','The working','How this was built: what was read, checked, and what failed');
+      zone(host,'03','The working','How this was built: what was read, and how it was checked');
       working.forEach(c=>host.appendChild(c));
     }
   }
@@ -3984,6 +4048,7 @@
         +`<span class="muted"> — ${esc(r.why.text)}</span></div>`;
     });
     c.appendChild(list);
+    c.classList.add('op-only');
     return c;
   }
 
@@ -4049,7 +4114,15 @@
             so a second run does not re-collect or re-read what this one
             already did.</div>
         </div></div>`;
+      c.classList.add('op-only');
       wrap.appendChild(c);
+      const plain=el('div','card client-only');
+      plain.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.08)';
+      plain.innerHTML=`<b style="font-size:15px">This edition is incomplete.</b>
+        <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">Some sections
+        are not included. Generate the report again to complete it — the work already done is
+        kept, so the second run is quicker.</div>`;
+      wrap.appendChild(plain);
     }
     const nc=r.nothingCollected;
     if(nc){
@@ -4061,11 +4134,13 @@
         <div class="muted" style="font-size:13.5px;margin-top:6px">${esc(nc.why)}
           Window: ${esc(nc.window||'')}. Nothing below was analysed, because there was
           nothing to analyse — this is not a finding that the subject has no coverage.</div>
-        ${(nc.notes||[]).length?`<div class="lbl" style="margin-top:12px">What the sources said</div>
-          ${nc.notes.map(n=>'<div class="mentr" style="padding:8px 10px;font-size:13px">'+esc(n)+'</div>').join('')}`:''}
-        ${(nc.guidance||[]).length?`<div class="lbl" style="margin-top:12px">What to try</div>
+        ${(nc.notes||[]).length?`<div class="op-only"><div class="lbl" style="margin-top:12px">What the sources said</div>
+          ${nc.notes.map(n=>'<div class="mentr" style="padding:8px 10px;font-size:13px">'+esc(n)+'</div>').join('')}</div>`:''}
+        ${(nc.guidance||[]).length?`<div class="op-only"><div class="lbl" style="margin-top:12px">What to try</div>
           <ul style="font-size:13.5px;margin:6px 0 0 18px;line-height:1.6">
-          <li>${nc.guidance.map(esc).join('</li><li>')}</li></ul>`:''}
+          <li>${nc.guidance.map(esc).join('</li><li>')}</li></ul></div>`:''}
+        <div class="muted client-only" style="font-size:13.5px;margin-top:10px">Try a longer
+          look-back, or the name as it appears in headlines.</div>
         </div></div>`;
       wrap.appendChild(c);
     }
@@ -4093,7 +4168,20 @@
           <span class="chip">${fmt(hx.failures)} of ${fmt(hx.calls)} calls failed</span>
           <span class="chip">${Math.round((hx.failure_rate||0)*100)}% failure rate</span>
         </div></div></div>`;
+      bar.classList.add('op-only');
       wrap.appendChild(bar);
+      if(broken){
+        // The reader still has to be told this is not a report — in words a
+        // reader can act on, without the provider's error message.
+        const plain=el('div','card client-only');
+        plain.style.cssText='border-color:var(--neg);background:rgba(251,113,133,.10)';
+        plain.innerHTML=`<b style="font-size:15px">This edition could not be completed.</b>
+          <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">The analysis
+          service did not respond during this run, so the written sections are missing. The
+          figures below are counted from the collected sources. Generate the report again in a
+          few minutes.</div>`;
+        wrap.appendChild(plain);
+      }
     }
 
     // Names the sources do not contain. Said above the findings, where it
@@ -4118,7 +4206,37 @@
           `<div class="mentr" style="padding:8px 10px"><b style="font-size:13px">${esc(x.stage)}</b>
            <div class="muted" style="font-size:12px;margin-top:3px">${esc(x.error||'')}</div></div>`
         ).join('')}</div></div></div>`;
+      sb.classList.add('op-only');
       wrap.appendChild(sb);
+    }
+
+    // Where the time went. A run that "takes too long" has to say WHERE, or
+    // every fix is a guess — and this project has paid for guessing. Operator
+    // only: a reader has no use for it, an operator tuning the engine does.
+    const tm=ss.timings||{};
+    const cov0=r.dataCoverage||{};
+    const bo=r.backOffice||{};
+    if(Object.keys(tm).length||cov0.collection_seconds!=null){
+      const label={preflight:'model check',linking:'linking',transcripts:'transcripts',
+        scoring:'sentiment scoring',narratives:'storylines',network:'network',
+        payload:'figures',relevance_gate:'relevance check',framework:'Sentiment Framework',
+        analysts:'analysts'};
+      const parts=[];
+      if(cov0.collection_seconds!=null)parts.push(['collection',cov0.collection_seconds]);
+      Object.entries(tm).forEach(([k,v])=>parts.push([label[k]||k,v]));
+      const total=parts.reduce((a,[,v])=>a+(Number(v)||0),0);
+      const card=el('div','card op-only');
+      const cut=cov0.collection_deadline;
+      card.innerHTML=`<div class="lbl">Where the time went</div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px">About ${Math.round(total/60)} min
+        to the delivered report${cut?` · collection stopped at its ${cut.seconds}s ceiling
+        (${cut.not_started} queries not asked, ${cut.still_running} still finishing)`:''}${
+        bo.status==='pending'?' · audit and resolution running in the background':
+        bo.status==='done'&&bo.seconds?` · background work took ${Math.round(
+          Object.values(bo.seconds).reduce((a,v)=>a+(Number(v)||0),0))}s after delivery`:''}.</div>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${parts.map(([k,v])=>
+          `<span class="chip">${esc(k)} ${Math.round(Number(v)||0)}s</span>`).join('')}</div>`;
+      wrap.appendChild(card);
     }
 
     if(r.grade&&r.grade.production===false){
@@ -4605,6 +4723,7 @@
         <div class="muted" style="font-size:12.5px;margin-top:6px">This is the layer that reaches
         court filings, committee reports and archived pages — ${fmt(disc.queries)} queries were
         ready to run. Everything below was built without it.</div>`;
+      c.classList.add('op-only');
       host.appendChild(c);
     }
     // Which social backbone this run had. Paying for the paid tier and seeing
@@ -4612,7 +4731,7 @@
     // indistinguishable from paying for nothing.
     const st2=(m.acquisition||{}).social_tier;
     if(st2&&st2.tier){
-      host.appendChild(el('div','card',
+      host.appendChild(el('div','card op-only',
         `<div class="lbl">Social sources</div>
          <div class="muted" style="font-size:13px;margin-top:4px">${
            st2.tier==='managed'
@@ -4641,7 +4760,12 @@
         <div class="muted" style="font-size:12.5px;margin-top:6px">Stances, roles and
         storylines in those sections are <b>not established</b>. Everything still links to
         the document it came from.</div>`;
+      c.classList.add('op-only');
       host.appendChild(c);
+      host.appendChild(el('div','muted chart-note client-only',
+        `Method: ${dv.map(k=>esc(label[k]||k)).join(', ')} in this map
+         ${dv.length===1?'is':'are'} extracted from the collected documents — names, dates
+         and recurring terms — rather than read; stances there are not assessed.`));
     }
     // House-style violations a prompt instruction can't guarantee it prevented.
     // Never silently rewritten — flagged, so a reader sees exactly where.
@@ -4657,6 +4781,7 @@
         <div class="muted" style="font-size:13px;margin-top:4px">Written in first person or hedged where the
         record supports a plain statement — not rewritten automatically, flagged so it can be checked.</div>
         ${rows}`;
+      c.classList.add('op-only');
       host.appendChild(c);
     }
     if(m.intersection_gap){
@@ -4886,7 +5011,14 @@
       read them.</div>
       <div class="muted" style="font-size:12.5px;margin-top:6px">Tone and stance there are
       <b>not established</b>. Every item still links to the document it came from.</div>`;
-    return c;
+    c.classList.add('op-only');
+    const wrap=el('div','');
+    wrap.appendChild(c);
+    wrap.appendChild(el('div','muted chart-note client-only',
+      `Method: ${keys.map(k=>esc(label[k]||k)).join(', ')} in this edition
+       ${keys.length===1?'is':'are'} counted from the collected documents — platforms,
+       accounts and dates — rather than read; tone there is not assessed.`));
+    return wrap;
   }
 
   /** "Which names in this document do the sources not contain?"
@@ -4906,6 +5038,28 @@
   function groundingBanner(host, gr, what){
     gr = gr || {};
     what = what || 'report';
+    // The engine removed them. The report the reader has is clean; what the
+    // operator needs is the list of what came out, so the removal can be
+    // checked — not an alarm about a problem that has already been dealt with.
+    if (gr.removed) {
+      const cut = el('div','card op-only');
+      cut.style.cssText = 'border-color:var(--amber);background:rgba(251,191,36,.07)';
+      const rows = (gr.removed_sentences || []).slice(0, 12);
+      cut.innerHTML = `<div class="row" style="gap:10px;align-items:flex-start">
+        <div style="font-size:20px">✂</div>
+        <div style="flex:1"><b style="font-size:15px">${fmt(gr.removed)}
+          sentence${gr.removed === 1 ? '' : 's'} removed from this ${esc(what)}.</b>
+        <div class="muted" style="font-size:13.5px;margin-top:6px;line-height:1.6">
+          ${gr.removed === 1 ? 'It named' : 'Each named'} someone who appears in none of the
+          collected sources, so it was not evidence. Removed before the ${esc(what)} was
+          shown, and listed here so the removal can be checked.</div>
+        ${rows.map(x => `<div class="mentr" style="padding:8px 10px;margin-top:6px">
+          <span class="pill neg">${esc(x.name || '')}</span>
+          <div class="muted" style="font-size:12.5px;margin-top:4px;font-style:italic">${esc(x.sentence || '')}</div></div>`).join('')}
+        </div></div>`;
+      host.appendChild(cut);
+      return cut;
+    }
     if ((gr.ungrounded || []).length) {
       const bad = el('div','card');
       bad.style.cssText = 'border-color:var(--neg);background:rgba(251,113,133,.14)';
@@ -4924,6 +5078,7 @@
           ${gr.ungrounded.length > names.length
             ? `<span class="chip">+${gr.ungrounded.length - names.length} more</span>` : ''}
         </div></div></div>`;
+      bad.classList.add('op-only');
       host.appendChild(bad);
       return bad;
     }
@@ -4944,6 +5099,7 @@
             ? ' — checked by name pattern rather than by the entity model' : ''}.
           ${gr.method_reason ? `<div style="margin-top:4px">${esc(gr.method_reason)}</div>` : ''}</div>
       </div>`;
+      ok.classList.add('op-only');
       host.appendChild(ok);
       return ok;
     }
@@ -4951,7 +5107,7 @@
     // its own `skipped` field, and claiming a clean bill of health from an
     // examination that never happened is the one thing not to do here.
     if (gr.skipped) {
-      host.appendChild(el('div','muted chart-note',
+      host.appendChild(el('div','muted chart-note op-only',
         'Names were not checked against the corpus: ' + esc(gr.skipped) + '.'));
     }
     return null;
@@ -5195,6 +5351,20 @@
       <div class="divider"></div>
       <div class="muted" style="font-size:13px">Host this file free on <b>Cloudflare Pages</b>, <b>Netlify</b> or <b>GitHub Pages</b>. Then add that URL to your engine's <span class="chip">ALLOWED_ORIGINS</span> so the browser is allowed to call it.</div>`;
     w.appendChild(c);
+    // Who is reading. Diagnostics — failed sources, the stage ledger, the
+    // grounding check, the learning loop — are for whoever runs the engine.
+    const v=el('div','card');
+    v.innerHTML=`<div class="lbl">Report view</div>
+      <label class="row" style="gap:10px;margin-top:10px;cursor:pointer;font-size:14px">
+        <input type="checkbox" id="sop" ${CFG.operator?'checked':''} style="width:auto">
+        <span><b>Show operator diagnostics</b>
+        <span class="muted" style="display:block;font-size:12.5px;margin-top:3px">Which sources
+        refused, which stages failed and why, the name check, timings. Off, the report shows
+        what a client should see. Downloaded PDFs never include diagnostics.</span></span>
+      </label>`;
+    w.appendChild(v);
+    $('#sop',v).onchange=e=>{CFG.operator=!!e.target.checked;
+      store('zenith_operator',CFG.operator?'1':'0');applyView();};
     $('#ssave',c).onclick=()=>{CFG.base=$('#sbase',c).value.trim();CFG.key=$('#skey',c).value.trim();
       store('zenith_base',CFG.base);store('zenith_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
     $('#stest',c).onclick=async()=>{const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';const b=$('#sbase',c).value.trim();

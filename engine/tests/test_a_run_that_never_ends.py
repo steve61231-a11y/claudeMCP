@@ -38,9 +38,9 @@ def test_the_ceiling_is_consulted_before_the_long_middle():
         "runs without the run ceiling getting a vote")
     assert 'out_of_time("network_snapshot")' in PIPELINE
 
-    # And they must come BEFORE the late checks that already existed.
-    first_late = PIPELINE.index('out_of_time("entity_event_resolution")')
-    assert PIPELINE.index('out_of_time("narratives")') < first_late
+    # And they must come BEFORE the long model phase, not after it.
+    analysts = PIPELINE.index("payload = enrich_report_payload(")
+    assert PIPELINE.index('out_of_time("narratives")') < analysts
 
 
 def test_a_skipped_stage_degrades_rather_than_crashing():

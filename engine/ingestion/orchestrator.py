@@ -8,7 +8,9 @@ via page_cursor), and a client-side credit budget guardrail.
 
 import hashlib
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +37,27 @@ CURATED_DIR = Path(__file__).resolve().parent.parent.parent / "mock-data" / "cur
 MAX_PAGES_PER_TASK = 5
 COMMENT_TOP_N_POSTS = 25
 DEFAULT_MAX_WORKERS = 8
+
+#: The shortest collection ceiling honoured, whatever the setting says — a
+#: misconfigured zero would collect nothing and call it a run.
+MIN_COLLECTION_SECONDS = 30
+
+#: Runs whose collection deadline has passed. A task already in flight checks
+#: this at its next seam and stops there — it cannot be interrupted mid-request,
+#: but it can decline to start the next page or the next article download.
+_STOPPED_RUNS: set[str] = set()
+_STOPPED_LOCK = threading.Lock()
+
+
+def collection_stopped(run_id) -> bool:
+    """True once this run's collection has passed its ceiling."""
+    with _STOPPED_LOCK:
+        return str(run_id) in _STOPPED_RUNS
+
+
+def _stop_collection(run_id) -> None:
+    with _STOPPED_LOCK:
+        _STOPPED_RUNS.add(str(run_id))
 
 
 def resolve_social_tier() -> tuple[str, float | None, str]:
@@ -336,8 +359,37 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     # out a fresh one and pre-ping does exactly what it is there for.
     release_connection(db)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        list(pool.map(lambda t_id: _execute_task_safe(session_factory, t_id), task_ids))
+    # A CEILING on collection, because nothing else bounded it and it was the
+    # longest phase of every run. GDELT is paced at one request per five
+    # seconds and learns to go slower when refused; a host that hangs costs a
+    # full timeout per attempt, and article downloads were capped per query
+    # rather than per run. So a run could spend most of its life here while
+    # the reader watched "Scanning…" — and every later stage, the Sentiment
+    # Framework included, waited behind it.
+    #
+    # At the deadline, tasks that never started are cancelled and recorded
+    # as such (never as an empty result: `learning.py` reads only finished
+    # tasks); tasks in flight stop at their next seam and store what they
+    # have, which the next run reads because the corpus compounds. The
+    # analysis begins on what is stored — which, on a subject with any
+    # history, is most of what there is.
+    deadline = max(MIN_COLLECTION_SECONDS, settings.ingestion_deadline_seconds)
+    started = time.monotonic()
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    futures = {pool.submit(_execute_task_safe, session_factory, t_id): t_id for t_id in task_ids}
+    _finished, unfinished = wait(futures, timeout=deadline)
+    never_started: list = []
+    still_running: list = []
+    if unfinished:
+        _stop_collection(run_id)
+        # Cancels everything still queued; does not wait for the rest.
+        pool.shutdown(wait=False, cancel_futures=True)
+        never_started = [futures[f] for f in unfinished if f.cancelled()]
+        still_running = [futures[f] for f in unfinished if not f.cancelled()]
+        _mark_not_started(db, never_started, deadline)
+    else:
+        pool.shutdown(wait=True)
+    elapsed = round(time.monotonic() - started, 1)
 
     db.expire_all()
     run = db.get(IngestionRun, run_id)
@@ -345,6 +397,13 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     # Preserve the tier decision recorded at plan time (which social backbone
     # served this run, and why) — it explains the coverage in source-check.
     stats = {**(run.stats or {}), **_run_stats(db, run)}
+    stats["collection_seconds"] = elapsed
+    if unfinished:
+        stats["collection_deadline"] = {
+            "seconds": deadline,
+            "not_started": len(never_started),
+            "still_running": len(still_running),
+        }
     # A run is only a real FAILURE when NOTHING worked. If any task succeeded, or
     # any mentions were stored (e.g. the free GDELT/RSS/Wikipedia sources worked
     # while out-of-credit SocialCrawl tasks errored), the run is usable:
@@ -364,6 +423,22 @@ def execute_run(db: Session, run_id: str, max_workers: int = DEFAULT_MAX_WORKERS
     run.stats = stats
     db.commit()
     return run
+
+
+def _mark_not_started(db: Session, task_ids: list, deadline: int) -> None:
+    """Tasks the deadline cancelled before they ran. Recorded as NOT ASKED —
+    a question nobody put to a source is not a source with nothing to say."""
+    if not task_ids:
+        return
+    try:
+        for task in db.query(IngestionTask).filter(IngestionTask.id.in_(task_ids)).all():
+            if task.status == "pending":
+                task.status = "skipped_deadline"
+                task.error = (f"not started: collection stopped at its {deadline}s "
+                              "ceiling so the analysis could begin")
+        db.commit()
+    except Exception:  # noqa: BLE001 — bookkeeping must not cost the run
+        db.rollback()
 
 
 def _run_stats(db: Session, run: IngestionRun) -> dict:
@@ -423,6 +498,10 @@ def _source_health(db: Session, run: IngestionRun) -> dict:
             entry["failures"][kind] = entry["failures"].get(kind, 0) + 1
         elif task.status == "skipped_budget":
             entry["failures"]["budget_cap"] = entry["failures"].get("budget_cap", 0) + 1
+        elif task.status == "skipped_deadline":
+            entry["failures"]["deadline"] = entry["failures"].get("deadline", 0) + 1
+        elif task.status == "running":
+            entry["failures"]["still_collecting"] = entry["failures"].get("still_collecting", 0) + 1
     return health
 
 
@@ -515,7 +594,7 @@ def _execute_socialcrawl_task(session: Session, run: IngestionRun, task: Ingesti
 
     source_type = (task.params or {}).get("source_type", "post")
     discovered_posts: list[IngestedMention] = []
-    while task.page_cursor <= MAX_PAGES_PER_TASK:
+    while task.page_cursor <= MAX_PAGES_PER_TASK and not collection_stopped(run.id):
         current = session.query(IngestionRun.credits_spent).filter_by(id=run.id).scalar() or 0.0
         if _budget_exhausted(run, current + sc.credit_cost(task.endpoint)):
             task.status = "skipped_budget"
@@ -691,22 +770,29 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
         return
 
     connector = _build_connector(task)
+    name, aliases = politician.name, list(politician.aliases or [])
+    window_start, window_end, run_id = run.window_start, run.window_end, run.id
+    kind, query = task.connector, task.query
+    # No connection is held through the network phase. This session opened a
+    # read transaction loading the run and the subject; left open, it pinned
+    # one pooled connection per worker for as long as the source took to
+    # answer — fourteen of the pool's fifteen while GDELT was being paced.
+    release_connection(session)
     # The task's own query, for the sources that search by one. Without this
     # the whole variant expansion was dead: the queries were planned, the
     # requests were made, and every one of them asked the same thing.
-    if task.connector in KEYWORD_CONNECTORS and task.query:
-        mentions = connector.fetch(politician.name, politician.aliases or [],
-                                   run.window_start, run.window_end,
-                                   query=task.query)
+    if kind in KEYWORD_CONNECTORS and query:
+        mentions = connector.fetch(name, aliases, window_start, window_end, query=query)
     else:
-        mentions = connector.fetch(politician.name, politician.aliases or [],
-                                   run.window_start, run.window_end)
+        mentions = connector.fetch(name, aliases, window_start, window_end)
     # Turn headline-only article mentions into full journalism bodies before
     # they're stored, so the corpus (and the LLM digest) reads whole articles.
-    if task.connector in ("gdelt", "wayback", "curated", "google_news"):
+    # Against a budget for the RUN, and not after the collection deadline.
+    if kind in ("gdelt", "wayback", "curated", "google_news") and not collection_stopped(run_id):
         from engine.ingestion.article_text import enrich_with_article_text
 
-        enrich_with_article_text(mentions)
+        enrich_with_article_text(mentions, run_id=run_id,
+                                 should_stop=lambda: collection_stopped(run_id))
     # A connector that came back empty AND recorded a reason is not a source
     # with nothing to say — it is a source that failed. Both produce
     # result_count 0 and status "done", so without this the two are the same

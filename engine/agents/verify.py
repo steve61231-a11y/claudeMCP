@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from engine import llm, stages
 from engine.agents import evidence as evidence_store
 from engine.db.models import Claim, ClaimEvidence
+from engine.runctx import carry
 
 # Sections whose prose asserts things about the world and therefore needs
 # checking. Descriptive/statistical sections are computed from the data itself.
@@ -397,8 +398,10 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
     claims: list[tuple[str, str]] = []
     extract_batches = [targets[i : i + _EXTRACT_BATCH] for i in range(0, len(targets), _EXTRACT_BATCH)]
     with ThreadPoolExecutor(max_workers=llm.concurrency(min(_WORKERS, len(extract_batches) or 1))) as pool:
+        # Carried: the audit runs after delivery, and its model calls must
+        # count against this report, not whichever one started since.
         extracted = list(pool.map(
-            lambda batch: (batch, extract_claims_batch([passage for _, passage in batch])),
+            carry(lambda batch: (batch, extract_claims_batch([passage for _, passage in batch]))),
             extract_batches,
         ))
     measurements = 0
@@ -462,7 +465,7 @@ def verify_payload(db, politician, payload: dict, report_id: str | None = None) 
     workers = llm.concurrency(min(_WORKERS, len(batches) or 1))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = list(pool.map(
-            lambda batch: (batch, adjudicate_batch([(c[1], c[2]) for _, c in batch])),
+            carry(lambda batch: (batch, adjudicate_batch([(c[1], c[2]) for _, c in batch]))),
             batches,
         ))
     for batch, per_position in outcomes:

@@ -19,6 +19,7 @@ sentiment and grounding all read it) and stashed in
 `raw_payload["article_text"]` for provenance.
 """
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from engine.config import settings
@@ -30,6 +31,25 @@ from engine.ingestion.base import IngestedMention
 _ARTICLE_SOURCE_TYPES = {"article", "news"}
 _FETCH_WORKERS = 6
 _FETCH_TIMEOUT = 20
+
+# The download budget is per RUN, as `article_text_max_fetch` has always said.
+# It was applied per CALL — once per GDELT or Google News query — so a run with
+# thirty-two of them could attempt thirty-two times the documented number of
+# downloads, each allowed twenty seconds and a second, slower tier when
+# refused. That is collection taking most of a run's life.
+_BUDGET_LOCK = threading.Lock()
+_BUDGET_LEFT: dict[str, int] = {}
+
+
+def _take_budget(run_id, wanted: int) -> int:
+    """Claim up to `wanted` downloads from this run's budget; returns how many."""
+    if run_id is None:
+        return wanted
+    with _BUDGET_LOCK:
+        left = _BUDGET_LEFT.setdefault(str(run_id), settings.article_text_max_fetch)
+        granted = max(0, min(left, wanted))
+        _BUDGET_LEFT[str(run_id)] = left - granted
+        return granted
 
 
 def _mention_url(mention: IngestedMention) -> str | None:
@@ -74,13 +94,17 @@ def extract_body(url: str, max_chars: int) -> tuple[str, str | None]:
     return body.strip()[:max_chars], result.backend
 
 
-def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
+def enrich_with_article_text(mentions: list[IngestedMention], run_id=None,
+                             should_stop=None) -> int:
     """In-place: fetch full body text for article-shaped mentions that carry a
     URL, appending it to `text` and recording it in `raw_payload`. Returns the
     number of mentions successfully enriched.
 
-    Bounded by `settings.article_text_max_fetch`; a no-op (returns 0) when the
-    feature is disabled or trafilatura is unavailable."""
+    Bounded by `settings.article_text_max_fetch` for the whole run when a
+    `run_id` is given (per call otherwise), and by `should_stop` — checked
+    before every download, so a collection deadline stops the queue rather
+    than waiting it out. A no-op (returns 0) when the feature is disabled or
+    trafilatura is unavailable."""
     if not settings.enable_article_text or not mentions:
         return 0
 
@@ -97,6 +121,7 @@ def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
         if len(candidates) >= settings.article_text_max_fetch:
             break
 
+    candidates = candidates[:_take_budget(run_id, len(candidates))]
     if not candidates:
         return 0
 
@@ -104,6 +129,8 @@ def enrich_with_article_text(mentions: list[IngestedMention]) -> int:
 
     def _work(pair):
         m, url = pair
+        if should_stop is not None and should_stop():
+            return m, "", None
         body, backend = extract_body(url, max_chars)
         return m, body, backend
 

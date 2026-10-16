@@ -69,6 +69,10 @@ class FetchResult:
     status: int | None
     backend: str | None
     blocked: bool
+    # Why there is no page, when a tier raised rather than answered. Without
+    # it "connection refused" and "403 from a bot wall" arrived at the caller
+    # as the same empty result.
+    error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -104,8 +108,9 @@ def looks_blocked(status: int | None, html: str) -> bool:
 def _via_requests(url: str, timeout: int) -> FetchResult:
     try:
         resp = http.get(url, timeout=timeout)
-    except Exception:
-        return FetchResult(url, "", None, BACKEND_REQUESTS, True)
+    except Exception as exc:  # noqa: BLE001
+        return FetchResult(url, "", None, BACKEND_REQUESTS, True,
+                           f"{type(exc).__name__}: {exc}"[:200])
     html = resp.text or ""
     status = resp.status_code
     if status != 200:
@@ -142,8 +147,9 @@ def _via_scrapling(url: str, timeout: int) -> FetchResult:
             headers={"Accept-Language": "en-GB,en;q=0.9",
                      "Referer": "https://www.google.com/"},
         )
-    except Exception:
-        return FetchResult(url, "", None, BACKEND_SCRAPLING, True)
+    except Exception as exc:  # noqa: BLE001
+        return FetchResult(url, "", None, BACKEND_SCRAPLING, True,
+                           f"{type(exc).__name__}: {exc}"[:200])
     status = getattr(resp, "status_code", None)
     html = getattr(resp, "text", "") or ""
     if status is not None and status != 200:
@@ -174,10 +180,17 @@ def fetch_html(url: str, timeout: int = 20) -> FetchResult:
 
     Returns the last attempt when all of them are, so callers can tell a bot
     wall (`blocked`, with a status) from a dead link. Never raises."""
+    # A host that has refused this server is not asked again through ANY
+    # tier — the impersonating one included, which does not pass through
+    # `http.get` and so would otherwise spend a request per call finding out.
+    if http.refused(url):
+        _counts["refused"] += 1
+        return FetchResult(url, "", None, None, True)
     result = _via_requests(url, timeout)
     if result.ok:
         _counts[BACKEND_REQUESTS] += 1
         return result
+    first = result
 
     if settings.enable_scrapling:
         upgraded = _via_scrapling(url, timeout)
@@ -194,6 +207,13 @@ def fetch_html(url: str, timeout: int = 20) -> FetchResult:
         result = upgraded
 
     _counts["blocked"] += 1
+    # Every tier's reason, first one first: the plain request's error is
+    # usually the real cause, and the last tier's is usually an echo of it.
+    reasons = list(dict.fromkeys(e for e in (first.error, result.error) if e))
+    if reasons:
+        from dataclasses import replace
+
+        result = replace(result, error="; ".join(reasons)[:300])
     return result
 
 

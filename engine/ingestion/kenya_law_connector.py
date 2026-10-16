@@ -51,7 +51,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 from urllib.parse import quote_plus, urljoin
 
-from engine.ingestion import http
+from engine.ingestion import fetch_backend, http
 from engine.ingestion.base import IngestedMention, IngestionConnector
 
 BASE = "https://new.kenyalaw.org"
@@ -140,16 +140,27 @@ class _KenyaLawBase(IngestionConnector):
             return []
 
         url = self.url_template.format(query=quote_plus(term))
-        try:
-            resp = http.get(url, timeout=30)
-            resp.raise_for_status()
-            body = resp.text
-        except Exception as exc:  # noqa: BLE001
+        # Through the tiered fetcher, not bare `http.get`: kenyalaw.org sits
+        # behind a bot wall that answered every search from Railway with
+        # "403 Forbidden" — the fingerprint of python-requests, which the
+        # wall refuses on sight. The second tier presents a real browser's
+        # TLS handshake, which is what the wall actually checks.
+        result = fetch_backend.fetch_html(url, timeout=30)
+        if not result.ok:
             # The host refused us. NOT "this subject has no court record" —
             # confusing those two is how a report states, in print, that a
             # person has never been to court.
-            self.last_error = f"{type(exc).__name__}: {exc}"[:200]
+            reason = http.refused(url)
+            if not reason and result.status in (401, 403):
+                reason = (f"Kenya Law refused this server (HTTP {result.status}) "
+                          "even with a browser fingerprint")
+                # Every other query this run, and the next few runs, would
+                # get the same answer. Ask again in a few hours.
+                http.remember_refusal(url, reason)
+            self.last_error = (reason or (f"no page: {result.error}" if result.error else
+                               f"no page: HTTP {result.status} via {result.backend}"))[:200]
             return []
+        body = result.html
 
         parser = _Links()
         try:

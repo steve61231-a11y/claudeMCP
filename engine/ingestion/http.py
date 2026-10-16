@@ -97,6 +97,7 @@ def reset_pacing() -> None:
     with _PACE_LOCK:
         _LAST_REQUEST_AT.clear()
         _LEARNED_GAP.clear()
+        _REFUSED.clear()
 
 
 # ASCII, deliberately: HTTP headers are latin-1 and "Mũũgĩ" is not encodable
@@ -142,10 +143,56 @@ def build_session(total_retries: int = 4, backoff_factor: float = 2.0) -> reques
 _shared_session: requests.Session | None = None
 
 
+class HostRefused(requests.exceptions.RequestException):
+    """This host has refused this server outright, recently. Not asked again."""
+
+
+#: Hosts that refused this SERVER, not a request: Reddit answers every search
+#: from a cloud address with "403 Blocked", and Kenya Law's bot wall answers
+#: "403 Forbidden". Asking again changes nothing — a live report spent a dozen
+#: requests per run rediscovering both, and printed every one of them under
+#: "Failed". Remembered for a while rather than for ever, because a block can
+#: be lifted and a deploy can move to a different address.
+_REFUSED: dict[str, tuple[float, str]] = {}
+_REFUSAL_HOURS = 6.0
+
+
+def remember_refusal(url: str, reason: str, hours: float = _REFUSAL_HOURS) -> None:
+    """Mark this URL's host as refusing us. Connectors decide when a refusal
+    is the host's verdict on this server rather than on one page."""
+    host = _host_of(url)
+    if not host:
+        return
+    with _PACE_LOCK:
+        _REFUSED[host] = (time.monotonic() + hours * 3600, reason[:300])
+
+
+def refused(url: str) -> str | None:
+    """Why this URL's host is not being asked, or None if it may be."""
+    host = _host_of(url)
+    with _PACE_LOCK:
+        entry = _REFUSED.get(host)
+        if entry and entry[0] <= time.monotonic():
+            _REFUSED.pop(host, None)
+            entry = None
+    return entry[1] if entry else None
+
+
+def refusal_state() -> dict:
+    """Which hosts are currently not being asked, and why — for the operator."""
+    now = time.monotonic()
+    with _PACE_LOCK:
+        return {host: {"reason": reason, "minutes_left": round((until - now) / 60)}
+                for host, (until, reason) in _REFUSED.items() if until > now}
+
+
 def get(url: str, **kwargs) -> requests.Response:
     """GET through a shared retrying session. Connectors call this (as
     `http.get`) so tests can patch one seam instead of requests internals."""
     global _shared_session
+    reason = refused(url)
+    if reason:
+        raise HostRefused(f"not asked: {reason}")
     if _shared_session is None:
         _shared_session = build_session()
     kwargs.setdefault("timeout", DEFAULT_TIMEOUT)

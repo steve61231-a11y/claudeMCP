@@ -576,6 +576,9 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # that is the name the renderers already use.
         "sentiment_framework": payload.get("sentiment_framework"),
         "runHealth": payload.get("run_health"),
+        # The stages that run after delivery: pending until the claim audit
+        # and resolution have finished, then done with their timings.
+        "backOffice": payload.get("back_office"),
         # Which sections were counted rather than read. Without this the page
         # cannot tell the reader which half of the report a model wrote.
         "derivedSections": payload.get("derived_sections") or [],
@@ -835,6 +838,11 @@ class _PartialReport:
 # section (minutes later, on a real run) publishes all of it.
 _PARTIAL_MIN_INTERVAL_SECONDS = 1.0
 
+#: Sections that always reach the page at once: the client's deliverable, and
+#: the ledger the pipeline publishes immediately before each long phase — so
+#: whatever the throttle held back is flushed before minutes of silence.
+_FLUSH_ON_SECTIONS = frozenset({"sentiment_framework", "section_status"})
+
 
 def _has_real_content(value) -> bool:
     """True when this is genuine content, not the empty/placeholder shape a
@@ -1046,6 +1054,11 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
     # suspends, so the query fails. The pipeline is incremental (stored mentions
     # + link_checked/have_sentiment guards), so retrying with a fresh connection
     # resumes from progress instead of redoing work.
+    #
+    # The back office is collected here and run only after the loop — after
+    # the reader has the report and after this session is closed.
+    back_office: list = []
+    delivered_name = name
     for attempt in range(3):
         db = SessionLocal()
         try:
@@ -1060,6 +1073,15 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
 
             def _on_section(key, value):
                 live_payload[key] = value
+                if key in _FLUSH_ON_SECTIONS:
+                    # Never throttled. The throttle DROPS a publish that lands
+                    # inside its interval rather than deferring it, so the
+                    # burst of sections just before a long silent phase — the
+                    # Sentiment Framework among them — sat unseen until the
+                    # first analyst came back minutes later.
+                    _job = _jobs.get(job_id)
+                    if _job is not None:
+                        _job["partial_at"] = 0.0
                 _publish_partial(job_id, politician, live_payload, window_start, window_end)
 
             ingestion_run = run_ingestion(db, politician, window_start, window_end, credit_budget=300.0)
@@ -1074,8 +1096,13 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
                      "corpus — this is the long part, and the first section lands when it "
                      "finishes."
             ))
+            # Collected, not run: resolution, the knowledge graph and the
+            # claim audit wait until the reader has the report. See
+            # `pipeline.run_back_office`.
+            back_office.clear()
             report = run_analysis(db, politician, "live-demo", window_start, window_end,
-                                  ingestion_run=ingestion_run, on_section=_on_section)
+                                  ingestion_run=ingestion_run, on_section=_on_section,
+                                  defer_back_office=back_office)
             finished = _build_frontend_payload(politician, report)
             _save_progress(_subject_key(politician.name), "report", job_id=job_id,
                            status="done", stage="Complete.",
@@ -1088,7 +1115,8 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
                 "report": finished,
                 "created_at": time.time(), "live": True,
             }
-            return
+            delivered_name = politician.name
+            break
         except DBAPIError as exc:
             if getattr(exc, "connection_invalidated", False) and attempt < 2:
                 traceback.print_exc()
@@ -1110,6 +1138,64 @@ def _run_report_job(job_id: str, name: str, subject_type: str = "politician",
                 db.close()
             except Exception:
                 pass
+
+    # The reader has the report. Now the work that serves the platform.
+    for task in back_office:
+        _back_office_after_delivery(job_id, delivered_name, task)
+
+
+#: One back office per subject at a time. Two would write the same entities
+#: and events; the second waits, and gives up rather than queue for ever.
+_BACK_OFFICE_LOCKS: dict[str, threading.Lock] = {}
+_BACK_OFFICE_LOCKS_GUARD = threading.Lock()
+
+
+def _back_office_after_delivery(job_id: str, name: str, task) -> None:
+    """Run a delivered report's back office, then fold its results in.
+
+    Never raises and never flips a delivered report back to "running": the
+    reader already has a finished report, and nothing here may take it away.
+    The enriched version replaces it in the job and the progress store only
+    if no newer run for this subject has claimed them in the meantime.
+    """
+    from engine.db.models import IntelligenceReport
+    from engine.pipeline import run_back_office
+
+    key = _subject_key(name)
+    with _BACK_OFFICE_LOCKS_GUARD:
+        lock = _BACK_OFFICE_LOCKS.setdefault(key, threading.Lock())
+    if not lock.acquire(timeout=settings.back_office_deadline_seconds):
+        task.ledger.failed("back_office", "an earlier report's back office for this "
+                           "subject was still running, so this one was not started")
+        return
+    try:
+        run_back_office(task)
+    except Exception:  # noqa: BLE001 — after delivery, a failure costs nothing visible
+        traceback.print_exc()
+        return
+    finally:
+        lock.release()
+
+    try:
+        db = SessionLocal()
+        try:
+            report = db.get(IntelligenceReport, task.report_id)
+            politician = db.get(Politician, task.politician_id)
+            if report is None or politician is None:
+                return
+            enriched = _build_frontend_payload(politician, report)
+            ready = sorted(report.payload or {})
+        finally:
+            db.close()
+        job = _jobs.get(job_id)
+        if job is not None and job.get("status") == "done" and job.get("ok"):
+            job["report"] = enriched
+        progress = _read_progress(key, "report") or {}
+        if progress.get("job_id") in (None, job_id) and progress.get("status") != "running":
+            _save_progress(key, "report", job_id=job_id, status="done",
+                           stage="Complete.", sections_ready=ready, payload=enriched)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
 
 
 @app.post("/api/report")

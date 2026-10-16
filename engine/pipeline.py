@@ -1,5 +1,6 @@
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -179,6 +180,7 @@ def run_analysis(
     window_end: datetime,
     ingestion_run: IngestionRun | None = None,
     on_section=None,
+    defer_back_office: list | None = None,
 ) -> IntelligenceReport:
     """Analysis over everything stored for the window: entity linking (only
     for mentions not yet checked, so re-analysis never re-pays the LLM),
@@ -190,6 +192,10 @@ def run_analysis(
     the last stage finishes, which is why depth and a usable wait looked like
     a trade-off. They are not — the sections just have to be published as they
     are made.
+
+    `defer_back_office`, when a list, receives a `BackOfficeTask` instead of
+    the back office running here: the caller delivers the report first and
+    then calls `run_back_office`. Left None, it runs inline, as it always has.
     """
     # A wall-clock ceiling on the WHOLE run. Individual stages have their own
     # budgets, but the optional heavy blocks after the analysts — entity and
@@ -247,6 +253,7 @@ def run_analysis(
             detail=("the model did not answer the pre-run check but the run continued: "
                     f"{preflight.get('error', 'no detail')}"))
 
+    stages.current().lap("preflight")
     politician_entity = _upsert_entity(db, "politician", politician.name)
 
     window_filter = (
@@ -386,9 +393,11 @@ def run_analysis(
             record["affiliation"] = person_entity.affiliation
     db.flush()
 
+    stages.current().lap("linking")
     if settings.socialcrawl_api_key and settings.transcripts_per_run > 0:
         _fetch_transcripts_for_top_videos(db, politician, politician_entity, window_start, window_end, ingestion_run)
 
+    stages.current().lap("transcripts")
     linked_mentions = (
         db.query(RawMention)
         .join(MentionEntity, MentionEntity.mention_id == RawMention.id)
@@ -445,6 +454,7 @@ def run_analysis(
     db.flush()
 
     stored_mentions = _as_corpus_dicts(linked_mentions)
+    stages.current().lap("scoring")
 
     sentiment_rows = (
         db.query(MentionSentiment).filter(MentionSentiment.mention_id.in_([m["id"] for m in stored_mentions])).all()
@@ -531,6 +541,7 @@ def run_analysis(
             )
         )
 
+    stages.current().lap("narratives")
     influence_ranking = influence.score_influence(stored_mentions, sentiments_by_mention)
 
     influencers = _classify_influencers(db, linked_mentions)
@@ -558,6 +569,7 @@ def run_analysis(
             **_network_snapshot_from_db(db, politician, politician_entity),
         }
 
+    stages.current().lap("network")
     payload = generate_report_payload(
         politician.name,
         window_start,
@@ -602,6 +614,7 @@ def run_analysis(
     # broad, so this is what stops a same-named person/company/acronym from
     # contaminating the conclusions. Verdicts are stored, so it runs once per
     # document and a re-run resumes rather than re-paying.
+    stages.current().lap("payload")
     try:
         from engine.agents import disambiguate
 
@@ -611,6 +624,7 @@ def run_analysis(
         gate_stats = {"error": "disambiguation gate failed; documents kept unfiltered"}
 
     corpus = stored_mentions + _document_corpus(db, politician, window_start, window_end)
+    stages.current().lap("relevance_gate")
 
     # Everything that needs NO model call is published BEFORE the analyst
     # fan-out, not after it.
@@ -693,6 +707,31 @@ def run_analysis(
     publish("since_last_report", payload["since_last_report"])
     publish("sentiment_history", payload["sentiment_history"])
 
+    # The previous report, read ONCE and read now — while this session still
+    # holds a live connection, and before this run's own report exists, so
+    # "previous" is genuinely the one before. The framework's period-on-period
+    # numbers and the worklist's "in progress" both need it, and neither may
+    # touch the database later: by then the connection has sat idle through
+    # the whole model phase.
+    prior_payload = _previous_payload(db, politician)
+
+    # THE CLIENT'S DELIVERABLE, FIRST.
+    #
+    # The Sentiment Framework was built last — after the analyst fan-out, and
+    # after entity resolution, the knowledge graph and every other back-office
+    # stage — and gated on whatever time those left. It needs none of them.
+    # It is arithmetic over the scored corpus, the storylines and the
+    # emergent items, all of which exist at this line. So every slow stage
+    # anywhere ahead of it starved it, and a live report on Rigathi Gachagua
+    # showed "Overview" and "Weekly Dashboard" and no Sentiment Framework tab
+    # at all, while the run went on and on behind it. Six deployments had
+    # tried to shorten the queue in front of it. The fix is to stop queueing
+    # it: built here, published here, and refined after the analysts with
+    # what they wrote.
+    _build_framework(politician, payload, corpus, prior_payload,
+                     sentiments_by_mention, publish, refine=False)
+    stages.current().lap("framework")
+
     # And again before the long stretch, so anything that failed during
     # scoring, linking or narratives is on the page while the analysts run.
     publish("section_status", stages.current().summary())
@@ -713,124 +752,29 @@ def run_analysis(
         mentions=corpus,
         narratives=built_narratives,
         on_section=publish,
+        deadline_seconds=_time_left(minimum=120.0),
     )
+    stages.current().lap("analysts")
 
-    # Resolve the corpus into entities and events: many reports of one happening
-    # become ONE event carrying its evidence, so repetition stops masquerading
-    # as significance. Runs on the gated corpus and is idempotent across runs.
-    # Bounded, not merely gated. `out_of_time` stops a stage being
-    # ENTERED; it does nothing once inside, so a stage entered at
-    # minute 29 of a 30-minute ceiling ran for another twenty. A live
-    # run sat at 12/15 sections for fifty minutes on exactly this.
-    # `_bounded` is already how the analyst fan-out is held to its
-    # clock, and its own docstring describes this bug: the work is
-    # not failing, it is simply not coming back.
-    if settings.enable_resolution and not out_of_time("entity_event_resolution"):
-        def _run_entity_event_resolution():
-            try:
-                from engine.agents import resolve as resolve_agent
+    # Refined with what the analysts wrote — the executive summary, the deep
+    # dives behind each issue, the public voice. Arithmetic again, so it is
+    # NOT gated on the clock: a stage that costs milliseconds and is the
+    # deliverable is the last thing a deadline should take away. If this pass
+    # fails, the version built before the analysts stands.
+    _build_framework(politician, payload, corpus, prior_payload,
+                     sentiments_by_mention, publish, refine=True)
+    stages.current().lap("framework")
 
-                payload["resolution"] = resolve_agent.resolve_corpus(db, politician, corpus)
-
-                # Score the sources behind that evidence. Runs after resolution
-                # because corroboration is measured through shared events, and it
-                # must precede verification so claim confidence reflects source
-                # quality rather than raw count.
-                from engine.agents import credibility as credibility_agent
-
-                payload["source_credibility"] = credibility_agent.score_sources(db, politician)
-
-                # Extend the knowledge graph. It persists between runs, so each
-                # report leaves the picture of the subject's world richer than it
-                # found it — connections are what single documents can't show.
-                from engine.agents import knowledge_graph as kg_agent
-
-                payload["knowledge_graph"] = kg_agent.build_graph(db, politician, corpus)
-
-                # What moved since last time, and what deserves attention before it
-                # becomes obvious. Both run after resolution/graph so they can see
-                # events, entities and relationships — the things that change.
-                from engine.agents import anomaly as anomaly_agent
-                from engine.agents import temporal as temporal_agent
-
-                payload["temporal"] = temporal_agent.temporal_summary(
-                    db, politician, run_id=ingestion_run.id if ingestion_run else None
-                )
-                payload["signals"] = anomaly_agent.detect_all(db, politician)
-                for _key in ("resolution", "source_credibility", "knowledge_graph", "temporal", "signals"):
-                    publish(_key, payload.get(_key))
-            except Exception as exc:  # noqa: BLE001 — resolution must never break a report
-                # ROLL BACK before anything else touches the session. A failed
-                # flush leaves it in a state where EVERY later statement raises
-                # PendingRollbackError, so catching the exception here without
-                # rolling back did not contain the failure — it just moved the
-                # error to whichever innocent stage queried next, and the run died
-                # with "report generation failed" instead of one absent section.
-                # The comment on this handler says resolution must never break a
-                # report; that was only true of the exception, not of its wreckage.
-                _rollback_quietly(db)
-                stages.current().failed("entity_event_resolution", exc)
-                traceback.print_exc()
-                payload["resolution"] = {"error": "entity/event resolution failed"}
-
-
-            return True
-
-        _bounded("entity_event_resolution", _time_left(), _run_entity_event_resolution, fallback=None)
-    # Client-facing deliverable, shaped to the Sentiment Analysis Framework
-    # V1.0 exactly — same parameter numbering, ordering and terminology, so an
-    # analyst reads their own structure rather than our interpretation of it.
-    # Bounded, not merely gated. `out_of_time` stops a stage being
-    # ENTERED; it does nothing once inside, so a stage entered at
-    # minute 29 of a 30-minute ceiling ran for another twenty. A live
-    # run sat at 12/15 sections for fifty minutes on exactly this.
-    # `_bounded` is already how the analyst fan-out is held to its
-    # clock, and its own docstring describes this bug: the work is
-    # not failing, it is simply not coming back.
-    if not out_of_time("sentiment_framework"):
-        def _run_sentiment_framework():
-            try:
-                from engine.reports import sentiment_framework
-
-                previous_report = (
-                    db.query(IntelligenceReport)
-                    .filter(IntelligenceReport.politician_id == politician.id)
-                    .order_by(IntelligenceReport.generated_at.desc())
-                    .first()
-                )
-                prior = previous_report.payload if previous_report else None
-                payload["sentiment_framework"] = sentiment_framework.build(
-                    politician,
-                    payload,
-                    corpus,
-                    previous=prior,
-                    sentiments=sentiments_by_mention,
-                )
-                publish("sentiment_framework", payload["sentiment_framework"])
-
-                # The worklist. The dashboard has read `payload["actions"]`
-                # since it was built and nothing had ever written it, so the
-                # section that tells a client what to do rendered "no actions
-                # recorded for this period" on every report this engine has
-                # produced — a section that was never wired up, reading as a
-                # quiet week.
-                #
-                # Built from the previous report as well as this one, because
-                # "in progress" has to mean something: it was on the list last
-                # time, and here is what the issue it addresses has done since.
-                from engine.reports import actions as actions_module
-
-                payload["actions"] = actions_module.build(payload, prior)
-                publish("actions", payload["actions"])
-            except Exception as exc:  # noqa: BLE001 — the framework view must not break a report
-                # The client deliverable. Silently absent, this tab simply never
-                # appeared and nobody could tell whether it was empty or broken.
-                stages.current().failed("sentiment_framework", exc)
-                traceback.print_exc()
-
-            return True
-
-        _bounded("sentiment_framework", _time_left(), _run_sentiment_framework, fallback=None)
+    # The back office has not run yet, and the reader must not wait for it.
+    back_office_due = bool(settings.enable_resolution or settings.enable_verification)
+    if back_office_due:
+        payload["back_office"] = {
+            "status": "pending",
+            "note": ("Entity and event resolution, the knowledge graph and the "
+                     "claim audit run after this report is delivered. They feed "
+                     "the claims audit and the next run; nothing above waits on "
+                     "them."),
+        }
     # The run's own account of whether the model answered. Stamped onto the
     # payload so a reader is never shown empty sections without being told the
     # backend was down, and so a broken run cannot be presented as an analysis.
@@ -852,59 +796,267 @@ def run_analysis(
     db.add(report)
     db.commit()
 
-    # Audit the finished narrative against the stored corpus. This runs LAST, on
-    # what the report actually says, and records a status + citations for every
-    # factual claim. A claim the evidence can't support is labelled, not deleted:
-    # a thin spot in the file is itself a finding worth seeing.
-    # Bounded, not merely gated. `out_of_time` stops a stage being
-    # ENTERED; it does nothing once inside, so a stage entered at
-    # minute 29 of a 30-minute ceiling ran for another twenty. A live
-    # run sat at 12/15 sections for fifty minutes on exactly this.
-    # `_bounded` is already how the analyst fan-out is held to its
-    # clock, and its own docstring describes this bug: the work is
-    # not failing, it is simply not coming back.
-    if settings.enable_verification and not out_of_time("claim_verification"):
-        def _run_claim_verification():
-            try:
-                from engine.agents import verify
-
-                audit = verify.verify_payload(db, politician, payload, report_id=report.id)
-                payload["verification"] = {
-                    k: audit.get(k) for k in
-                    ("checked", "verified", "unverified", "contradicted", "measurements")
-                }
-                payload["claims"] = audit["claims"]
-                publish("verification", payload["verification"])
-                publish("claims", payload["claims"])
-
-                # Finally, refuse to call the file finished: name what is missing and
-                # turn those gaps into concrete queries for the NEXT run. This runs
-                # after verification because unverified claims are the richest source
-                # of "what still needs establishing".
-                if settings.enable_investigator:
-                    from engine.agents import investigator
-
-                    agenda = investigator.build_agenda(db, politician)
-                    investigator.store_follow_up_queries(
-                        db, politician, agenda.get("follow_up_queries") or []
-                    )
-                    payload["investigation"] = agenda
-
-                report.payload = payload
-                flag_modified(report, "payload")
-                db.commit()
-            except Exception as exc:  # noqa: BLE001 — an audit failure must not lose the report
-                # This guard wraps a db.commit(). A commit that fails leaves the
-                # session unusable, so without this the next innocent query is the
-                # one that raises and the report dies far from the real cause.
-                _rollback_quietly(db)
-                stages.current().failed("verification", exc)
-                traceback.print_exc()
-
-            return True
-
-        _bounded("claim_verification", _time_left(), _run_claim_verification, fallback=None)
+    if not back_office_due:
+        return report
+    task = BackOfficeTask(
+        report_id=report.id,
+        politician_id=politician.id,
+        corpus=corpus,
+        payload=payload,
+        ingestion_run_id=ingestion_run.id if ingestion_run else None,
+        ledger=stages.current(),
+        tracker=health.current(),
+    )
+    if defer_back_office is not None:
+        # The caller already has the report. It delivers it, THEN runs this.
+        defer_back_office.append(task)
+    else:
+        run_back_office(task, session=db, on_section=publish)
     return report
+
+
+@dataclass
+class BackOfficeTask:
+    """Everything the back office needs, captured at the moment of delivery.
+
+    Ids rather than ORM instances: in production this runs after the request
+    session that loaded them has closed, on sessions of its own. The ledger
+    and the health tracker are THIS run's objects, carried explicitly,
+    because by the time the back office runs another report may have
+    started and replaced the process-wide ones — and that run must not
+    inherit this one's failures, or blame its own on it.
+    """
+
+    report_id: object
+    politician_id: object
+    corpus: list
+    payload: dict
+    ingestion_run_id: object
+    ledger: object
+    tracker: object
+    timings: dict = field(default_factory=dict)
+
+
+def run_back_office(task: BackOfficeTask, session: Session | None = None,
+                    on_section=None, deadline_seconds: float | None = None) -> dict:
+    """The stages that serve the platform, run after the reader has the report.
+
+    Entity and event resolution, source credibility, the knowledge graph,
+    temporal signals, the claim audit and the investigator's agenda. Each is
+    worth having — they are how the corpus compounds and how the next run
+    knows what to ask — and none of them is a section the client reads
+    first. They sat in front of the client's deliverable and held "Still
+    building this report" open for as long as they took. A report on Rigathi
+    Gachagua ran on and on with its Sentiment Framework nowhere to be seen,
+    queued behind work its reader would never open.
+
+    `session=None` is production: each stage gets a session of its own,
+    because a stage that overruns is abandoned rather than awaited and an
+    abandoned worker must not be left holding a session somebody else is
+    still using. Passing a session runs everything on it, inline — the
+    behaviour tests and scripts rely on.
+    """
+    import time as _time
+    from contextlib import contextmanager
+
+    from engine.runctx import run_context
+
+    budget = max(60.0, float(deadline_seconds or settings.back_office_deadline_seconds))
+    ends_at = _time.monotonic() + budget
+
+    def left() -> float:
+        # Floored for the same reason as `_time_left`: zero seconds is a
+        # different way of skipping, and the ledger would blame a timeout.
+        return max(30.0, ends_at - _time.monotonic())
+
+    def publish(key, value):
+        if on_section is None:
+            return
+        try:
+            on_section(key, value)
+        except Exception:  # noqa: BLE001 — never let a reader cost the work
+            pass
+
+    @contextmanager
+    def scope():
+        if session is not None:
+            yield session
+            return
+        from engine.db.session import SessionLocal
+
+        own = SessionLocal()
+        try:
+            yield own
+        finally:
+            try:
+                own.close()
+            except Exception:  # noqa: BLE001 — closing must not mask the result
+                pass
+
+    updates: dict = {}
+    with run_context(task.ledger, task.tracker):
+        if settings.enable_resolution:
+            def _run_entity_event_resolution():
+                # Resolve the corpus into entities and events: many reports of
+                # one happening become ONE event carrying its evidence, so
+                # repetition stops masquerading as significance.
+                with scope() as db:
+                    politician = db.get(Politician, task.politician_id)
+                    try:
+                        from engine.agents import anomaly as anomaly_agent
+                        from engine.agents import credibility as credibility_agent
+                        from engine.agents import knowledge_graph as kg_agent
+                        from engine.agents import resolve as resolve_agent
+                        from engine.agents import temporal as temporal_agent
+
+                        found = {"resolution": resolve_agent.resolve_corpus(
+                            db, politician, task.corpus)}
+                        # Corroboration is measured through shared events, so
+                        # credibility follows resolution; and it precedes the
+                        # claim audit so confidence reflects source quality.
+                        found["source_credibility"] = credibility_agent.score_sources(db, politician)
+                        found["knowledge_graph"] = kg_agent.build_graph(db, politician, task.corpus)
+                        found["temporal"] = temporal_agent.temporal_summary(
+                            db, politician, run_id=task.ingestion_run_id)
+                        found["signals"] = anomaly_agent.detect_all(db, politician)
+                        db.commit()
+                        return found
+                    except Exception:
+                        # ROLL BACK before anything else touches the session:
+                        # a failed flush makes every later statement raise
+                        # PendingRollbackError naming THIS error, far away.
+                        _rollback_quietly(db)
+                        raise
+
+            started = _time.monotonic()
+            found = _bounded("entity_event_resolution", left(),
+                             _run_entity_event_resolution, fallback=None)
+            task.timings["entity_event_resolution"] = round(_time.monotonic() - started, 1)
+            if found:
+                updates.update(found)
+                for _key, _value in found.items():
+                    publish(_key, _value)
+
+        if settings.enable_verification:
+            def _run_claim_verification():
+                # Audit the finished narrative against the stored corpus: a
+                # status and citations for every factual claim. A claim the
+                # evidence cannot support is labelled, not deleted.
+                with scope() as db:
+                    politician = db.get(Politician, task.politician_id)
+                    try:
+                        from engine.agents import verify
+
+                        audit = verify.verify_payload(db, politician, task.payload,
+                                                      report_id=task.report_id)
+                        found = {
+                            "verification": {k: audit.get(k) for k in (
+                                "checked", "verified", "unverified", "contradicted",
+                                "measurements")},
+                            "claims": audit["claims"],
+                        }
+                        # Then refuse to call the file finished: name what is
+                        # missing and turn the gaps into queries for the NEXT
+                        # run. After the audit, because unverified claims are
+                        # the richest source of what still needs establishing.
+                        if settings.enable_investigator:
+                            from engine.agents import investigator
+
+                            agenda = investigator.build_agenda(db, politician)
+                            investigator.store_follow_up_queries(
+                                db, politician, agenda.get("follow_up_queries") or [])
+                            found["investigation"] = agenda
+                        db.commit()
+                        return found
+                    except Exception:
+                        _rollback_quietly(db)
+                        raise
+
+            started = _time.monotonic()
+            found = _bounded("claim_verification", left(),
+                             _run_claim_verification, fallback=None)
+            task.timings["claim_verification"] = round(_time.monotonic() - started, 1)
+            if found:
+                updates.update(found)
+                for _key, _value in found.items():
+                    publish(_key, _value)
+
+        task.payload.update(updates)
+        task.payload["back_office"] = {
+            "status": "done",
+            "seconds": task.timings,
+            "produced": sorted(updates),
+        }
+        task.payload["section_status"] = task.ledger.summary()
+        task.payload["run_health"] = task.tracker.summary()
+        try:
+            with scope() as db:
+                row = db.get(IntelligenceReport, task.report_id)
+                if row is not None:
+                    row.payload = dict(task.payload)
+                    flag_modified(row, "payload")
+                    db.commit()
+        except Exception as exc:  # noqa: BLE001 — the delivered report stands
+            traceback.print_exc()
+            task.ledger.failed("back_office_save", exc)
+        publish("section_status", task.payload["section_status"])
+    return updates
+
+
+def _previous_payload(db: Session, politician: Politician) -> dict | None:
+    """The payload of this subject's most recent stored report, or None."""
+    try:
+        row = (
+            db.query(IntelligenceReport.payload)
+            .filter(IntelligenceReport.politician_id == politician.id)
+            .order_by(IntelligenceReport.generated_at.desc())
+            .first()
+        )
+    except Exception:  # noqa: BLE001 — a missing comparison is not a failed report
+        _rollback_quietly(db)
+        traceback.print_exc()
+        return None
+    return row[0] if row else None
+
+
+def _build_framework(politician, payload: dict, corpus: list[dict], prior: dict | None,
+                     sentiments: dict, publish, refine: bool) -> None:
+    """The Sentiment Framework and the worklist built from it. Never raises.
+
+    No model call and no database: everything it reads is already in hand,
+    which is why it can run before the analysts and again after them. The
+    second pass adds what the analysts wrote; if it fails, the first stands —
+    a framework without the deep-dive evidence beats no framework at all.
+    """
+    from engine.reports import actions as actions_module
+    from engine.reports import sentiment_framework
+
+    try:
+        built = sentiment_framework.build(politician, payload, corpus,
+                                          previous=prior, sentiments=sentiments)
+    except Exception as exc:  # noqa: BLE001 — the deliverable must not break a report
+        traceback.print_exc()
+        if payload.get("sentiment_framework"):
+            stages.current().ok("sentiment_framework", detail=(
+                "Refining it with the analysts' output failed, so this is the version "
+                f"built from the scored corpus. {type(exc).__name__}: {exc}")[:400])
+        else:
+            stages.current().failed("sentiment_framework", exc)
+        return
+    payload["sentiment_framework"] = built
+    stages.current().ok("sentiment_framework")
+    publish("sentiment_framework", built)
+
+    # The worklist. Built from the previous report as well as this one,
+    # because "in progress" has to mean something: it was on the list last
+    # time, and here is what the issue it addresses has done since.
+    try:
+        payload["actions"] = actions_module.build(payload, prior)
+        publish("actions", payload["actions"])
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        if not payload.get("actions"):
+            stages.current().failed("actions", exc)
 
 
 def _coverage_summary(stats: dict) -> dict:
@@ -956,6 +1108,10 @@ def _coverage_summary(stats: dict) -> dict:
         "complete": not down and not degraded,
         "prior_runs": stats.get("prior_runs"),
         "learning": learning_note,
+        # How long collection took, and whether its ceiling cut it short.
+        # Operator-facing: the page shows it under "Where the time went".
+        "collection_seconds": stats.get("collection_seconds"),
+        "collection_deadline": stats.get("collection_deadline"),
     }
 
 
@@ -1008,8 +1164,21 @@ def _upsert_entity(
     entity = db.query(Entity).filter_by(canonical_key=key).first()
     if not entity:
         entity = Entity(name=name.strip(), type=entity_type, canonical_key=key, role=role, affiliation=affiliation)
-        db.add(entity)
-        db.flush()
+        # Inside a SAVEPOINT: check-then-insert races any other writer of the
+        # same key — a concurrent report, or the previous report's back
+        # office, which now runs after delivery. Losing that race used to
+        # raise out of entity linking and take the whole run with it; now
+        # the loser simply reads the row the winner wrote.
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            with db.begin_nested():
+                db.add(entity)
+                db.flush()
+        except IntegrityError:
+            entity = db.query(Entity).filter_by(canonical_key=key).first()
+            if entity is None:
+                raise
         return entity
     # Fill gaps without overwriting operator-verified values.
     entity.role = entity.role or role
@@ -1149,6 +1318,20 @@ def _fetch_transcripts_for_top_videos(
 
     connector = SocialCrawlConnector()
 
+    # An account with nothing on it cannot fetch a transcript, and finding
+    # that out once per video — three refusals and then a "failed" stage on
+    # the page — made a configuration fact look like a broken report. The
+    # balance is already known: collection asked for it.
+    _no_credits = ("SocialCrawl has no credits on this account, so video "
+                   "transcripts were not fetched. Top it up, or remove "
+                   "SOCIALCRAWL_API_KEY to turn this stage off. Nothing else "
+                   "in the report depends on it.")
+    balance = ((ingestion_run.stats or {}).get("credit_balance_after")
+               if ingestion_run is not None else None)
+    if balance is not None and balance <= 0:
+        stages.current().skipped("transcripts", _no_credits)
+        return
+
     videos = (
         db.query(RawMention)
         .join(MentionEntity, MentionEntity.mention_id == RawMention.id)
@@ -1182,6 +1365,9 @@ def _fetch_transcripts_for_top_videos(
         # an exhausted plan fails identically for every video, and paying the
         # latency of that discovery once per video — on a premium endpoint —
         # buys nothing.
+        if getattr(connector, "credits_exhausted", False):
+            stages.current().skipped("transcripts", _no_credits)
+            break
         if consecutive_failures >= 3:
             stages.current().failed(
                 "transcripts",

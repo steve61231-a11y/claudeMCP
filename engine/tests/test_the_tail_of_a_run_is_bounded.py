@@ -78,14 +78,23 @@ def test_the_whole_run_has_a_ceiling_above_the_analyst_phase():
     assert settings.report_deadline_seconds > settings.analyst_deadline_seconds
 
 
-def test_every_unbounded_heavy_block_is_gated_on_the_run_ceiling():
+def test_every_heavy_block_is_bounded_where_it_now_runs():
+    """These blocks were gated on the run ceiling inside `run_analysis`. They
+    now run after delivery, in `run_back_office`, each bounded against the
+    back office's own ceiling — a thread that never returns is a leak whether
+    or not a reader is waiting on it. The Sentiment Framework is no longer
+    among them: it is arithmetic, and it is built before the analysts."""
     import inspect
 
     from engine import pipeline
 
-    source = inspect.getsource(pipeline.run_analysis)
-    for stage in ("entity_event_resolution", "sentiment_framework", "claim_verification"):
-        assert f'out_of_time("{stage}")' in source, f"{stage} can still overrun the run"
+    back_office = inspect.getsource(pipeline.run_back_office)
+    for stage in ("entity_event_resolution", "claim_verification"):
+        assert f'_bounded("{stage}"' in back_office, f"{stage} can run for ever"
+    assert "back_office_deadline_seconds" in back_office
+    run = inspect.getsource(pipeline.run_analysis)
+    assert "resolve_corpus" not in run and "verify_payload" not in run, (
+        "a back-office stage is back in front of the reader")
 
 
 def test_a_skipped_stage_says_it_ran_out_of_time():

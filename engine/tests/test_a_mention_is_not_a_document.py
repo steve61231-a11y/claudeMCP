@@ -148,5 +148,8 @@ def test_the_guards_that_wrap_database_work_roll_back():
 
     from engine import pipeline
 
-    source = inspect.getsource(pipeline.run_analysis)
+    # The two guards that wrap database work — resolution and the claim
+    # audit — moved with the back office, which now runs after delivery.
+    source = (inspect.getsource(pipeline.run_analysis)
+              + inspect.getsource(pipeline.run_back_office))
     assert source.count("_rollback_quietly(db)") >= 2

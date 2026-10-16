@@ -33,6 +33,7 @@ from __future__ import annotations
 import os
 import threading
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 # Above this share of failed calls, the run is not an analysis. Set where it is
@@ -127,9 +128,25 @@ class RunHealth:
 
 _current = RunHealth()
 
+# A thread bound to one run's tracker records into that run, not into
+# whichever report happens to be current. See `engine.runctx`.
+_bound = threading.local()
+
 
 def current() -> RunHealth:
-    return _current
+    tracker = getattr(_bound, "tracker", None)
+    return tracker if tracker is not None else _current
+
+
+@contextmanager
+def bound(tracker: RunHealth):
+    """Within this block, `current()` in THIS thread is `tracker`."""
+    previous = getattr(_bound, "tracker", None)
+    _bound.tracker = tracker
+    try:
+        yield tracker
+    finally:
+        _bound.tracker = previous
 
 
 def reset() -> RunHealth:

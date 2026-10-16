@@ -168,6 +168,13 @@ class Settings(BaseSettings):
     # in `ingestion/http.py` still paces GDELT at one request per five
     # seconds whatever this says — a polite source stays polite.
     ingestion_workers: int = 14
+    # Wall-clock ceiling on collection. Tasks not started by then are recorded
+    # as not asked (never as empty — the learning loop reads only finished
+    # tasks); tasks in flight stop at their next page or download and store
+    # what they have. The corpus compounds, so what one run leaves the next
+    # one finds. Four minutes, because collection was the longest phase of
+    # every run and the reader's wait starts here.
+    ingestion_deadline_seconds: int = 240
     # Full-power (2GB) cap on per-mention LLM work (entity-linking + sentiment)
     # per run, so a heavily-covered subject still finishes in a few minutes. The
     # map-reduce digest reads 100% of the corpus regardless; uncapped mentions
@@ -232,7 +239,11 @@ class Settings(BaseSettings):
     # journalism). ON by default: free, only needs open egress + trafilatura.
     enable_article_text: bool = True
     article_text_max_chars: int = 6000   # per-article body cap fed downstream
-    article_text_max_fetch: int = 60      # max URLs enriched per run (bounded)
+    # Max article bodies downloaded per RUN — enforced per run since the
+    # collection deadline landed; it had been applied per query, ~30x looser.
+    # Raised from 60 with that fix, so a run keeps most of the depth it had
+    # while the time it may take is bounded.
+    article_text_max_fetch: int = 120
     # Scrapling (BSD-3): retry a blocked fetch with a real Chrome TLS/HTTP2
     # fingerprint via curl_cffi. Kenyan newsrooms behind Cloudflare answer 403
     # to `requests` on fingerprint alone, so without this their bodies are
@@ -267,7 +278,18 @@ class Settings(BaseSettings):
     # live run reached "12/15 sections" and stayed there: not failing, just
     # never coming back. A report that stops early and names what it skipped
     # beats one that never arrives.
-    report_deadline_seconds: int = 1800
+    #
+    # Twenty minutes, down from thirty: the back office (resolution, the
+    # knowledge graph, the claim audit) now runs AFTER delivery and no longer
+    # spends this budget, so it bounds only what the reader waits for —
+    # collection excluded, which has its own ceiling.
+    report_deadline_seconds: int = 1200
+    # Ceiling on the back office — resolution, the knowledge graph, the claim
+    # audit, the investigator — which now runs AFTER the report is delivered
+    # (see `pipeline.run_back_office`). Nobody is waiting on it, so it can be
+    # generous; it still has one, because a thread that never returns is a
+    # leak whether or not a reader is watching it.
+    back_office_deadline_seconds: int = 900
     # Characters of corpus a single analyst reads.
     #
     # This was raised to 160k to fix sections answering from 1.4% of the
@@ -328,6 +350,13 @@ class Settings(BaseSettings):
     enable_kenya_law: bool = True       # kenyalaw.org — judgments and rulings
     enable_google_news: bool = True   # Google News RSS (Nation/Standard/Citizen/Star)
     enable_reddit: bool = True        # Reddit public JSON search (+ r/Kenya)
+    # Reddit refuses keyless requests from cloud servers ("403 Blocked") — it
+    # worked from a laptop and never from Railway. A free "script" app at
+    # reddit.com/prefs/apps gives these two; with them the connector signs in
+    # (app-only, read-only) and asks oauth.reddit.com instead. Without them it
+    # tries the public endpoint once per process window and stops asking.
+    reddit_client_id: str | None = None
+    reddit_client_secret: str | None = None
     enable_youtube: bool = True       # YouTube via yt-dlp (search + top comments)
     # Per-million-token USD prices for the configured Anthropic model, used to
     # turn real token counts into a real spend figure on the admin dashboard.

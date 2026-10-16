@@ -206,6 +206,7 @@ def enrich_report_payload(
     mentions: list[dict] | None = None,
     narratives: list[dict] | None = None,
     on_section=None,
+    deadline_seconds: float | None = None,
 ) -> dict:
     """Runs every section writer concurrently and merges the output into
     `payload`. Each section fails independently — one LLM hiccup falls back to
@@ -248,6 +249,11 @@ def enrich_report_payload(
     # digest, and a wait that outlived the budget would push every stage
     # after this one past it.
     deadline = max(60, settings.analyst_deadline_seconds)
+    # And never past what is left of the whole run. This phase had its own
+    # twelve minutes whatever had gone before it, so a slow collection plus a
+    # slow fan-out added up past the run's ceiling with nothing noticing.
+    if deadline_seconds is not None:
+        deadline = max(60, int(min(deadline, float(deadline_seconds))))
     # ONE budget for this whole phase, not one per stage. Bounding the fan-out
     # and then handing the two stages after it the same full deadline each
     # made the worst case 45 minutes rather than 15 — bounded, but so loosely
@@ -375,7 +381,9 @@ def enrich_report_payload(
     # section, and a report with a failed section beats a report that never
     # comes.
     pool = ThreadPoolExecutor(max_workers=min(_cap, len(jobs)))
-    futures = {pool.submit(run, key): key for key in jobs}
+    from engine.runctx import carry
+
+    futures = {pool.submit(carry(run), key): key for key in jobs}
     try:
         # as_completed, not pool.map: map yields in submission order, so a
         # section that finished in 5 seconds waits behind one that takes four
@@ -477,7 +485,13 @@ def enrich_report_payload(
         # is not a guarantee — quotes are validated against their ref, prose
         # never was, so an analyst could write any sentence into the brief and
         # nothing mechanical looked at it.
-        linked["grounding"] = grounding.check(linked, mentions or [])
+        #
+        # Checked, then ACTED ON. The check alone told the operator "do not
+        # send this to a client until it is clean" and left the cleaning to
+        # them — in a product whose reader is a CEO who never opens a
+        # diagnostics panel. A sentence naming someone in no source is
+        # removed, and the removal is declared in the operator view.
+        linked["grounding"] = grounding.redact(linked, grounding.check(linked, mentions or []))
         # Identity the sources never raised. Runs BEFORE the grounding
         # report is read by anyone, and unlike it, this one edits: a
         # sentence attributing a Kenyan political outcome to a religion or
@@ -498,6 +512,12 @@ def enrich_report_payload(
             if payload.get(key) is not value:
                 payload[key] = value
                 publish(key, value)
+        # A removal edits nested prose in place, so the identity test above
+        # can miss it. Re-publish what was touched, or the page keeps the
+        # version it was streamed before the sentence came out.
+        for key in (linked.get("grounding") or {}).get("touched_fields") or []:
+            if key in payload:
+                publish(key, payload[key])
 
         for key in cleaned:
             publish(key, payload[key])
@@ -514,9 +534,13 @@ def _bounded(name: str, deadline: float, fn, fallback):
     is not failing, it is simply not coming back, and a guard around it waits
     just as long as no guard at all.
     """
+    from engine.runctx import carry
+
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        future = pool.submit(lambda: stages.run_guarded(name, fn, fallback=fallback))
+        # Carried: the worker records into the run that started it, even
+        # if another report has begun by the time it finishes.
+        future = pool.submit(carry(lambda: stages.run_guarded(name, fn, fallback=fallback)))
         try:
             return future.result(timeout=deadline)
         except FuturesTimeout:

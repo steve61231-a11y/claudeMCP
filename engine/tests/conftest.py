@@ -69,6 +69,22 @@ def db_session():
         engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _no_remembered_refusals():
+    """A host one test marked as refusing us must not refuse the next test.
+
+    `http.remember_refusal` is process-wide on purpose — in production it is
+    what stops a blocked source being asked twelve times a run — so a test
+    that exercises it would otherwise leak a block into every later test."""
+    from engine.ingestion import http
+
+    with http._PACE_LOCK:
+        http._REFUSED.clear()
+    yield
+    with http._PACE_LOCK:
+        http._REFUSED.clear()
+
+
 #: Settings flags that turn a SOURCE on, as opposed to an analysis stage.
 #:
 #: Discovered rather than listed. Six test files each kept their own copy of

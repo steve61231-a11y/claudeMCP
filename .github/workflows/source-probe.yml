@@ -1,0 +1,35 @@
+name: source-probe
+
+# Which free sources a CLOUD server can reach, and through which door.
+#
+# The engine's development sandbox has no route to kenyalaw.org or
+# reddit.com, so every fix for a refused source used to be written blind and
+# tested for the first time on a client's report. GitHub's runners sit on a
+# datacenter network like the production container's, so this answers the
+# question from the right side of the wall — plain requests vs. a Chrome TLS
+# fingerprint, per endpoint — as annotations on the run. No secrets.
+
+on:
+  push:
+    branches:
+      - claude/magical-mayer-yzxz5s
+      - main
+    paths:
+      - "engine/ingestion/**"
+      - "scripts/source_probe.py"
+      - ".github/workflows/source-probe.yml"
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the two HTTP clients the engine uses
+        run: pip install requests curl_cffi==0.16.2
+      - name: Probe each source
+        run: python scripts/source_probe.py

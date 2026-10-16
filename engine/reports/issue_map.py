@@ -536,7 +536,7 @@ def build_issue_map(
     # Run on the analysis after linkify so it sees the resolved prose, and
     # reported beside it rather than inside it, so a reader can tell "we
     # looked and found none" from "nobody looked".
-    grounding_result = grounding.check(analysis, mentions)
+    grounding_result = grounding.redact(analysis, grounding.check(analysis, mentions))
     publish("grounding", grounding_result)
     # "Also goes for the issue map as well" — the standing instruction on
     # every change in this product. An invented ethnic attribution is no

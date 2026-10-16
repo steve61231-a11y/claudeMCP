@@ -123,6 +123,13 @@ def recall(db, politician, source: str, lookback: int = LOOKBACK_RUNS) -> dict[s
         # failure apart from a finding.
         if task.status not in ("done",):
             continue
+        # Nor does a task that finished EMPTY with a reason recorded. That is
+        # how a refused host ends: Reddit's "403 Blocked" and Kenya Law's bot
+        # wall both completed as "done, 0 results, error: ..." — so two runs
+        # behind a block retired every one of their queries as questions
+        # that had been asked and found nothing. They had not been asked.
+        if not (task.result_count or 0) and task.error:
+            continue
         entry = memory.setdefault(task.query, {
             "asked": 0, "new_mentions": 0, "empty_in_a_row": 0,
             "runs_ago": order.get(task.run_id, 0),

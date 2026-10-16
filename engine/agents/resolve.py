@@ -27,6 +27,7 @@ from datetime import datetime
 from engine import llm, stages
 from engine.config import settings
 from engine.db.models import Entity, Event, EventEvidence
+from engine.runctx import carry
 
 # Entity types we resolve. Deliberately wider than "people": due diligence turns
 # on companies, contracts and policies as much as on individuals.
@@ -166,7 +167,9 @@ def resolve_corpus(db, politician, corpus: list[dict], limit: int | None = None)
     size = max(1, settings.agent_batch_size // 3)  # richer output per item
     batches = [items[i : i + size] for i in range(0, len(items), size)]
     with ThreadPoolExecutor(max_workers=llm.concurrency(min(_WORKERS, len(batches)))) as pool:
-        extracted = list(pool.map(lambda b: _extract_batch(politician.name, b), batches))
+        # Carried, so these calls count against the run that asked for them
+        # — this runs after delivery, when another report may have begun.
+        extracted = list(pool.map(carry(lambda b: _extract_batch(politician.name, b)), batches))
 
     now = datetime.utcnow()
     entity_cache: dict[str, Entity] = {}
