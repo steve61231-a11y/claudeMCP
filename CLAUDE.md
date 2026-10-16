@@ -450,16 +450,23 @@ claimed per run. Every phase is also timed — `StageLedger.lap()` —
 and the operator view shows "Where the time went", because a run that takes
 too long has to say WHERE or every fix is a guess.
 
-**A server refused is not a question unanswered.** Kenya Law's bot wall
-refuses the python-requests fingerprint ("403 Forbidden") and Reddit refuses
-every keyless request from a cloud address ("403 Blocked"). Each run asked a
+**A server refused is not a question unanswered.** Kenya Law refused every
+search from Railway ("403 Forbidden") and Reddit refuses every keyless
+request from a cloud address ("403 Blocked"). The first diagnosis written
+here blamed Kenya Law's refusal on the python-requests fingerprint; the probe
+below then showed the identical request getting a 200 from GitHub's
+datacenter network — the block is on Railway's address. Recorded because it
+is this file's own rule, broken by its author: never state a cause you have
+not checked. Reddit refuses GitHub's network too, even on oauth.reddit.com
+without a token, so app credentials are the only route. Each run asked a
 dozen times, printed every URL under "Failed" — and the learning loop read
 each refusal as a query that had been asked and found nothing, so two runs
 behind a block would retire every one of those queries. Now
 `http.remember_refusal` keeps a host's verdict on this SERVER for a few
 hours and nothing asks again meanwhile (`fetch_backend` included); Kenya Law
-goes through the tiered fetcher, whose second tier presents Chrome's TLS
-fingerprint; Reddit signs in app-only when `REDDIT_CLIENT_ID`/`SECRET` exist;
+goes through the tiered fetcher (a second attempt with Chrome's TLS
+fingerprint, not a known fix); Reddit signs in app-only when
+`REDDIT_CLIENT_ID`/`SECRET` exist;
 and `learning.recall` skips a task that finished empty WITH a recorded
 reason. The development sandbox cannot reach either host, so
 `.github/workflows/source-probe.yml` asks from GitHub's datacenter network on

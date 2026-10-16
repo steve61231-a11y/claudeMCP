@@ -140,11 +140,13 @@ class _KenyaLawBase(IngestionConnector):
             return []
 
         url = self.url_template.format(query=quote_plus(term))
-        # Through the tiered fetcher, not bare `http.get`: kenyalaw.org sits
-        # behind a bot wall that answered every search from Railway with
-        # "403 Forbidden" — the fingerprint of python-requests, which the
-        # wall refuses on sight. The second tier presents a real browser's
-        # TLS handshake, which is what the wall actually checks.
+        # Through the tiered fetcher, not bare `http.get`. kenyalaw.org
+        # answered every search from Railway with "403 Forbidden" — and the
+        # same request, python-requests fingerprint and all, gets a 200 from
+        # GitHub's datacenter network (source-probe.yml, 16 Oct 2026). So the
+        # refusal is about Railway's ADDRESS, not the client, and no header
+        # here is known to fix it. The browser-fingerprint tier is a second
+        # attempt that costs one request; refused too, it is remembered.
         result = fetch_backend.fetch_html(url, timeout=30)
         if not result.ok:
             # The host refused us. NOT "this subject has no court record" —

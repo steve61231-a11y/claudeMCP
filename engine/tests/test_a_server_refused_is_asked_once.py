@@ -2,17 +2,18 @@
 
 A live report on Rigathi Gachagua listed two sources under "Failed", with the
 full request URL of every refused query, on the page a CEO reads. Neither was
-broken in a way another request could change. Kenya Law's bot wall refuses
-the fingerprint of python-requests; Reddit refuses every keyless request from
-a cloud address with "403 Blocked". Each run rediscovered both, a dozen times,
-and paid for it in time.
+broken in a way another request could change. Kenya Law refused every search
+from Railway's address with "403 Forbidden" (the same request gets a 200 from
+GitHub's network); Reddit refuses every keyless request from a cloud address
+with "403 Blocked". Each run rediscovered both, a dozen times, and paid for it
+in time.
 
 What changed, and what each test below holds:
 
   * a refusal that is the HOST's verdict on this server is remembered for a
     few hours, and nothing — no tier, no connector — asks again meanwhile;
   * Kenya Law is asked through the tiered fetcher, whose second tier presents
-    a real browser's TLS handshake, which is what the wall checks;
+    a real browser's TLS handshake — a second attempt, not a known fix;
   * Reddit signs in app-only when REDDIT_CLIENT_ID/SECRET exist, and asks
     oauth.reddit.com, which serves cloud servers;
   * the learning loop no longer reads a refused query as one that was asked
