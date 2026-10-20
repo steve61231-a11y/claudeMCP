@@ -830,11 +830,22 @@
   function httpCause(err){
     const status = err && err.httpStatus;
     const base = `API base is <b>${esc(CFG.base)}</b>.`;
+    if((status===401 || status===403) && !CFG.key)
+      // The page KNOWS it sent no key — this browser has none saved. Say
+      // that, rather than "it rejected the key" about a key that was never
+      // sent: a new device, a different browser and cleared site data all
+      // look like this.
+      return `The engine is up and reachable, but <b>this browser has no API key saved</b>, and the `
+        + `engine requires one. Open <b>Settings</b>, paste the value of <b>PULSE_API_KEY</b> `
+        + `from your host's variables into <b>API key (x-api-key)</b>, and press `
+        + `<b>Save &amp; connect</b> \u2014 it now tells you at once whether the key is accepted.`;
     if(status===401 || status===403)
-      return `The engine answered, so it is up and reachable \u2014 it rejected the key. `
-        + `Open <b>Settings</b> and set <b>API key (x-api-key)</b> to the same value as `
-        + `<b>PULSE_API_KEY</b> in your host's environment variables, then Save. `
-        + `They must match exactly, with no trailing space.`;
+      return `The engine is up and reachable, and it <b>refused the key this browser sent</b>. Open `
+        + `<b>Settings</b>, paste the value of <b>PULSE_API_KEY</b> from your host's variables `
+        + `into <b>API key (x-api-key)</b> and press <b>Save &amp; connect</b> \u2014 it now `
+        + `checks the key itself. If you changed PULSE_API_KEY recently, make sure the change `
+        + `was deployed: Railway holds an edited variable as a staged change until you `
+        + `press <b>Deploy</b>, and until then the engine still expects the old one.`;
     if(status===404)
       return `${base} If that is not your M\u0169\u0169g\u0129 engine (for example a static host with `
         + `no backend), open <b>Settings</b>, set it to your engine URL and Save. `
@@ -874,7 +885,10 @@
         if(r.ok) return await r.json();
         if([404,502,503].includes(r.status) && attempt<2){ await new Promise(z=>setTimeout(z,4000)); lastErr=new Error('HTTP '+r.status+' @ '+url); continue; }
         const e=new Error('HTTP '+r.status+' @ '+url); e.url=url; e.httpStatus=r.status; throw e;
-      } catch(err){ clearTimeout(to); lastErr=err; if(attempt>=2) throw err; await new Promise(z=>setTimeout(z,4000)); }
+      } catch(err){ clearTimeout(to); lastErr=err;
+        // An answer that will not change in four seconds is not retried.
+        if(attempt>=2 || [400,401,402,403,422,429].includes(err&&err.httpStatus)) throw err;
+        await new Promise(z=>setTimeout(z,4000)); }
     }
     throw lastErr;
   }
@@ -5365,11 +5379,29 @@
     w.appendChild(v);
     $('#sop',v).onchange=e=>{CFG.operator=!!e.target.checked;
       store('zenith_operator',CFG.operator?'1':'0');applyView();};
-    $('#ssave',c).onclick=()=>{CFG.base=$('#sbase',c).value.trim();CFG.key=$('#skey',c).value.trim();
-      store('zenith_base',CFG.base);store('zenith_key',CFG.key);$('#sres',c).innerHTML='<span class="spinner"></span>';ping().then(()=>{$('#sres',c).innerHTML=LIVE?'<span style="color:var(--pos)">Connected ✓</span>':'<span style="color:var(--neg)">Saved, but not reachable</span>';});};
-    $('#stest',c).onclick=async()=>{const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';const b=$('#sbase',c).value.trim();
-      try{const resp=await fetch(b.replace(/\/$/,'')+'/api/health');r.innerHTML=resp.ok?'<span style="color:var(--pos)">Reachable ✓</span>':'<span style="color:var(--neg)">HTTP '+resp.status+'</span>';}
-      catch(e){r.innerHTML='<span style="color:var(--neg)">Unreachable (CORS or offline)</span>';}};
+    // "Connected ✓" used to mean only that /api/health answered — which it
+    // does for anyone. So a wrong key looked connected until a report was
+    // refused. Both buttons now ask the engine whether THIS key opens it.
+    async function keyVerdict(base, key){
+      const url=String(base||'').replace(/\/$/,'')+'/api/auth-check';
+      try{
+        const resp=await fetch(url,{headers:key?{'x-api-key':key}:{}});
+        if(resp.ok)return '<span style="color:var(--pos)">Connected ✓ · key accepted</span>';
+        if(resp.status===401||resp.status===403)return key
+          ?'<span style="color:var(--neg)">Engine reachable, but it <b>rejected this key</b>. It must equal PULSE_API_KEY in your host\u2019s variables \u2014 and if you changed that recently, the change must be deployed.</span>'
+          :'<span style="color:var(--neg)">Engine reachable, but it <b>requires a key</b> and none is entered above.</span>';
+        if(resp.status===404)return '<span style="color:var(--amber)">Engine reachable; it is an older build that cannot check keys. Generate a report to test the key.</span>';
+        return '<span style="color:var(--neg)">HTTP '+resp.status+' from the engine</span>';
+      }catch(e){return '<span style="color:var(--neg)">Unreachable (CORS or offline)</span>';}
+    }
+    $('#ssave',c).onclick=async()=>{CFG.base=$('#sbase',c).value.trim();CFG.key=$('#skey',c).value.trim();
+      store('zenith_base',CFG.base);store('zenith_key',CFG.key);
+      const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';
+      await ping();
+      r.innerHTML=LIVE?await keyVerdict(CFG.base,CFG.key)
+        :'<span style="color:var(--neg)">Saved, but the engine did not answer at that address.</span>';};
+    $('#stest',c).onclick=async()=>{const r=$('#sres',c);r.innerHTML='<span class="spinner"></span>';
+      r.innerHTML=await keyVerdict($('#sbase',c).value.trim(),$('#skey',c).value.trim());};
     return w;
   }
 

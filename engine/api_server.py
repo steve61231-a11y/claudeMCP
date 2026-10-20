@@ -6,6 +6,7 @@ X-API-Key header, ALLOWED_ORIGINS restricts CORS, and report submissions are
 rate-limited per client IP. All default to permissive for local dev only.
 """
 
+import hmac
 import json
 import os
 import threading
@@ -127,11 +128,43 @@ app.add_middleware(
 )
 
 
+def _normalise_key(value: str | None) -> str:
+    """A key as a person meant it: no surrounding whitespace, no wrapping quotes.
+
+    The page trims what it sends, and the check compared that against the
+    configured value EXACTLY — so a PULSE_API_KEY pasted into the host's
+    variables with a trailing space, a line break or the quotes from an
+    .env file could never be matched by anything the page can send. The
+    operator was told "it rejected the key" about two values that were the
+    same key.
+    """
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    return text
+
+
+#: Why a key was refused, in words the operator can act on. Says which of the
+#: two cases it is — the page cannot otherwise tell "this browser has no key
+#: saved" from "the key it has is not the engine's" — and nothing about the
+#: real key: this answer goes to anyone who asks.
+KEY_MISSING = "missing API key: this request carried no x-api-key"
+KEY_MISMATCH = "invalid API key: an x-api-key was sent and does not match PULSE_API_KEY"
+
+
 def _require_api_key(x_api_key: str | None) -> None:
     """Enforced only when PULSE_API_KEY is configured, so local dev and the
     existing frontend keep working until the key is rolled out to both sides."""
-    if settings.pulse_api_key and x_api_key != settings.pulse_api_key:
-        raise HTTPException(status_code=401, detail="invalid or missing API key")
+    expected = _normalise_key(settings.pulse_api_key)
+    if not expected:
+        return
+    sent = _normalise_key(x_api_key)
+    if not sent:
+        raise HTTPException(status_code=401, detail=KEY_MISSING)
+    # Constant-time, so the comparison does not leak how much of a guess
+    # was right.
+    if not hmac.compare_digest(sent.encode("utf-8"), expected.encode("utf-8")):
+        raise HTTPException(status_code=401, detail=KEY_MISMATCH)
 
 
 # Per-IP sliding-window rate limit for report submissions (LLM cost / DoS guard).
@@ -2558,6 +2591,19 @@ def _analysis_capability() -> dict:
             "`python -m spacy download en_core_web_sm` step ran."
         )
     return out
+
+
+@app.get("/api/auth-check")
+def auth_check(x_api_key: str | None = Header(default=None)):
+    """Does this key open the engine? Nothing else.
+
+    Settings said "Connected ✓" after checking only that /api/health
+    answered, which it does for anyone — so a wrong key looked connected
+    until the first report was refused. A green tick for a check that never
+    ran is this product's founding rule broken on its own settings page.
+    """
+    _require_api_key(x_api_key)
+    return {"ok": True, "key_required": bool(_normalise_key(settings.pulse_api_key))}
 
 
 @app.get("/api/health")
