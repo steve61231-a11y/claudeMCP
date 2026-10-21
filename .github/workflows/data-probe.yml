@@ -1,0 +1,31 @@
+name: data-probe
+
+# What the free sources actually return, and WHEN it was published.
+#
+# Written after an investor found mentions "going back to the last election"
+# in a one-month report. The collectors were built in a sandbox with no route
+# to these sources, so their assumptions about dates had never met the real
+# thing. Run on demand; generic public queries only; the JSON it writes is
+# what local vs international outlet lists and date handling are built from.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the clients the collectors use
+        run: pip install requests "yt-dlp>=2025.1.1"
+      - name: Probe
+        run: python scripts/data_probe.py data_probe.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-probe
+          path: data_probe.json
+          retention-days: 3
