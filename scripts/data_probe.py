@@ -32,7 +32,8 @@ from xml.etree import ElementTree as ET
 import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (research probe)"}
-QUERIES = ['"William Ruto"', "Kenya parliament", "Nairobi county", "Kenya economy"]
+QUERIES = ['"William Ruto"', "Kenya parliament", "Nairobi county", "Kenya economy",
+           "Kenya Senate", "Kenya High Court", "Mombasa", "Kisumu"]
 END = datetime.utcnow()
 START = END - timedelta(days=30)
 
@@ -47,8 +48,10 @@ def google_news(out: dict) -> None:
     variants = {
         "plain": "{q}",
         "when30d": "{q} when:30d",
-        "after_before": "{q} after:" + START.strftime("%Y-%m-%d") + " before:"
-                        + (END + timedelta(days=1)).strftime("%Y-%m-%d"),
+        "when14d": "{q} when:14d",
+        "when90d": "{q} when:90d",
+        "when365d": "{q} when:365d",
+        "when1y": "{q} when:1y",
     }
     results = {}
     for name, template in variants.items():
@@ -83,6 +86,8 @@ def google_news(out: dict) -> None:
                          "oldest": oldest.isoformat() if oldest else None}
         _note(f"Google News {name}", f"{total} items · {old} published before the period "
               f"(oldest {oldest:%Y-%m-%d})" if oldest else f"{total} items · 0 before the period")
+    for n, c in outlets.most_common(250):
+        print(f"OUTLET\t{c}\t{n}\t{domains.get(n) or ''}")
     out["google_news"] = {"variants": results,
                           "outlets": [{"name": n, "count": c, "domain": domains.get(n)}
                                       for n, c in outlets.most_common(200)]}
@@ -96,8 +101,10 @@ def youtube(out: dict) -> None:
         return
     results = {}
     channels: Counter = Counter()
-    for prefix in ("ytsearch", "ytsearchdate"):
-        for approx in (False, True):
+    filters = {"ytsearch": None, "this_month": "EgIIBA%253D%253D",
+               "this_year": "EgIIBQ%253D%253D", "newest_first": "CAI%253D"}
+    for prefix, sp in filters.items():
+        for approx in (True,):
             opts = {"quiet": True, "extract_flat": True, "skip_download": True}
             if approx:
                 opts["extractor_args"] = {"youtubetab": {"approximate_date": [""]}}
@@ -106,7 +113,10 @@ def youtube(out: dict) -> None:
             for q in ('"William Ruto"', "Kenya parliament"):
                 try:
                     with yt_dlp.YoutubeDL(opts) as ydl:
-                        info = ydl.extract_info(f"{prefix}20:{q} Kenya", download=False)
+                        target = (f"ytsearch20:{q} Kenya" if sp is None else
+                                  "https://www.youtube.com/results?search_query="
+                                  + quote_plus(f"{q} Kenya") + "&sp=" + sp)
+                        info = ydl.extract_info(target, download=False)
                 except Exception as exc:  # noqa: BLE001
                     _note("YouTube", f"{prefix} error {exc}"[:200])
                     continue
@@ -134,7 +144,9 @@ def youtube(out: dict) -> None:
     try:
         with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True,
                                "extractor_args": {"youtubetab": {"approximate_date": [""]}}}) as ydl:
-            info = ydl.extract_info('ytsearchdate3:"William Ruto" Kenya', download=False)
+            info = ydl.extract_info("https://www.youtube.com/results?search_query="
+                                    + quote_plus('"William Ruto" Kenya') + "&sp=EgIIBA%253D%253D",
+                                    download=False)
         vid = ((info or {}).get("entries") or [{}])[0].get("id")
         if vid:
             with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "getcomments": True,
@@ -144,10 +156,16 @@ def youtube(out: dict) -> None:
             stamped = sum(1 for c in comments if c.get("timestamp"))
             comment_report = {"comments": len(comments), "with_timestamp": stamped,
                               "video_upload_date": full.get("upload_date")}
+            for c in comments[:20]:
+                ts = c.get("timestamp")
+                print("COMMENT\t" + (datetime.utcfromtimestamp(ts).isoformat() if ts else "none")
+                      + "\t" + str(c.get("_time_text") or ""))
             _note("YouTube comments", f"{len(comments)} comments · {stamped} carry their own "
                   f"timestamp · video uploaded {full.get('upload_date')}")
     except Exception as exc:  # noqa: BLE001
         _note("YouTube comments", f"error {exc}"[:200])
+    for n, c in channels.most_common(150):
+        print(f"CHANNEL\t{c}\t{n}")
     out["youtube"] = {"variants": results, "comments": comment_report,
                       "channels": [{"name": n, "count": c} for n, c in channels.most_common(80)]}
 
@@ -157,11 +175,20 @@ def gdelt(out: dict) -> None:
               "maxrecords": "100", "sort": "datedesc",
               "startdatetime": START.strftime("%Y%m%d%H%M%S"),
               "enddatetime": END.strftime("%Y%m%d%H%M%S")}
-    try:
-        body = requests.get("https://api.gdeltproject.org/api/v2/doc/doc",
-                            params=params, headers=UA, timeout=30).json()
-    except Exception as exc:  # noqa: BLE001
-        _note("GDELT", f"error {exc}"[:200])
+    import time
+
+    body = None
+    for attempt in range(4):
+        resp = requests.get("https://api.gdeltproject.org/api/v2/doc/doc",
+                            params=params, headers=UA, timeout=30)
+        try:
+            body = resp.json()
+            break
+        except Exception:  # noqa: BLE001
+            print(f"GDELT attempt {attempt + 1}: HTTP {resp.status_code} {resp.text[:120]!r}")
+            time.sleep(15)
+    if body is None:
+        _note("GDELT", "refused every attempt")
         return
     arts = body.get("articles") or []
     domains = Counter(a.get("domain") for a in arts)
@@ -169,6 +196,9 @@ def gdelt(out: dict) -> None:
     countries = Counter(a.get("sourcecountry") for a in arts)
     _note("GDELT", f"{len(arts)} articles · {old} before the period · "
           f"source countries {dict(countries.most_common(6))}")
+    for d, c in domains.most_common(150):
+        print(f"GDELT_DOMAIN\t{c}\t{d}\t" + str(next((a.get("sourcecountry") for a in arts
+                                                         if a.get("domain") == d), "")))
     out["gdelt"] = {"articles": len(arts), "before_period": old,
                     "domains": [{"domain": d, "count": c} for d, c in domains.most_common(120)],
                     "countries": dict(countries)}
