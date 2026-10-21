@@ -1,6 +1,35 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TypedDict
+
+
+def period_date(published: datetime | None, window_start: datetime,
+                window_end: datetime) -> tuple[datetime, bool] | None:
+    """When an item counts as published, judged against the reporting period.
+
+    Returns `(posted_at, date_estimated)`, or None when the item was published
+    BEFORE the period and so is not this report's evidence at all.
+
+    Every collector used to clamp a real date into the window —
+    `min(max(posted, window_start), window_end)` — so a video uploaded for
+    the 2022 election, returned by a relevance-ranked search, was stored as
+    published on the first day of this month. An investor found "mentions
+    going back to the last election" in a one-month report. Measured from
+    GitHub's network on 21 Oct 2026: 47% of Google News results and 35% of
+    YouTube results for a one-month query predated the month, every one of
+    them dated into it. A date is a fact about the item; it is never moved.
+
+    An item with no date at all is kept and marked: `date_estimated` items
+    are excluded from the period's analysis by the pipeline, because "we
+    could not date this" must never read as "this happened this month".
+    """
+    if published is None:
+        return window_end, True
+    if published.tzinfo is not None:
+        published = published.astimezone(timezone.utc).replace(tzinfo=None)
+    if published < window_start:
+        return None
+    return published, False
 
 
 class IngestedMention(TypedDict):

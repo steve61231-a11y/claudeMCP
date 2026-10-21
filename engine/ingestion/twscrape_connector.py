@@ -113,7 +113,10 @@ class TwscrapeConnector(IngestionConnector):
         user = getattr(tweet, "user", None)
         handle = getattr(user, "username", None) or "unknown"
         posted = getattr(tweet, "date", None)
-        if not isinstance(posted, datetime):
+        # No date is not "now". Marked, so the period's analysis leaves it out
+        # rather than counting it as published this week.
+        estimated = not isinstance(posted, datetime)
+        if estimated:
             posted = datetime.utcnow()
         elif posted.tzinfo is not None:
             posted = posted.replace(tzinfo=None)
@@ -130,6 +133,7 @@ class TwscrapeConnector(IngestionConnector):
                 "views": getattr(tweet, "viewCount", 0) or 0,
             },
             raw_payload={
+                "date_estimated": estimated,
                 "url": getattr(tweet, "url", None),
                 "tweet_id": tid,
                 "followers": getattr(user, "followersCount", None),

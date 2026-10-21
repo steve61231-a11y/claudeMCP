@@ -19,7 +19,7 @@ every other connector) rather than crashing a run.
 from datetime import datetime
 
 from engine.config import settings
-from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion.base import IngestedMention, IngestionConnector, period_date
 
 
 class ScweetConnector(IngestionConnector):
@@ -114,10 +114,11 @@ class ScweetConnector(IngestionConnector):
         seen.add(key)
 
         handle = str(cls._get(row, "UserScreenName", "username", "user", "handle") or "unknown").lstrip("@")
-        posted = cls._parse_ts(cls._get(row, "Timestamp", "timestamp", "date", "posted_at"))
-        if posted is None:
-            posted = window_end
-        posted = min(max(posted, window_start), window_end)
+        dated = period_date(cls._parse_ts(cls._get(row, "Timestamp", "timestamp", "date", "posted_at")),
+                            window_start, window_end)
+        if dated is None:
+            return None       # posted before the period
+        posted, estimated = dated
 
         def _int(v):
             try:
@@ -138,6 +139,7 @@ class ScweetConnector(IngestionConnector):
                 "comments": _int(cls._get(row, "Comments", "comments", "replies")),
             },
             raw_payload={
+                "date_estimated": estimated,
                 "url": url,
                 "tweet_id": tid or None,
                 "source": "scweet",

@@ -115,7 +115,8 @@ def test_covered_sources_are_disclosed():
     mentions = [_mention("twitter"), _mention("news", source_type="article")]
     section = sf.build_overall_mentions(_payload(), mentions, None)
     assert "sources_covered" in section
-    assert section["sources_covered"]["social_media"] == ["twitter"]
+    # By the name a reader knows — X, not the storage key "twitter".
+    assert section["sources_covered"]["social_media"] == ["X"]
 
 
 # --- 3.0 Sentiment ----------------------------------------------------------

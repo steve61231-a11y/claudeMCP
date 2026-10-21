@@ -2409,6 +2409,19 @@
 
   /** Bucket the corpus by platform so sections 5/6/7 partition it exactly once. */
   function dashChannels(r){
+    // The engine's own classification first. This guessed from the platform
+    // KEY — "/news|nation|star|\./" — while the framework classified the same
+    // items properly, so one report could call an outlet local in one tab
+    // and something else in the next. One classification, one answer.
+    const byCount=(a,b)=>b.count-a.count;
+    const detail=(((r.sentiment_framework||{}).overall_mentions)||{}).sources_detail||[];
+    if(detail.length){
+      const group=t=>detail.filter(d=>d.outlet_type===t)
+        .map(d=>({name:String(d.source||''),count:d.mentions||0})).sort(byCount);
+      const local=group('local_media'), intl=group('international_media'), social=group('social_media');
+      return {local,intl,digital:social,media:[...local,...intl].sort(byCount),others:[],
+              all:detail.map(d=>({name:String(d.source||''),count:d.mentions||0})),segmented:true};
+    }
     const rows=(r.volume&&r.volume.byPlatform)||r.platforms||r.byPlatform||[];
     const list=Array.isArray(rows)?rows.map(p=>({name:String(p.platform||p.name||p.label||'').toLowerCase(),
                                                  count:p.count||p.total||p.mentions||0}))
@@ -2419,7 +2432,6 @@
       else if(/news|media|article|press|nation|standard|star|citizen|bbc|reuters|\./.test(p.name))media.push(p);
       else others.push(p);
     });
-    const byCount=(a,b)=>b.count-a.count;
     return {media:media.sort(byCount),digital:digital.sort(byCount),others:others.sort(byCount),all:list};
   }
 
@@ -2977,9 +2989,15 @@
         fmt(rows.reduce((a,p)=>a+p.count,0))+' items across '+rows.length+' source(s)'));
     };
     const cCh=dashCard('Channels','Where the coverage sits — share of all mentions');
-    channelGroup(cCh,'Traditional media',ch.media,'no editorial coverage in this period');
-    channelGroup(cCh,'Social media',ch.digital,'no social coverage in this period');
-    channelGroup(cCh,'Other sources',ch.others,'no other sources in this period');
+    if(ch.segmented){
+      channelGroup(cCh,'Kenyan media',ch.local,'no Kenyan media coverage in this period');
+      channelGroup(cCh,'International media',ch.intl,'no international coverage in this period');
+      channelGroup(cCh,'Social media',ch.digital,'no social coverage in this period');
+    }else{
+      channelGroup(cCh,'Traditional media',ch.media,'no editorial coverage in this period');
+      channelGroup(cCh,'Social media',ch.digital,'no social coverage in this period');
+      channelGroup(cCh,'Other sources',ch.others,'no other sources in this period');
+    }
     out.appendChild(cCh);
 
     /* 8 — Subject. */
@@ -4066,9 +4084,50 @@
     return c;
   }
 
+  /** What the reader had open, so a redraw does not take it away.
+
+      A live run redraws the whole report every time a section lands, and
+      every redraw jumped back to the Overview tab and folded every open
+      section. A reader on the Sentiment Framework was thrown out of it with
+      each new section and once more at the end — an investor reported the
+      framework "keeps disappearing" and "runs on a loop". It was there; the
+      page kept walking away from it. Kept only for the SAME subject: a new
+      report starts at the top, as it should. */
+  function readerState(out, name){
+    if(!out||out.dataset.subject!==String(name||''))return null;
+    return {
+      mode: out.dataset.mode||'overview',
+      // Whether the reader picked that tab, or it was simply the default.
+      // A default may move when a better one arrives; a choice may not.
+      chosen: out.dataset.chosen==='1',
+      // Where they were on the page. The final render replaced everything
+      // and, unlike the partial ones, did not hold the scroll, so the end of
+      // a run threw the reader back to the top of the report.
+      y: window.scrollY,
+      open: new Set([...out.querySelectorAll('.sect[open]')].map(s=>s.dataset.title||'')),
+      folds: new Set([...out.querySelectorAll('details[open] > summary')].map(s=>s.textContent.trim())),
+    };
+  }
+  function restoreReaderState(out, state){
+    if(!state){delete out.dataset.chosen;return;}
+    out.querySelectorAll('.sect').forEach(s=>{
+      if(state.open.has(s.dataset.title||'')){
+        s.setAttribute('open','');
+        const h=s.querySelector('.sect-head'); if(h)h.setAttribute('aria-expanded','true');
+      }
+    });
+    out.querySelectorAll('details > summary').forEach(sm=>{
+      if(state.folds.has(sm.textContent.trim()))sm.parentElement.setAttribute('open','');
+    });
+    if(state.chosen)out.dataset.chosen='1';
+    window.scrollTo(0,state.y);
+  }
+
   function renderReport(out,r,meta){
     useRefIndex(r);
+    const kept=readerState(out, r.name);
     out.innerHTML='';
+    out.dataset.subject=String(r.name||'');
     const wrap=el('div','grid fade');wrap.style.marginTop='8px';
     // header
     const fresh=r.freshness||{}; const live=meta&&meta.live;
@@ -4359,6 +4418,14 @@
     ];
     if(r.sentiment_framework)
       modes.push(['sentiment','Sentiment Framework V1.0',host=>renderSentimentFramework(host,r.sentiment_framework,r.name)]);
+    else if(meta&&meta.partial)
+      // Still being built. The tab stays, with a line saying so, rather than
+      // appearing, vanishing and reappearing as sections land.
+      modes.push(['sentiment','Sentiment Framework V1.0',host=>host.appendChild(el('div','card',
+        `<div class="row" style="gap:10px"><span class="spinner"></span><b>Building the Sentiment
+         Framework</b></div><div class="muted" style="font-size:13.5px;margin-top:6px">It is
+         built from this run's scored mentions and appears here as soon as scoring finishes \u2014
+         usually a few minutes into the run, before the written analysis.</div>`))]);
 
     const bar=el('div','row');bar.style.margin='18px 0 4px';
     out.insertBefore(bar,wrap);
@@ -4378,17 +4445,22 @@
         out.appendChild(host);
       }
       const b=el('button','btn ghost',esc(label));
-      b.onclick=()=>show(id);
+      b.onclick=()=>{out.dataset.chosen='1';show(id);};
       buttons[id]=b;bar.appendChild(b);
     });
-    const show=id=>{
+    const show=(id,animate=true)=>{
       Object.keys(hosts).forEach(key=>{
         hosts[key].classList.toggle('mode-off',key!==id);
         if(buttons[key])buttons[key].className='btn'+(key===id?'':' ghost');
       });
-      if(id!=='overview')hosts[id].classList.add('fade');
+      if(animate&&id!=='overview')hosts[id].classList.add('fade');
+      out.dataset.mode=id;
     };
-    show('overview');
+    // A redraw of the report the reader is already in holds still: same tab,
+    // same open sections, no fade-in. Only a new report animates.
+    if(kept)wrap.classList.remove('fade');
+    show(kept&&hosts[kept.mode]?kept.mode:'overview', !kept);
+    restoreReaderState(out, kept);
   }
   const kpiCard=(l,val,note)=>{const isColor=['sky','neg','pos'].includes(note);
     return el('div','card',`<div class="lbl">${esc(l)}</div><div class="kpi tnum" style="margin-top:6px;${note==='neg'?'color:var(--neg)':note==='sky'?'color:var(--sky2)':''}">${val}</div>
@@ -5129,7 +5201,13 @@
 
   function renderIssue(out,m){
     useRefIndex(m);
+    // The same holding-still as the search report: each analyst that lands
+    // redraws the map, and every redraw used to reset the tab and fold
+    // everything the reader had opened.
+    const pair=String(m.principal||'')+' \u00d7 '+String(m.issue||'');
+    const kept=readerState(out, pair);
     out.innerHTML='';
+    out.dataset.subject=pair;
     // Collected plenty, none of it on topic. This is a different result from
     // "no coverage exists", and the old page could not tell them apart — it
     // rendered eight empty framework sections and let the reader conclude the
@@ -5203,13 +5281,19 @@
       host.innerHTML='';
       modes.forEach(([mid])=>{buttons[mid].className='btn'+(mid===id?'':' ghost');});
       modes.find(mo=>mo[0]===id)[2](host);
+      out.dataset.mode=id;
     };
     modes.forEach(([id,label])=>{
       const b=el('button','btn ghost',esc(label));
-      b.onclick=()=>show(id);
+      b.onclick=()=>{out.dataset.chosen='1';show(id);};
       buttons[id]=b;bar.appendChild(b);
     });
-    show(modes[0][0]);
+    // The framework is the default and arrives late; a reader who has not
+    // picked a tab is moved to it when it lands, one who has is left alone.
+    const keep=kept&&kept.chosen&&modes.some(mo=>mo[0]===kept.mode);
+    show(keep?kept.mode:modes[0][0]);
+    if(kept)host.classList.remove('fade');
+    restoreReaderState(out, kept);
   }
 
   /* ---------------- NETWORK (pseudo-3D canvas) ---------------- */

@@ -105,7 +105,12 @@ class WaybackConnector(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
-                        "date_estimated": not _parsed,
+                        # The archive's timestamp is when it CAPTURED the page,
+                        # not when the page was published: a capture this
+                        # month of a 2022 article is a 2022 article. Not
+                        # counted in the period on a date it does not have.
+                        "date_estimated": True,
+                        "date_basis": "archive capture",
                         "url": original,
                         "archived_url": SNAPSHOT_URL.format(timestamp=timestamp, url=original),
                         "source": "wayback",

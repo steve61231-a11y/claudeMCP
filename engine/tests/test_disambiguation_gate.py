@@ -35,6 +35,9 @@ def _doc(db_session, subject, title, body, h):
     d = Document(
         politician_id=subject.id, title=title, body=body, content_hash=h,
         source="searxng", domain="example.com", fetched_at=datetime.utcnow(),
+        # Dated: the analysis corpus reads what was published in the period,
+        # and an undated page cannot be shown to belong to it.
+        published_at=datetime.utcnow(),
     )
     db_session.add(d)
     return d

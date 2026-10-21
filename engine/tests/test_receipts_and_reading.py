@@ -30,15 +30,17 @@ def _built(sentiments=None):
 
 
 def test_each_source_reports_its_own_volume_and_items():
+    # Named as a reader knows them, and one newsroom is one row however
+    # its items were bylined.
     detail = {s["source"]: s for s in _built()["sources_detail"]}
-    assert detail["nation.africa"]["mentions"] == 4
-    assert detail["standardmedia.co.ke"]["mentions"] == 1
-    assert [i["excerpt"] for i in detail["nation.africa"]["top_mentions"]][0] == "Story two", \
+    assert detail["Daily Nation"]["mentions"] == 4
+    assert detail["The Standard"]["mentions"] == 1
+    assert [i["excerpt"] for i in detail["Daily Nation"]["top_mentions"]][0] == "Story two", \
         "loudest item first"
 
 
 def test_links_are_carried_and_absent_links_stay_absent():
-    top = {s["source"]: s for s in _built()["sources_detail"]}["nation.africa"]["top_mentions"]
+    top = {s["source"]: s for s in _built()["sources_detail"]}["Daily Nation"]["top_mentions"]
     by_excerpt = {i["excerpt"]: i for i in top}
     assert by_excerpt["Story two"]["url"] == "https://n/2"
     assert by_excerpt["Story three"]["url"] is None
@@ -49,22 +51,22 @@ def test_lean_is_withheld_until_enough_of_the_outlet_was_scored():
     # newsroom, it is a guess with a newsroom's name attached to it.
     thin = _built({"a": {"sentiment": "negative"}})
     detail = {s["source"]: s for s in thin["sources_detail"]}
-    assert detail["nation.africa"]["lean"] is None
-    assert detail["nation.africa"]["negative"] == 1
-    assert detail["nation.africa"]["unscored"] == 3
+    assert detail["Daily Nation"]["lean"] is None
+    assert detail["Daily Nation"]["negative"] == 1
+    assert detail["Daily Nation"]["unscored"] == 3
 
 
 def test_lean_is_stated_once_the_outlet_is_actually_scored():
     scored = _built({"a": {"sentiment": "negative"}, "b": {"sentiment": "negative"},
                      "c": {"sentiment": "negative"}, "d": {"sentiment": "neutral"}})
     detail = {s["source"]: s for s in scored["sources_detail"]}
-    assert detail["nation.africa"]["lean"] == "negative"
-    assert detail["nation.africa"]["scored"] == 4
+    assert detail["Daily Nation"]["lean"] == "negative"
+    assert detail["Daily Nation"]["scored"] == 4
 
 
 def test_sources_are_ordered_by_volume():
     sources = [s["source"] for s in _built()["sources_detail"]]
-    assert sources[0] == "nation.africa"
+    assert sources[0] == "Daily Nation"
 
 
 # --- the headline number explained -------------------------------------------

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from engine.config import settings
-from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion.base import IngestedMention, IngestionConnector, period_date
 from engine.ingestion import http
 
 SOCIALCRAWL_BASE_URL = "https://www.socialcrawl.dev"
@@ -412,8 +412,18 @@ class SocialCrawlConnector(IngestionConnector):
 
         mentions: list[IngestedMention] = []
         for item in recent_mentions:
-            posted_at_raw = item.get("date_published") or item.get("fetch_time") or item.get("posted_at")
-            posted_at = self._parse_datetime(posted_at_raw) if posted_at_raw else window_end
+            # Publication only. `fetch_time` is when SocialCrawl READ the page,
+            # and using it dated old articles to the day they were crawled.
+            posted_at_raw = item.get("date_published") or item.get("posted_at")
+            try:
+                published = self._parse_datetime(posted_at_raw) if posted_at_raw else None
+            except (ValueError, TypeError, OverflowError, OSError):
+                published = None
+            dated = period_date(published, window_start, window_end)
+            if dated is None:
+                continue          # published before the period
+            posted_at, estimated = dated
+            item = {**item, "date_estimated": estimated}
 
             content_info = (item.get("_raw") or {}).get("content_info") or {}
             engagement = item.get("engagement") or (item.get("_raw") or {}).get("social_metrics") or {}
@@ -602,9 +612,19 @@ class SocialCrawlConnector(IngestionConnector):
             or fields.get("published_at")
             or fields.get("timestamp")
         )
-        posted_at = (
-            SocialCrawlConnector._parse_datetime(posted_at_raw) if posted_at_raw else datetime.utcnow()
-        )
+        # No date is not "now": a dateless post stamped with the clock was
+        # counted as published this minute. Marked, so the period's analysis
+        # leaves it out (see engine.db.period); the orchestrator's window
+        # check still drops anything dated outside the period.
+        try:
+            posted_at = (SocialCrawlConnector._parse_datetime(posted_at_raw)
+                         if posted_at_raw else None)
+        except (ValueError, TypeError, OverflowError, OSError):
+            posted_at = None
+        estimated = posted_at is None
+        if estimated:
+            posted_at = datetime.utcnow()
+            item = {**item, "date_estimated": True}
 
         engagement = (
             fields.get("engagement") or fields.get("stats") or fields.get("metrics") or fields.get("activity") or {}

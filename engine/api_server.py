@@ -303,12 +303,17 @@ def _freshness(politician_id: str) -> dict:
 
     db = SessionLocal()
     try:
+        from engine.db.period import dated
+
+        # Dated items only: an undated item carries the collection time as a
+        # stand-in, and counting it made every run look like a burst of news.
         newest = db.query(func.max(RawMention.posted_at)).filter(
-            RawMention.politician_id == politician_id
+            RawMention.politician_id == politician_id, dated()
         ).scalar()
         last_24h = db.query(func.count(RawMention.id)).filter(
             RawMention.politician_id == politician_id,
             RawMention.posted_at >= datetime.utcnow() - timedelta(hours=24),
+            dated(),
         ).scalar()
         return {
             "newestMentionAt": newest.isoformat() if newest else None,
@@ -1658,10 +1663,13 @@ def livefeed(name: str, limit: int = 40, x_api_key: str | None = Header(default=
             }
             for m, s in rows
         ]
+        from engine.db.period import dated
+
         cutoff = datetime.utcnow() - timedelta(hours=48)
         recent = (
             db.query(RawMention.posted_at)
-            .filter(RawMention.politician_id == politician.id, RawMention.posted_at >= cutoff)
+            .filter(RawMention.politician_id == politician.id, RawMention.posted_at >= cutoff,
+                    dated())
             .all()
         )
         hourly: dict[str, int] = {}

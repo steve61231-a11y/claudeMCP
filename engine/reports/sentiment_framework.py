@@ -65,40 +65,21 @@ _PROMO_MARKERS = (
     "follow us on", "click the link", "don't forget to",
 )
 
-# Outlet segmentation. The framework asks for local media / international media
-# / social media, and notes the exact list is agreed with each client — so this
-# is a starting classification, not a fixed taxonomy.
-_SOCIAL_PLATFORMS = {
-    "twitter", "x", "facebook", "instagram", "tiktok", "youtube", "linkedin",
-    "reddit", "threads", "telegram", "whatsapp",
-}
-_LOCAL_TLDS = (".ke", ".co.ke", ".go.ke", ".or.ke", ".ac.ke")
-_KNOWN_LOCAL = {
-    "nation.africa", "standardmedia.co.ke", "the-star.co.ke", "citizen.digital",
-    "kenyans.co.ke", "tuko.co.ke", "capitalfm.co.ke", "ntvkenya", "kbc.co.ke",
-    "people.co.ke", "businessdailyafrica.com", "kahawatungu.com", "nairobiwire.com",
-}
+# Outlet segmentation — local media / international media / social media —
+# lives in `engine.reports.outlets`, built from what the sources actually
+# return. The framework notes the exact list is agreed with each client, so
+# the registries there are where a client's own list goes.
 
 
 def classify_outlet(platform: str | None, domain: str | None = None) -> str:
-    """local_media | international_media | social_media.
+    """local_media | international_media | social_media, from a platform and
+    an outlet domain. A thin wrapper over `outlets.classify`, which decides on
+    a whole corpus item — see that module for why the old domain check
+    counted the Daily Nation as international coverage."""
+    from engine.reports import outlets
 
-    Social is decided by platform; the local/international split is decided by
-    domain, since an outlet's reach — not its subject — is what the segmentation
-    is about.
-    """
-    key = (platform or "").strip().lower()
-    if key in _SOCIAL_PLATFORMS:
-        return "social_media"
-
-    host = (domain or platform or "").strip().lower()
-    if host.startswith("www."):
-        host = host[4:]
-    if not host:
-        return "international_media"
-    if host in _KNOWN_LOCAL or any(host.endswith(tld) for tld in _LOCAL_TLDS):
-        return "local_media"
-    return "international_media"
+    return outlets.classify({"platform": platform, "outlet_domain": domain,
+                             "source_type": "article"})[0]
 
 
 def _pct(part: int, whole: int) -> float:
@@ -345,7 +326,13 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
         if previous_total else None
     )
 
+    from engine.reports import outlets
+
     segments = {"local_media": 0, "international_media": 0, "social_media": 0}
+    # Why each item landed where it did, counted — so a disputed split can
+    # be audited ("312 Kenyan outlet, 40 GDELT places it in Kenya, 9 by
+    # default") rather than argued about.
+    bases: dict[str, int] = {}
     # A bare count of sources ("Sources covered (73)") is unusable: the reader
     # cannot tell which outlet said what, which way it leaned, or go and check
     # any of it. Build a per-source dossier instead — volume, tone split, and
@@ -353,14 +340,14 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
     sources: dict[str, dict] = {}
     sentiments = sentiments or {}
     for mention in mentions:
-        platform = mention.get("platform")
-        domain = platform if mention.get("source_type") == "article" else None
-        segment = classify_outlet(platform, domain)
+        segment, basis = outlets.classify(mention)
         segments[segment] += 1
-        if not platform:
+        bases[basis.split(" (")[0]] = bases.get(basis.split(" (")[0], 0) + 1
+        source_name = outlets.publisher(mention)
+        if not source_name:
             continue
-        entry = sources.setdefault(platform, {
-            "source": platform, "outlet_type": segment, "mentions": 0,
+        entry = sources.setdefault(source_name, {
+            "source": source_name, "outlet_type": segment, "mentions": 0,
             "positive": 0, "neutral": 0, "negative": 0, "unscored": 0, "items": [],
         })
         entry["mentions"] += 1
@@ -415,6 +402,7 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
         ],
         # Clarity on coverage is a framework requirement, not a nicety.
         "sources_covered": {k: sorted(v)[:40] for k, v in covered.items()},
+        "segmentation_basis": dict(sorted(bases.items(), key=lambda kv: -kv[1])),
         "sources_detail": sources_detail,
     }
 

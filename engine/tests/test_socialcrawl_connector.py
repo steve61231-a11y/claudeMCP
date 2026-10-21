@@ -40,8 +40,13 @@ def test_fetch_maps_recent_mentions_to_mentions(monkeypatch):
     assert result["source_type"] == "blog_post"
     assert result["author_handle"] == "Tell Media"
     assert result["text"] == "Sifuna addresses the press in Nairobi."
-    assert result["posted_at"] == datetime(2026, 6, 20, 10, 0, 0)
-    assert result["raw_payload"] == mention
+    # `fetch_time` is when SocialCrawl READ the page, not when it was
+    # published, and using it dated old articles to the day they were
+    # crawled. With no publication date the item is kept and marked, and the
+    # period's analysis leaves it out.
+    assert result["raw_payload"]["date_estimated"] is True
+    assert result["posted_at"] == datetime(2026, 6, 22)
+    assert result["raw_payload"] == {**mention, "date_estimated": True}
 
 
 def test_fetch_handles_error_envelope(monkeypatch):

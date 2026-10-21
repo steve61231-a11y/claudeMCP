@@ -318,6 +318,44 @@ of time (retry), the stage failed (with the error), needs an earlier report
 re-run for something that needs a previous run is a loop with no exit),
 nothing in the corpus supported it, or honestly "no reason was recorded".
 
+**The date of publication decides, and nothing may move it.** An investor
+found a one-month report "adding mentions going back to the last
+election". Collectors had been CLAMPING: an item older than the window was
+given the window's first day, so it passed every period filter downstream
+as though it were this month's. Google News answers a keyword search with
+its best matches of all time unless told `when:Nd`; YouTube's plain search
+is relevance-ranked across years; a comment was dated by its video. Now
+`ingestion/base.period_date` drops what predates the period, keeps a real
+date exactly, and stamps an undated item `date_estimated` rather than
+inventing a day; Google News asks `when:`, YouTube asks for this month's
+uploads, and a reaction is dated by itself. Every period read goes through
+`db/period.published_between`, which excludes estimated dates — a report
+about the period reads what was provably published in it. Migration
+`b4c5d6e7f8a9` marks the rows already moved: a `posted_at` exactly equal to
+its run's window edge is the clamp's fingerprint.
+
+**Local means Kenyan, wherever it publishes.** The segmentation counted the
+Daily Nation as international press: Google News rows carried the outlet's
+NAME and the classifier looked for `.ke` DOMAINS, and half of Kenya's
+newsrooms are on nation.africa, citizen.digital, capitalfm.africa. A Kenyan
+broadcaster's YouTube channel read as a social post; Google News's
+"Facebook" outlet read as foreign press. `reports/outlets.py` is the one
+classifier — built from what the sources actually returned
+(`scripts/data_probe.py`), ordered by evidence, and every call returns the
+basis that decided it, a default saying it is one. `publisher()` names one
+newsroom once, so GDELT's "nation.africa" and Google News's "Daily Nation"
+are one source.
+
+**A redraw must hold still.** Each section that lands redraws the report,
+and the redraw started at the Overview tab with everything folded: a reader
+on the Sentiment Framework was thrown out of it with every section and once
+more at the end, when the final render also dropped the scroll position.
+The investor's word for it was "a loop". `readerState()` /
+`restoreReaderState()` keep the tab, the open sections and the scroll for
+the same subject; a tab the reader CHOSE survives, a default may move.
+`test_the_framework_stays_where_the_reader_left_it.py` drives it in a real
+browser, because none of it is visible to a string match.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

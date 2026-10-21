@@ -117,6 +117,9 @@ class WikipediaConnector(IngestionConnector):
             posted_at=posted_at,
             engagement={},
             raw_payload={
+                # A reference article describes the subject; it was not
+                # published in the period and is not counted as if it were.
+                "date_estimated": True,
                 "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
                 "title": title,
                 "relation": relation,

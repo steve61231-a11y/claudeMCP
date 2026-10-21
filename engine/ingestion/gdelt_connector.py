@@ -15,7 +15,7 @@ metadata); the WaybackConnector can recover full text for dead links.
 from datetime import datetime
 
 from engine.ingestion import http
-from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion.base import IngestedMention, IngestionConnector, period_date
 
 GDELT_DOC_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 MAX_RECORDS = 250  # GDELT DOC API hard cap per call
@@ -73,12 +73,14 @@ class GdeltConnector(IngestionConnector):
             # volume chart drew a spike that never happened and the
             # peak-day figure counted it. Say which it is; the
             # consumer decides what to do with an unknown.
-            _parsed = self._parse_seendate(art.get("seendate"))
-            posted = _parsed or window_end
-            if not (window_start <= posted <= window_end):
-                # GDELT occasionally returns slightly out-of-window items; keep
-                # them anyway (still historical signal) but clamp the date.
-                posted = min(max(posted, window_start), window_end)
+            # The request is already windowed; an item GDELT returns from
+            # outside it keeps its real date rather than being moved into
+            # the period. A date is a fact about the item.
+            dated = period_date(self._parse_seendate(art.get("seendate")),
+                                window_start, window_end)
+            if dated is None:
+                continue
+            posted, estimated = dated
             title = (art.get("title") or "").strip()
             if not title:
                 continue
@@ -91,7 +93,11 @@ class GdeltConnector(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
-                        "date_estimated": not _parsed,
+                        "date_estimated": estimated,
+                        # GDELT says where the outlet is. It is the most direct answer
+                        # to "local or international" this pipeline has.
+                        "source_country": art.get("sourcecountry") or None,
+                        "outlet_domain": (art.get("domain") or "").lower() or None,
                         "url": url,
                         "title": title,
                         "language": art.get("language"),

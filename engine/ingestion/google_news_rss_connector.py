@@ -15,11 +15,11 @@ the orchestrator, so the corpus holds full journalism, not just headlines.
 
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 from xml.etree import ElementTree as ET
 
 from engine.ingestion import http
-from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion.base import IngestedMention, IngestionConnector, period_date
 
 RSS_URL = "https://news.google.com/rss/search?q={query}&hl=en-KE&gl=KE&ceid=KE:en"
 MAX_ITEMS = 80
@@ -42,6 +42,14 @@ class GoogleNewsRssConnector(IngestionConnector):
             # so "John Mbadi" matches as a phrase, OR in the strongest aliases.
             terms = [politician_name, *[a for a in aliases if a]][:4]
             query = " OR ".join(f'"{t}"' for t in terms)
+        # Restrict to the period AT THE SOURCE. Without this Google News
+        # returns its best matches from any year: measured on 21 Oct 2026,
+        # 382 of 806 results for a one-month query predated the month, and
+        # every one was clamped into it. `when:Nd` keeps them out (0 of 699)
+        # at almost no cost in volume.
+        days = max(1, -(-int((window_end - window_start).total_seconds()) // 86400))
+        if "when:" not in query:
+            query = f"{query} when:{days}d"
         url = RSS_URL.format(query=quote_plus(query))
         try:
             resp = http.get(url, timeout=25)
@@ -67,11 +75,19 @@ class GoogleNewsRssConnector(IngestionConnector):
             # volume chart drew a spike that never happened and the
             # peak-day figure counted it. Say which it is; the
             # consumer decides what to do with an unknown.
-            _parsed = self._parse_date(item.findtext("pubDate"))
-            posted = _parsed or window_end
-            posted = min(max(posted, window_start), window_end)
+            dated = period_date(self._parse_date(item.findtext("pubDate")),
+                                window_start, window_end)
+            if dated is None:
+                continue          # published before the period
+            posted, estimated = dated
             source_el = item.find("source")
             outlet = (source_el.text if source_el is not None else None) or "google_news"
+            # The outlet's own site, from <source url=…>. The item link is a
+            # news.google.com redirect, and the outlet NAME squashed into a
+            # key ("thestar", "nationafrica") matched no Kenyan domain — so
+            # the Daily Nation was counted as international coverage.
+            outlet_domain = ((urlsplit(source_el.get("url") or "").hostname or "")
+                             if source_el is not None else "").lower().removeprefix("www.")
             mentions.append(
                 IngestedMention(
                     platform=outlet.lower().replace(" ", "")[:40],
@@ -81,10 +97,11 @@ class GoogleNewsRssConnector(IngestionConnector):
                     posted_at=posted,
                     engagement={},
                     raw_payload={
-                        "date_estimated": not _parsed,
+                        "date_estimated": estimated,
                         "url": link,
                         "title": title,
                         "outlet": outlet,
+                        "outlet_domain": outlet_domain or None,
                         "source": "google_news_rss",
                     },
                 )

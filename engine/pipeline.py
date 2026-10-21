@@ -41,8 +41,11 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
     The analysts and the map-reduce digest are dict-driven, so presenting
     documents this way lets long-form evidence be read alongside social posts
     with no change to those layers. Off-topic documents (flagged by the
-    disambiguation gate) are excluded. Undated archive material is included —
-    an old page is often exactly the point of due diligence.
+    disambiguation gate) are excluded, and so is anything not published in
+    the period: this is a report about the period. Undated archive material
+    used to be included on the ground that an old page is often the point of
+    due diligence — and it was, until it put the last election into this
+    month's timeline.
     """
     from engine.db.models import Document
 
@@ -51,6 +54,14 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
         .filter(
             Document.politician_id == politician.id,
             (Document.relevance_verdict.is_(None)) | (Document.relevance_verdict != "off_topic"),
+            # Published in the period. This read every document ever
+            # discovered for the subject, so a page from the last election
+            # fed this month's analysts and their timeline. A period report
+            # reads what was published in the period; an undated page cannot
+            # be shown to belong to it.
+            Document.published_at.isnot(None),
+            Document.published_at >= window_start,
+            Document.published_at <= window_end,
         )
         .order_by(Document.published_at.desc().nullslast())
         .limit(settings.document_corpus_limit)
@@ -111,6 +122,12 @@ def _as_corpus_dicts(rows) -> list[dict]:
             # spike. Carried as a flag rather than the whole raw_payload,
             # which is large and has no other reader here.
             "date_estimated": bool((m.raw_payload or {}).get("date_estimated")),
+            # Who published it, for local / international / social. Carried
+            # explicitly — raw_payload is not, and the outlet's own domain
+            # and GDELT's source country are the best evidence there is.
+            "outlet": (m.raw_payload or {}).get("outlet"),
+            "outlet_domain": (m.raw_payload or {}).get("outlet_domain"),
+            "source_country": (m.raw_payload or {}).get("source_country"),
         }
         for m in rows
     ]
@@ -256,10 +273,14 @@ def run_analysis(
     stages.current().lap("preflight")
     politician_entity = _upsert_entity(db, "politician", politician.name)
 
+    # Published in the period, with a date that is known. An item whose date
+    # had to be guessed is stored but never counted as this period's — see
+    # `engine.db.period`.
+    from engine.db.period import published_between
+
     window_filter = (
         RawMention.politician_id == politician.id,
-        RawMention.posted_at >= window_start,
-        RawMention.posted_at <= window_end,
+        *published_between(window_start, window_end),
         RawMention.is_spam == 0,
     )
 
@@ -714,6 +735,29 @@ def run_analysis(
     # touch the database later: by then the connection has sat idle through
     # the whole model phase.
     prior_payload = _previous_payload(db, politician)
+
+    # Who the subject is, from the reference material held on them. A
+    # reference article is not published IN the period, so it is no longer
+    # in the period's corpus — read it directly instead, or every subject is
+    # back to being "a public figure".
+    if not payload.get("subject_profile"):
+        try:
+            from engine.reports.sentiment_framework import subject_profile_from_corpus
+
+            references = (
+                db.query(RawMention)
+                .filter(RawMention.politician_id == politician.id,
+                        RawMention.source_type == "reference")
+                .order_by(RawMention.created_at.desc())
+                .limit(3)
+                .all()
+            )
+            profile = subject_profile_from_corpus(_as_corpus_dicts(references))
+            if profile:
+                payload["subject_profile"] = profile
+        except Exception:  # noqa: BLE001 — a missing profile is not a failed report
+            _rollback_quietly(db)
+            traceback.print_exc()
 
     # THE CLIENT'S DELIVERABLE, FIRST.
     #
@@ -1314,6 +1358,7 @@ def _fetch_transcripts_for_top_videos(
 ) -> None:
     """Premium-priced transcripts, only for videos already linked to the
     politician, ranked by engagement, capped per run."""
+    from engine.db.period import published_between
     from engine.ingestion.socialcrawl_connector import SocialCrawlConnector, TRANSCRIPT_ENDPOINTS, credit_cost
 
     connector = SocialCrawlConnector()
@@ -1338,8 +1383,7 @@ def _fetch_transcripts_for_top_videos(
         .filter(
             MentionEntity.entity_id == politician_entity.id,
             RawMention.politician_id == politician.id,
-            RawMention.posted_at >= window_start,
-            RawMention.posted_at <= window_end,
+            *published_between(window_start, window_end),
             RawMention.platform.in_(list(TRANSCRIPT_ENDPOINTS)),
             RawMention.source_type == "video",
         )

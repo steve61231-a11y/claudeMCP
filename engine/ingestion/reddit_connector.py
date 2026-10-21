@@ -28,7 +28,7 @@ import requests
 
 from engine.config import settings
 from engine.ingestion import http
-from engine.ingestion.base import IngestedMention, IngestionConnector
+from engine.ingestion.base import IngestedMention, IngestionConnector, period_date
 
 SEARCH_URL = "https://www.reddit.com/search.json"
 SUB_SEARCH_URL = "https://www.reddit.com/r/{sub}/search.json"
@@ -131,17 +131,17 @@ class RedditConnector(IngestionConnector):
             return None
         seen.add(pid)
         created = d.get("created_utc")
-        # An unparseable date is NOT a date. The window-end fallback keeps
-        # ordering working and stamps every undated item onto one day, so
-        # the volume chart drew a spike that never happened. Say which it is.
-        _known = True
         try:
-            posted = datetime.utcfromtimestamp(float(created)) if created else window_end
-            _known = bool(created)
+            published = datetime.utcfromtimestamp(float(created)) if created else None
         except (TypeError, ValueError, OSError):
-            posted = window_end
-            _known = False
-        posted = min(max(posted, window_start), window_end)
+            published = None
+        # Searched with t=year, so most of a year comes back; a post from
+        # before the period is not this report's evidence, and its date is
+        # never moved into the period to make it look like it is.
+        dated = period_date(published, window_start, window_end)
+        if dated is None:
+            return None
+        posted, estimated = dated
         permalink = d.get("permalink")
         return IngestedMention(
             platform="reddit",
@@ -154,7 +154,7 @@ class RedditConnector(IngestionConnector):
                 "comments": int(d.get("num_comments") or 0),
             },
             raw_payload={
-                "date_estimated": not _known,
+                "date_estimated": estimated,
                 "url": f"https://www.reddit.com{permalink}" if permalink else d.get("url"),
                 "subreddit": d.get("subreddit"),
                 "post_id": pid,

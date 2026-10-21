@@ -101,7 +101,9 @@ class AgentReachConnector(IngestionConnector):
                     text=f"{title}. {snippet}".strip(),
                     posted_at=window_end,  # Jina rarely exposes a reliable date; window_end is the safe default
                     engagement={},
-                    raw_payload={"url": url, "title": title, "source": "agentreach:web"},
+                    # Jina gives no publication date, so none is claimed.
+                    raw_payload={"url": url, "title": title, "source": "agentreach:web",
+                                 "date_estimated": True},
                 )
             )
         return mentions
