@@ -68,6 +68,13 @@ jobs:
           # them is how the drift alarm came to report current code as
           # running something older than 4646ce4.
           parsed=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); b=d.get("build_detail"); print(((b or {}).get("commit") or "-"), ((b or {}).get("built_at") or "-"), ("yes" if b is not None else "no"))' 2>/dev/null || echo "- - no")
+          # Which model the live service would write a report with. "The
+          # reports got worse" has more than one cause, and a stand-in model
+          # is one this job can rule in or out in the same request — the
+          # fields are public on /api/health; no key or any part of one is
+          # read.
+          model=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); l=d.get("llm") or {}; print("backend=%s model=%s bulk_model=%s production_grade=%s key_present=%s" % (l.get("provider") or l.get("backend"), l.get("model"), l.get("bulk_model"), l.get("production_grade", l.get("production")), l.get("key_present")))' 2>/dev/null || echo "the llm section could not be read")
+          echo "::notice title=Model backend::${model}"
           live=$(printf '%s' "$parsed" | cut -d" " -f1)
           built=$(printf '%s' "$parsed" | cut -d" " -f2)
           has_detail=$(printf '%s' "$parsed" | cut -d" " -f3)

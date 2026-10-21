@@ -170,7 +170,7 @@
   #zenith .tl-strip-node:focus .tl-guide,
   #zenith .tl-strip-node.sel .tl-guide{opacity:.45}
   #zenith .tl-strip-node circle{transition:r .15s,fill .15s}
-  #zenith .tl-strip-node:hover circle,#zenith .tl-strip-node.sel circle{r:9}
+  #zenith .tl-strip-node:hover circle,#zenith .tl-strip-node.sel circle{r:10}
   #zenith .tl-tip{position:absolute;z-index:20;max-width:260px;background:var(--panel2,#111);
     border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:12.5px;
     box-shadow:0 8px 24px rgba(0,0,0,.4);pointer-events:none;transform:translate(-50%,-100%)}
@@ -195,6 +195,28 @@
   #zenith .tl-detail{margin-top:14px;padding:12px 14px;border:1px solid var(--line2);
     border-radius:10px;background:var(--panel2)}
   #zenith .tl-strip-hint{font-size:11.5px;color:var(--mut);margin-top:2px}
+  #zenith .tl-num{font-size:9.5px;font-weight:800;fill:#04121c;pointer-events:none}
+  #zenith .tone-split{display:flex;height:10px;border-radius:6px;overflow:hidden;background:var(--line2);margin-top:10px}
+  #zenith .tone-seg{height:100%;cursor:default}
+  #zenith .tone-split-legend{font-size:12.5px;margin-top:5px}
+  #zenith .fw-tile{background:var(--panel2);border:1px solid var(--line2);border-radius:12px;padding:12px 14px}
+  #zenith .day-cols{margin-top:10px}
+  #zenith .day-cols-svg{width:100%;height:96px;display:block}
+  #zenith .day-cols-axis{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--mut);margin-top:4px}
+  #zenith .day-cols-peak{color:var(--sky2);font-weight:600;text-align:center}
+  #zenith .fw-sub{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin-top:18px}
+  #zenith .tl-key{display:flex;flex-direction:column;gap:2px;margin:10px 0 4px}
+  #zenith .tl-key-row{display:grid;grid-template-columns:22px 104px 1fr;gap:10px;align-items:baseline;
+    font-size:13.5px;padding:6px 8px;border-radius:8px;cursor:pointer}
+  #zenith .tl-key-row:hover,#zenith .tl-key-row.sel{background:rgba(125,211,252,.08)}
+  #zenith .tl-key-n{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
+    border-radius:50%;background:var(--sky2);color:#04121c;font-size:11px;font-weight:800}
+  #zenith .tl-key-d{color:var(--sky2);font-weight:700;font-size:12.5px;white-space:nowrap}
+  #zenith .tl-key-e{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  @media (max-width:600px){
+    #zenith .tl-key-row{grid-template-columns:22px 1fr;row-gap:2px}
+    #zenith .tl-key-e{grid-column:2}
+  }
   #zenith .delta-stat{background:var(--panel);border:1px solid var(--line2);border-radius:var(--r);padding:16px}
   #zenith .delta-value{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:4px 0}
   #zenith .delta-change{font-size:12px;font-weight:700}
@@ -521,7 +543,7 @@
   #zenith .drill-body[hidden],#zenith .drill-body{display:block!important}
   /* Paper has no panel to open, so every moment must be readable in the
      list — un-clamp it, or the printed timeline is twenty truncated stubs. */
-  #zenith .tl-row-event{-webkit-line-clamp:unset!important;overflow:visible!important}
+  #zenith .tl-row-event,#zenith .tl-key-e{-webkit-line-clamp:unset!important;overflow:visible!important}
   /* And with the whole list printed in full, the detail panel is one of
      those entries a second time — it exists to save a click, and there are
      no clicks here. */
@@ -1373,8 +1395,24 @@
     if(m)return Date.UTC(+m[2],(+m[1]-1)*3+1,15);
     m=/^(\d{4})$/.exec(raw);
     if(m)return Date.UTC(+m[1],6,1);
+    // "15 October 2026", "15th Oct 2026", "October 15, 2026". Read as
+    // written rather than dropped: a moment whose date could not be parsed
+    // fell off the axis, and enough of them put the whole strip into even
+    // spacing — "Not enough distinct dates to scale by time" under a
+    // timeline whose dates were all there in words.
+    const cleaned=raw.replace(/(\d)(st|nd|rd|th)\b/gi,'$1').replace(/,/g,' ');
+    m=/^(\d{1,2})\s+([A-Za-z]{3,})\.?\s+(\d{4})$/.exec(cleaned.trim());
+    if(m){const mo=MONTHS[m[2].slice(0,3).toLowerCase()];
+      if(mo!=null)return Date.UTC(+m[3],mo,+m[1]);}
+    m=/^([A-Za-z]{3,})\.?\s+(\d{1,2})\s+(\d{4})$/.exec(cleaned.trim().replace(/\s+/g,' '));
+    if(m){const mo=MONTHS[m[1].slice(0,3).toLowerCase()];
+      if(mo!=null)return Date.UTC(+m[3],mo,+m[2]);}
+    m=/^([A-Za-z]{3,})\.?\s+(\d{4})$/.exec(cleaned.trim());
+    if(m){const mo=MONTHS[m[1].slice(0,3).toLowerCase()];
+      if(mo!=null)return Date.UTC(+m[2],mo,15);}
     return null;
   }
+  const MONTHS={jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 
   const DAY=86400000;
   const shortDate=ms=>ukDate(new Date(ms).toISOString());
@@ -1439,7 +1477,9 @@
     const timeScaled=dated.length>1&&span>0;
     const points=timeScaled?dated:items.map((t,idx)=>({t,idx,ms:null}));
 
-    const hasVolume=points.some(p=>p.t&&p.t.mentions_that_day);
+    // Volume only where it says something: a strip of bars all one item
+    // tall captioned "peak 1 mentions in a day" is noise.
+    const hasVolume=points.some(p=>p.t&&p.t.mentions_that_day>1);
     const W=760,H=hasVolume?150:70,padL=30,padR=30,base=H-30;
     const maxVol=Math.max(1,...points.map(p=>(p.t&&p.t.mentions_that_day)||0));
     const lo=timeScaled?Math.min(...dated.map(d=>d.ms)):0;
@@ -1493,9 +1533,11 @@
     const detail=opts.detail?el('div','tl-detail'):null;
 
     const select=p=>{
-      wrap.querySelectorAll('.tl-strip-node').forEach(n=>n.classList.remove('sel'));
+      wrap.querySelectorAll('.tl-strip-node,.tl-key-row').forEach(n=>n.classList.remove('sel'));
       const node=wrap.querySelector(`.tl-strip-node[data-idx="${p.idx}"]`);
       if(node)node.classList.add('sel');
+      const keyRow=wrap.querySelector(`.tl-key-row[data-idx="${p.idx}"]`);
+      if(keyRow)keyRow.classList.add('sel');
       if(detail)detail.innerHTML=momentHTML(p.t);
       if(onSelect)onSelect(p.idx);
     };
@@ -1513,6 +1555,17 @@
     // neighbours, which is how every chart that works does it. The band is
     // `fill:transparent` and NOT `fill:none`: none is not painted and
     // receives no pointer events, which would reproduce the bug invisibly.
+    // Each moment is numbered in date order, on the strip and in the key
+    // beneath it. The strip used to be dots whose date and event existed
+    // only in a hover: on a phone, on paper and at a glance it was a row of
+    // identical circles — "the timeline ain't working" was the fair verdict.
+    const order=points.slice().sort((a,b)=>(a.ms==null||b.ms==null)?a.idx-b.idx:(a.ms-b.ms)||(a.idx-b.idx));
+    const numberOf={};order.forEach((p,i)=>{numberOf[p.idx]=i+1;});
+    // Moments on the same day share an x. Stack them rather than drawing
+    // one number on top of another.
+    const levelOf={};let lastX=-1e9,lastLevel=0;
+    order.forEach(p=>{const x=xOf(p);
+      lastLevel=(x-lastX<18)?lastLevel+1:0;lastX=x;levelOf[p.idx]=lastLevel;});
     const xsSorted=points.map(xOf).sort((a,b)=>a-b);
     const bandFor=x=>{
       const i=xsSorted.indexOf(x);
@@ -1534,9 +1587,13 @@
       g.setAttribute('aria-label',
         `${whenLabel(p.t)}: `
         +String((p.t&&p.t.event)||'').slice(0,80));
-      const c=mk('circle',{cx:x,cy:base,r:6,
+      const cy=base-18*(levelOf[p.idx]||0);
+      const c=mk('circle',{cx:x,cy:cy,r:8,
         class:'tl-node-dot '+(tc?(tc.confirmed?'is-confirmed':'is-single'):'is-plain')});
       g.appendChild(c);
+      const num=mk('text',{x:x,y:cy+3.5,'text-anchor':'middle',class:'tl-num'});
+      num.textContent=String(numberOf[p.idx]);
+      g.appendChild(num);
       svg.appendChild(g);
       const show=()=>{
         tip.style.display='block';
@@ -1558,6 +1615,30 @@
     wrap.appendChild(svg);
     wrap.appendChild(tip);
 
+    // The key: every moment by its number, date and first line, readable
+    // without hovering anything. Strips that sit above a full list of the
+    // same moments number that list instead (`numberOf` below) rather than
+    // printing the moments twice.
+    if(opts.key!==false){
+      const key=el('div','tl-key');
+      order.forEach(p=>{
+        const ev=String((p.t&&(p.t.event||p.t.title))||'');
+        const row=el('div','tl-key-row',
+          `<span class="tl-key-n">${numberOf[p.idx]}</span>`
+          +`<span class="tl-key-d">${esc(whenLabel(p.t))}</span>`
+          +`<span class="tl-key-e">${esc(ev.length>160?ev.slice(0,160)+'\u2026':ev)}</span>`);
+        row.dataset.idx=p.idx;
+        row.tabIndex=0;
+        row.addEventListener('click',()=>select(p));
+        row.addEventListener('keydown',e=>{
+          if(e.key==='Enter'||e.key===' '){e.preventDefault();select(p);}
+        });
+        key.appendChild(row);
+      });
+      wrap.appendChild(key);
+    }
+    wrap.numberOf=idx=>numberOf[idx];
+
     // A moment with no usable date is still a moment. Dropping it off the
     // axis silently would be the corpus quietly losing an event.
     if(timeScaled&&undated.length){
@@ -1568,7 +1649,8 @@
     }
     wrap.appendChild(el('div','tl-strip-hint',
       timeScaled?'Spaced by real date.'
-               :'Not enough distinct dates to scale by time — spaced evenly.'));
+      :dated.length>1?`All ${dated.length} moments fall on ${shortDate(dated[0].ms)} — shown side by side.`
+      :'Shown in order — too few of these moments carry a date to place them in time.'));
     // Kept separate from the line above because that one is a disclosure
     // about the axis and belongs on paper; this one is an instruction for a
     // mouse and does not.
@@ -1859,6 +1941,120 @@
     return box;
   }
 
+  /** Which kind of outlet, in the words a client uses. */
+  const SEG_LABEL={local_media:'Kenyan media',international_media:'International media',
+    social_media:'Social media'};
+  const SEG_COLOR={local_media:'var(--sky2)',international_media:'#a78bfa',social_media:'#fbbf24'};
+
+  /** A tone split as one bar — positive, neutral, negative, each sized by
+      its share of what was scored — with the counts written under it, so
+      it reads on paper as well as on screen. */
+  function toneSplit(tone,opts){
+    opts=opts||{};
+    const pos=(tone&&tone.positive)||0,neu=(tone&&tone.neutral)||0,neg=(tone&&tone.negative)||0;
+    const all=pos+neu+neg;
+    const wrap=el('div','tone-split-wrap');
+    if(!all){wrap.appendChild(el('div','muted',`<span style="font-size:12.5px">${esc(opts.empty||'none of it was scored')}</span>`));return wrap;}
+    const bar=el('div','tone-split');
+    [['positive',pos,TONE.positive],['neutral',neu,TONE.neutral],['negative',neg,TONE.negative]].forEach(([k,v,c])=>{
+      if(!v)return;
+      const seg=el('div','tone-seg');seg.style.width=(100*v/all)+'%';seg.style.background=c;
+      seg.addEventListener('mousemove',e=>showTip(e,`<b>${fmt(v)} ${k}</b><br>${(100*v/all).toFixed(1)}% of ${fmt(all)} scored`));
+      seg.addEventListener('mouseleave',hideTip);
+      bar.appendChild(seg);
+    });
+    wrap.appendChild(bar);
+    const p=v=>Math.round(100*v/all);
+    wrap.appendChild(el('div','tone-split-legend',
+      `<span style="color:${TONE.positive}">${p(pos)}% positive</span> · <span>${p(neu)}% neutral</span> · `
+      +`<span style="color:${TONE.negative}">${p(neg)}% negative</span>`
+      +`<span class="muted"> · of ${fmt(all)} scored</span>`));
+    return wrap;
+  }
+
+  /** Which way a set of scored items leans, in words. */
+  const leanPhrase=l=>({negative:'leans negative',positive:'leans positive',
+    contested:'divided — both sides in force',neutral:'mostly neutral',mixed:'mixed'}[l]||'');
+
+  /** One figure with its label and what it is a figure of. */
+  function fwTile(label,value,note){
+    return el('div','fw-tile',`<div class="lbl">${esc(label)}</div>
+      <div class="kpi tnum" style="margin-top:4px;font-size:24px">${value}</div>
+      ${note?`<div class="muted" style="font-size:12px;margin-top:3px">${esc(note)}</div>`:''}`);
+  }
+
+  /** Items by day, every day of the span drawn — a quiet day is a short
+      bar, not a missing one, or the gaps between busy days vanish. */
+  function dayColumns(byDay,opts){
+    opts=opts||{};
+    const days=Object.keys(byDay||{}).filter(d=>/^\d{4}-\d{2}-\d{2}/.test(d)).sort();
+    const box=el('div','day-cols');
+    if(!days.length)return box;
+    const ms=d=>Date.UTC(+d.slice(0,4),+d.slice(5,7)-1,+d.slice(8,10));
+    const series=[];
+    for(let t=ms(days[0]);t<=ms(days[days.length-1]);t+=DAY){
+      // A lookup key in the engine's own day format, built from parts —
+      // never a display string; every date a reader sees goes through ukDate.
+      const d=new Date(t),k=[d.getUTCFullYear(),String(d.getUTCMonth()+1).padStart(2,'0'),
+        String(d.getUTCDate()).padStart(2,'0')].join('-');
+      series.push([k,byDay[k]||0]);
+    }
+    const W=640,H=opts.height||96,max=Math.max(1,...series.map(x=>x[1]));
+    const slot=W/series.length,bw=Math.max(2,slot*0.72);
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:'none',class:'chart-svg day-cols-svg'});
+    let peak=series[0];
+    series.forEach(([k,v],i)=>{
+      if(v>peak[1])peak=[k,v];
+      const h=(H-4)*(v/max);
+      const r=svg('rect',{x:slot*i+(slot-bw)/2,y:H-h,width:bw,height:v?Math.max(1.5,h):0,rx:1.5,
+        fill:opts.color||'var(--sky2)',opacity:v===max?1:.5});
+      r.addEventListener('mousemove',e=>showTip(e,`<b>${esc(ukDate(k))}</b><br>${fmt(v)} ${esc(opts.noun||'item(s)')}`));
+      r.addEventListener('mouseleave',hideTip);
+      s.appendChild(r);
+    });
+    box.appendChild(s);
+    const noun=opts.noun||'item(s)';
+    box.appendChild(el('div','day-cols-axis',
+      `<span>${esc(ukDate(series[0][0]))}</span>`
+      +(peak[1]>1?`<span class="day-cols-peak">busiest: ${esc(ukDate(peak[0]))} · ${fmt(peak[1])} ${esc(noun)}</span>`
+                 :`<span>no more than one a day</span>`)
+      +`<span>${esc(ukDate(series[series.length-1][0]))}</span>`));
+    return box;
+  }
+
+  /** Scored items over the period, stacked by tone, in counts — when the
+      tone turned, not only where it ended up. */
+  function toneColumns(series,opts){
+    opts=opts||{};
+    const box=el('div','day-cols');
+    if(!(series||[]).length)return box;
+    const W=640,H=opts.height||120,max=Math.max(1,...series.map(p=>(p.positive||0)+(p.neutral||0)+(p.negative||0)));
+    const slot=W/series.length,bw=Math.max(3,slot*0.72);
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:'none',class:'chart-svg day-cols-svg'});
+    series.forEach((p,i)=>{
+      let y=H;
+      [['negative',TONE.negative],['neutral',TONE.neutral],['positive',TONE.positive]].forEach(([k,c])=>{
+        const v=p[k]||0;if(!v)return;
+        const h=(H-4)*(v/max);y-=h;
+        const r=svg('rect',{x:slot*i+(slot-bw)/2,y:y,width:bw,height:h,fill:c});
+        r.addEventListener('mousemove',e=>showTip(e,`<b>${esc(ukDate(p.period))}${opts.week?' (week)':''}</b><br>`
+          +`${fmt(p.positive||0)} positive · ${fmt(p.neutral||0)} neutral · ${fmt(p.negative||0)} negative`));
+        r.addEventListener('mouseleave',hideTip);
+        s.appendChild(r);
+      });
+    });
+    box.appendChild(s);
+    box.appendChild(el('div','day-cols-axis',
+      `<span>${esc(ukDate(series[0].period))}</span><span>${opts.week?'by week':'by day'}</span>`
+      +`<span>${esc(ukDate(series[series.length-1].period))}</span>`));
+    return box;
+  }
+
+  /** A corpus item from the framework, in the shape `receipts` draws. */
+  const asReceipt=it=>({author:it.publisher,platform:SEG_LABEL[it.outlet_type]||it.platform,
+    posted_at:it.date_estimated?null:it.posted_at,sentiment:it.sentiment,excerpt:it.excerpt,url:it.url,
+    source_type:it.source_type});
+
   /** Emergent items, as rows. One renderer, used by the themes, by the
       leftovers, and by the flat-list fallback for reports generated before
       grouping existed — three call sites that previously would have been
@@ -1939,7 +2135,7 @@
     out.appendChild(s2);
 
     // 2.0 Overall mentions
-    const s2b=numberedCard('Overall mentions','Total, change on the previous period, and outlet segmentation');
+    const s2b=numberedCard('Overall mentions','Total, change on the previous period, outlet segmentation and coverage by day');
     const mg=el('div','grid');mg.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';
     mg.appendChild(deltaStat('Total mentions',vol.total||0,vol.difference_pct));
     // The share was in the hover note only, so on paper and at a glance the
@@ -1947,7 +2143,8 @@
     // bar present rather than to the coverage it is a share OF.
     const segTotal=(vol.segmentation||[]).reduce((a,s)=>a+(s.count||0),0)||vol.total||0;
     const segs=(vol.segmentation||[]).map((sgm,i)=>({
-      label:sgm.label, value:sgm.count, color:SERIES[i%SERIES.length],
+      label:SEG_LABEL[sgm.outlet_type]||sgm.label, value:sgm.count,
+      color:SEG_COLOR[sgm.outlet_type]||SERIES[i%SERIES.length],
       display:share(sgm.count,segTotal),
       note:`${fmt(sgm.count)} of ${fmt(segTotal)} mentions`}));
     const segBox=el('div','');
@@ -1955,6 +2152,15 @@
     segBox.appendChild(segs.length?hBars(segs,{total:segTotal}):fwEmpty('no coverage segmented yet'));
     mg.appendChild(segBox);
     s2b.appendChild(mg);
+    // When the coverage came. Dated items only: an item with no publication
+    // date has no day to stand on, and stacking them on the last one is how
+    // a report once claimed 380 mentions in a single day.
+    if(vol.by_day&&Object.keys(vol.by_day).length>1){
+      s2b.appendChild(el('div','fw-sub','Coverage by day'));
+      s2b.appendChild(dayColumns(vol.by_day,{noun:'mentions'}));
+      if(vol.dated!=null&&vol.total&&vol.dated<vol.total)s2b.appendChild(el('div','muted chart-note',
+        `${fmt(vol.total-vol.dated)} of ${fmt(vol.total)} items carry no publication date and are not on this chart.`));
+    }
     // Sources, as a dossier rather than a headcount. "Sources covered (73)"
     // told a reader nothing they could use: not which outlet said what, not
     // which way it leaned, and nothing they could go and verify. Each source
@@ -1993,7 +2199,7 @@
     out.appendChild(s2b);
 
     // 3.0 Sentiment (pie, per the framework)
-    const s3=numberedCard('Sentiment','Positive, negative and neutral totals', {open:true});
+    const s3=numberedCard('Sentiment','Totals, by kind of outlet, over the period, and what drove it', {open:true});
     const sent=fw.sentiment||{};
     const g3=el('div','grid');g3.style.gridTemplateColumns='auto 1fr';g3.style.gap='24px';g3.style.alignItems='center';
     g3.appendChild(donut([
@@ -2011,6 +2217,43 @@
       {label:'Negative',value:sent.negative||0,color:TONE.negative,display:share(sent.negative,sentTotal)},
     ],{total:sentTotal}));
     s3.appendChild(g3);
+    // Under the headline split: the press and the public separately, how the
+    // tone moved through the period, and which storylines carried each side.
+    // One blended figure hid all three, and they are what a client acts on.
+    const bySeg=(sent.by_segment||[]).filter(r=>r&&r.scored);
+    if(bySeg.length){
+      s3.appendChild(el('div','fw-sub','By kind of outlet'));
+      bySeg.forEach(r=>{
+        const row=el('div','');row.style.marginTop='12px';
+        row.appendChild(el('div','row',`<b style="font-size:13.5px;color:${SEG_COLOR[r.outlet_type]||'inherit'}">${esc(SEG_LABEL[r.outlet_type]||r.label||'')}</b>
+          <span class="muted" style="font-size:12.5px">${r.lean?esc(leanPhrase(r.lean)):'too few scored to say which way it leans'}</span>`));
+        row.appendChild(toneSplit(r));
+        s3.appendChild(row);
+      });
+    }
+    const ot=sent.over_time;
+    if(ot&&(ot.series||[]).length>1){
+      s3.appendChild(el('div','fw-sub','Over the period'));
+      s3.appendChild(toneColumns(ot.series,{week:ot.granularity==='week'}));
+    }
+    const dr=sent.drivers;
+    if(dr&&((dr.negative||[]).length||(dr.positive||[]).length)){
+      s3.appendChild(el('div','fw-sub','What drove it'));
+      const gd=el('div','grid');gd.style.gridTemplateColumns='repeat(auto-fit,minmax(260px,1fr))';
+      [['Where the negative coverage sits',dr.negative,TONE.negative,sent.negative],
+       ['Where the positive coverage sits',dr.positive,TONE.positive,sent.positive]].forEach(([t,list,c,whole])=>{
+        const col=el('div','');
+        col.appendChild(el('div','lbl',t));
+        if(!(list||[]).length){col.appendChild(fwEmpty('no storyline carried any'));}
+        else col.appendChild(hBars(list.map(d=>({
+          label:d.issue+(d.reaction_thread?' (reaction thread)':''), value:d.count, color:c,
+          display:d.share_of_side!=null?d.share_of_side+'%':fmt(d.count),
+          note:`${fmt(d.count)} of this side's ${fmt(whole||0)} items · the storyline holds ${fmt(d.mentions)}`})),
+          {total:whole||0}));
+        gd.appendChild(col);
+      });
+      s3.appendChild(gd);
+    }
     out.appendChild(s3);
 
     // 4.0 Current issues — levers and barriers
@@ -2024,13 +2267,26 @@
       if(!(list||[]).length){col.appendChild(fwEmpty('none identified this period'));}
       (list||[]).forEach(item=>{
         const c=el('div','card');c.style.marginTop='10px';c.style.borderLeft='3px solid '+colour;
+        // What the storyline holds, counted: its size and share, who carried
+        // it, when it peaked, and which way its own items lean. "Strength"
+        // is gone — it was the mention count again under a second name.
+        const pr=item.profile;
+        const traj=item.trajectory;
         c.innerHTML=`<div style="font-weight:600">${esc(item.issue||'')}</div>
           ${item.description?`<div class="muted" style="font-size:13px;margin-top:6px">${esc(item.description)}</div>`:''}
           <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
-            ${item.mentions!=null?`<span class="chip">${item.mentions} mention(s)</span>`:''}
-            ${item.strength!=null?`<span class="chip">strength ${item.strength}</span>`:''}
-            ${item.growth!=null?`<span class="chip">${item.growth>0?'▲':'▼'} ${Math.abs(Math.round(item.growth*100))}%</span>`:''}
+            ${item.mentions!=null?`<span class="chip">${fmt(item.mentions)} mention(s)${pr&&pr.share_pct!=null?' · '+pr.share_pct+'% of coverage':''}</span>`:''}
+            ${pr?`<span class="chip">${fmt(pr.published)} published · ${fmt(pr.reactions)} reaction(s)</span>`:''}
+            ${pr&&pr.peak&&pr.peak.count>1?`<span class="chip">busiest ${esc(ukDate(pr.peak.date))} · ${fmt(pr.peak.count)} items</span>`:''}
+            ${traj?`<span class="pill ${traj==='escalating'||traj==='new'?'amber':traj==='receding'?'sky':''}" title="${esc(item.trajectory_basis||'')}">${esc(traj)}</span>`:''}
           </div>`;
+        if(pr){
+          c.appendChild(toneSplit(pr.tone));
+          if((pr.publishers||[]).length)c.appendChild(el('div','muted',
+            `<div style="font-size:12.5px;margin-top:8px">Carried by ${pr.publishers.slice(0,4).map(x=>
+              `${esc(x.name)} <span style="opacity:.75">(${fmt(x.count)})</span>`).join(' · ')}</div>`));
+          if((pr.representative||[]).length)c.appendChild(receipts(pr.representative.map(asReceipt)));
+        }
         // Evidence folds, on the client's instruction and for the same
         // reason it folds under the storyline: it is the framings, the
         // accounts pushing it and up to five quotes — a page of reading
@@ -2047,6 +2303,16 @@
       g4.appendChild(col);
     });
     s4.appendChild(g4);
+    // Which entries are counted and which are judgement. A side no
+    // storyline took falls back to the analysts' written risks or
+    // opportunities, and the reader should know which they are reading.
+    const fromAnalysts=ci.from_analysts||[];
+    if(fromAnalysts.length)s4.appendChild(el('div','muted chart-note',
+      `No storyline leaned ${fromAnalysts.map(x=>x==='levers'?'positive':'negative').join(' or ')} this period, so the `
+      +`${fromAnalysts.join(' and ')} shown are the analysts' written assessment rather than counted storylines.`));
+    if(ci.basis)s4.appendChild(el('div','muted chart-note',esc(ci.basis)));
+    if((ci.set_aside||[]).length)s4.appendChild(el('div','muted chart-note op-only',
+      'Set aside as not issues: '+ci.set_aside.map(a=>`${esc(a.label)} — ${esc(a.reason)}`).join('; ')));
     out.appendChild(s4);
 
     // 5.0 Emergent issues — three things that are happening, not ten headlines.
@@ -2083,11 +2349,12 @@
       // The visual: one bar per theme, scaled to the window's whole
       // engagement so the three can be compared with each other and with
       // every other chart in the report.
+      const byItems=em.share_basis==='items';
       s5.appendChild(hBars(emThemes.map((t,i)=>({
-        label:t.label, value:t.engagement||0, color:SERIES[i%SERIES.length],
+        label:t.label, value:byItems?(t.count||0):(t.engagement||0), color:SERIES[i%SERIES.length],
         display:(t.share!=null?t.share:0)+'%',
-        note:`${t.count} item(s) · ${fmt(t.engagement||0)} engagements`,
-      })),{total:em.window_engagement||0}));
+        note:`${t.count} item(s)${t.engagement?` · ${fmt(t.engagement)} engagements`:''}`,
+      })),{total:byItems?(em.window_items||0):(em.window_engagement||0)}));
       emThemes.forEach((t,i)=>{
         const top=(t.items||[])[0]||{};
         const row=el('div','');row.style.marginTop='16px';
@@ -2095,14 +2362,17 @@
           `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
              <b style="font-size:14.5px;color:${SERIES[i%SERIES.length]}">${esc(t.label||'')}</b>
              <div class="row" style="gap:6px;flex-shrink:0">
-               <span class="chip">${t.share!=null?t.share+'% of the reaction':''}</span>
+               <span class="chip">${t.share!=null?t.share+(em.share_basis==='items'?'% of the window\'s items':'% of the engagement'):''}</span>
                ${t.labelled_by==='derived'?'<span class="chip">named from the text</span>':''}
              </div></div>`));
         // The strongest headline stands in for the theme, because a theme
         // name alone does not tell a reader what was actually said.
         if(top.headline)row.appendChild(el('div','qt',
           `<div style="font-style:normal">${esc(top.headline)}</div>`));
-        if((t.shared_terms||[]).length)row.appendChild(el('div','muted',
+        // How a derived theme was formed is for whoever runs the engine; a
+        // reader was shown "Grouped on: gachagua, kindiki" as though it
+        // were a finding.
+        if((t.shared_terms||[]).length)row.appendChild(el('div','muted op-only',
           `<div style="font-size:12px;margin-top:4px">Grouped on: ${t.shared_terms.map(esc).join(', ')}</div>`));
         const f=foldBlock(`All ${t.count} item(s) in this theme`,
                           (t.platforms||[]).join(' · '));
@@ -2120,56 +2390,117 @@
     if(em.note)s5.appendChild(el('div','muted chart-note',esc(em.note)));
     out.appendChild(s5);
 
-    // 6.0 Strategic implications
-    const s6=numberedCard('Strategic implications','The most important issue: outline, status, trajectory', {open:true});
+    // 6.0 Strategic implications — the issue that matters most, from its
+    // own items: why it was chosen, its numbers, which way it is moving,
+    // its dates with what was published on each, who carried it and who is
+    // named in it. Every line used to be the report's rather than the
+    // issue's: the report's first five dates, its loudest accounts, its
+    // people with the subject twice and a role of "null".
+    const s6=numberedCard('Strategic implications','The most important issue: outline, status, trajectory, dates and people', {open:true});
     const si=fw.strategic_implications||{};
     if(!si.issue){s6.appendChild(fwEmpty(si.outline||'no dominant issue identified'));}
     else{
       s6.appendChild(el('div','hero-one',esc(si.issue)));
       if(si.outline)s6.appendChild(el('div','muted',`<div style="margin-top:8px">${esc(si.outline)}</div>`));
-      // The single read the whole report exists to produce. It was generated,
-      // rendered on the Overview tab, and absent from the deliverable.
-      if(si.the_one_thing)s6.appendChild(el('div','',
-        `<div class="qt" style="border-left-color:var(--sky2);font-style:normal;font-size:15px">${linkifyRefs(esc(si.the_one_thing),si.the_one_thing_citations)}</div>`));
+
+      const sd=si.status_detail;
       const traj=si.trajectory;
-      s6.appendChild(el('div','row',`<span class="pill ${traj==='escalating'?'neg':traj==='receding'?'pos':''}">${esc(traj||'')}</span>
-        <span class="chip">${esc(si.status||'')}</span>`));
+      const trajWord={escalating:'Escalating',receding:'Receding',steady:'Steady',new:'New this period'}[traj]||'Not measured';
+      if(sd){
+        const tiles=el('div','grid');tiles.style.gridTemplateColumns='repeat(auto-fit,minmax(150px,1fr))';tiles.style.marginTop='14px';
+        tiles.appendChild(fwTile('Mentions',fmt(sd.mentions),sd.share_pct!=null?`${sd.share_pct}% of the period's coverage`:''));
+        tiles.appendChild(fwTile('Published',fmt(sd.published),`by ${fmt(sd.outlets)} outlet(s)`));
+        tiles.appendChild(fwTile('Reactions',fmt(sd.reactions),'comments under the coverage'));
+        tiles.appendChild(fwTile('Trajectory',esc(trajWord),''));
+        s6.appendChild(tiles);
+        s6.appendChild(toneSplit(sd.tone));
+        const segs=sd.segments||{};
+        const segLine=Object.keys(SEG_LABEL).filter(k=>segs[k]).map(k=>`${SEG_LABEL[k]} ${fmt(segs[k])}`).join(' · ');
+        if(segLine)s6.appendChild(el('div','muted',`<div style="font-size:12.5px;margin-top:6px">${esc(segLine)}</div>`));
+      } else if(si.status){
+        s6.appendChild(el('div','row',`<span class="pill">${esc(trajWord)}</span><span class="chip">${esc(si.status)}</span>`));
+      }
+      if(si.trajectory_basis)s6.appendChild(el('div','muted chart-note',`${esc(trajWord)}: ${esc(si.trajectory_basis)}.`));
+      if(sd&&sd.by_day&&Object.keys(sd.by_day).length>1)s6.appendChild(dayColumns(sd.by_day,{noun:'items',height:70}));
+
+      // Key dates: the strip, numbered, with its key — readable without a
+      // cursor — and then each moment with what was published that day.
       if((si.key_dates||[]).length){
-        s6.appendChild(el('div','lbl','Key dates'));
-        // A hover timeline, on the client's instruction — and it is the
-        // right shape for this data. These are four or five dated moments
-        // spread across a year, and a vertical list of them hid the only
-        // thing that matters about such a set: how far apart they are. The
-        // strip spaces by real date, so a quiet year and then three things
-        // in a fortnight looks like what it is.
-        s6.appendChild(interactiveTimelineStrip(si.key_dates,null,{}));
-        // The same dates in full, folded. A hover is a screen affordance
-        // and paper has no cursor, so without this the printed report
-        // would carry a graph of five dots and none of their text.
-        const kd=foldBlock(`All ${si.key_dates.length} key date(s)`,
-                           'each moment in full, in order');
-        kd.appendChild(timelineChart(si.key_dates));
-        s6.appendChild(kd);
+        s6.appendChild(el('div','fw-sub','Key dates'));
+        const strip=interactiveTimelineStrip(si.key_dates,null,{key:false});
+        s6.appendChild(strip);
+        const KIND={first:'First seen',peak:'Busiest day',latest:'Most recent',briefing:'Analyst briefing'};
+        si.key_dates.forEach((d,idx)=>{
+          const row=el('div','mentr');
+          row.appendChild(el('div','',`<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
+              <span class="tl-key-n">${strip.numberOf(idx)||''}</span>
+              <b style="font-size:14px;color:var(--sky2)">${esc(whenLabel(d))}</b>
+              ${d.kind?`<span class="chip">${esc(KIND[d.kind]||d.kind)}</span>`:''}
+              ${d.mentions_that_day>1?`<span class="chip">${fmt(d.mentions_that_day)} items that day</span>`:''}</div>
+            ${(d.items||[]).length?'':`<div style="font-size:14px;margin-top:6px">${linkifyRefs(esc(d.event||''),d.event_citations)}</div>`}
+            ${quotesHTML(d.quotes)}`));
+          (d.items||[]).forEach(it=>row.appendChild(el('div','qt',
+            `<div style="font-style:normal;font-size:13px"><b>${esc(it.publisher||'')}</b>${it.excerpt?' — '+esc(it.excerpt):''}
+             ${it.url?` <a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer" class="src-link">open ↗</a>`:''}</div>`)));
+          s6.appendChild(row);
+        });
       }
-      // People named in the coverage. These used to be the top influence
-      // handles — YouTube channels — presented as the people in the story.
-      if((si.key_people||[]).length){
-        s6.appendChild(el('div','lbl','Key people named in the coverage'));
-        s6.appendChild(el('div','row',(si.key_people||[]).map(p=>{
-          const nm=(p&&p.name)?p.name:p, role=(p&&p.role)?p.role:'', co=(p&&p.co_mentions)?p.co_mentions:null;
-          return `<span class="chip">${esc(nm)}${role?' · '+esc(role):''}${co?' · '+fmt(co)+' co-mentions':''}</span>`;
-        }).join('')));
+
+      // Who carried it, as a share of the issue's published items.
+      const amps=(si.key_amplifiers||[]).filter(a=>a&&a.handle);
+      if(amps.length){
+        s6.appendChild(el('div','fw-sub','Who carried it'));
+        if(amps.some(a=>a.items!=null)){
+          const pubTotal=(sd&&sd.published)||amps.reduce((a,b)=>a+(b.items||0),0);
+          s6.appendChild(hBars(amps.map(a=>({label:a.handle,value:a.items||0,
+            color:SEG_COLOR[a.outlet_type]||'var(--sky2)',display:fmt(a.items||0),
+            note:`${SEG_LABEL[a.outlet_type]||''} · ${fmt(a.items||0)} of ${fmt(pubTotal)} published items`})),{total:pubTotal}));
+        } else {
+          s6.appendChild(el('div','row',amps.map(a=>`<span class="chip">${esc(a.handle)}${a.platform?' · '+esc(a.platform):''}</span>`).join('')));
+        }
       }
-      if((si.key_amplifiers||[]).length){
-        s6.appendChild(el('div','lbl','Accounts amplifying it'));
-        s6.appendChild(el('div','row',(si.key_amplifiers||[]).map(a=>
-          `<span class="chip">${esc(a.handle||'')}${a.platform?' · '+esc(a.platform):''}</span>`).join('')));
+
+      // People named in the issue's own coverage — one row per person,
+      // never the subject, and a role only when one is known.
+      const people=(si.key_people||[]).filter(p=>p&&p.name);
+      if(people.length){
+        s6.appendChild(el('div','fw-sub','People in the story'));
+        s6.appendChild(el('div','row',people.map(p=>
+          `<span class="chip">${esc(p.name)}${p.role?' · '+esc(p.role):''}${p.named_in!=null?` · named in ${fmt(p.named_in)} of ${fmt(p.of)}`:''}</span>`).join('')));
+        if(si.people_basis)s6.appendChild(el('div','muted chart-note',`Counted as ${esc(si.people_basis)}.`));
       }
-      if((si.narrative_evidence||[]).length){
+
+      if((si.representative||[]).length){
+        s6.appendChild(el('div','fw-sub','Representative coverage'));
+        s6.appendChild(receipts(si.representative.map(asReceipt),{open:true}));
+      }
+
+      // Why this issue, and what else was in contention. Stated so the
+      // choice can be argued with rather than taken on trust.
+      if(si.chosen_because||(si.contenders||[]).length||(si.set_aside||[]).length){
+        const why=foldBlock('How this issue was chosen','and what came next');
+        if(si.chosen_because)why.appendChild(el('div','',`<div style="font-size:13.5px;margin-top:8px">${esc(si.chosen_because)}</div>`));
+        (si.contenders||[]).forEach(cn=>why.appendChild(el('div','muted',
+          `<div style="font-size:13px;margin-top:6px">Next: <b>${esc(cn.issue||'')}</b> — ${fmt(cn.mentions||0)} mention(s)${cn.published!=null?`, ${fmt(cn.published)} published`:''}${cn.lean?`, ${esc(leanPhrase(cn.lean))}`:''}</div>`)));
+        (si.set_aside||[]).forEach(a=>why.appendChild(el('div','muted',
+          `<div style="font-size:13px;margin-top:6px">Not counted as an issue: <b>${esc(a.label||'')}</b> — ${esc(a.reason||'')}</div>`)));
+        s6.appendChild(why);
+      }
+
+      // The report's single most important read. About the whole period,
+      // and labelled so: printed under the issue as a bare quote, it read
+      // as a statement about the issue it often had nothing to do with.
+      if(si.the_one_thing){
+        s6.appendChild(el('div','fw-sub','The single read of the period'));
+        s6.appendChild(el('div','',
+          `<div class="qt" style="border-left-color:var(--sky2);font-style:normal;font-size:15px">${linkifyRefs(esc(si.the_one_thing),si.the_one_thing_citations)}</div>`));
+      }
+
+      if((si.narrative_evidence||[]).length&&!(si.representative||[]).length){
         s6.appendChild(receipts(si.narrative_evidence));
       }
       const ev6=fwEvidence(si.evidence);
-      if(ev6){const f=foldBlock('The evidence','every item the storyline rests on');
+      if(ev6){const f=foldBlock('The evidence','framings, who is pushing it, what people said');
               f.appendChild(ev6);s6.appendChild(f);}
     }
     out.appendChild(s6);
@@ -2702,7 +3033,15 @@
     g1.appendChild(kpiCard('Scored for sentiment',fmt(scoredN),
       eligibleN?`${Math.round(100*(scoredN||0)/eligibleN)}% of ${fmt(eligibleN)} mentions`:'not scored'));
     c1.appendChild(g1);
-    if(periods.length){
+    // Volume through the period. The analysts' timeline carries no counts,
+    // so it drew a flat line at zero — a chart of nothing, under a heading
+    // promising volume. The framework's dated by-day counts are the real
+    // series; without either, nothing is drawn rather than a flat line.
+    const byDay=(fw.overall_mentions||{}).by_day||{};
+    if(Object.keys(byDay).length>1){
+      c1.appendChild(el('div','lbl','Volume through the period'));
+      c1.appendChild(dayColumns(byDay,{noun:'mentions'}));
+    } else if(periods.length&&periods.some(p=>p.values.mentions)){
       c1.appendChild(el('div','lbl','Volume through the period'));
       c1.appendChild(sparkline(periods.map(p=>p.values.mentions),{width:640,height:60}));
     }
@@ -2835,9 +3174,14 @@
     // payload.timeline, which is the ANALYST's dated event list and carries no
     // sentiment fields at all, so it plotted zeros on every report.
     const tone=tonePeriods;
+    // Without earlier reports to compare, the movement inside THIS period —
+    // scored mentions by day — is still movement, and it is in hand.
+    const inPeriod=(fw.sentiment||{}).over_time;
     g3.appendChild(tone.length
       ? stackedBars(tone,sentKeys,{width:600,height:230})
-      : fwEmpty('no scored mentions to chart movement between periods'));
+      : (inPeriod&&(inPeriod.series||[]).length>1)
+        ? toneColumns(inPeriod.series,{week:inPeriod.granularity==='week',height:180})
+        : fwEmpty('no scored mentions to chart movement between periods'));
     c3.appendChild(g3);
     out.appendChild(c3);
 
@@ -2886,7 +3230,7 @@
                <b style="font-size:14.5px">${handle(who)}</b>
                <div class="row" style="gap:6px;flex-shrink:0">
                  ${d.impact!=null?`<span class="pill ${tone}" title="coverage ${d.coverage_share}% + engagement ${d.engagement_share}%, halved">${d.impact}% impact</span>`:''}
-                 ${d.sentiment!=null?`<span class="chip">${d.sentiment>0?'+':''}${d.sentiment} tone</span>`:''}
+                 ${d.sentiment!=null?`<span class="pill ${d.sentiment<0?'neg':d.sentiment>0?'pos':''}" title="net tone ${d.sentiment>0?'+':''}${d.sentiment}: positive items minus negative ones, each weighted by how strongly it was expressed">${d.sentiment<0?'critical':d.sentiment>0?'supportive':'neutral'}</span>`:''}
                </div></div>
              <div class="muted" style="font-size:12.5px;margin-top:4px">
                ${d.coverage_share!=null?`${d.coverage_share}% of coverage`:''}
@@ -3527,20 +3871,37 @@
 
   /** Dated moments that moved the conversation, with the reaction quoted. */
   function renderDeepTimeline(tl){
-    const rows=(tl||[]).filter(t=>t&&(t.event||t.date));
-    if(!rows.length)return null;
+    const all=(tl||[]).filter(t=>t&&(t.event||t.date));
+    // Moments the period's coverage REFERS to but which happened before it —
+    // "since the 2022 election…" — are context, not events of the period.
+    // On the strip they made a one-month report look as if it reached back
+    // years; they are listed separately, labelled for what they are.
+    // Oldest first, undated last: the list is headed "in order" and its
+    // numbers match the strip's, which count in date order — listed as the
+    // analysts happened to return them, it read 3, 2, 1.
+    const byDate=(a,b)=>{const x=whenOf(a),y=whenOf(b);
+      return x==null?(y==null?0:1):y==null?-1:x-y;};
+    const rows=all.filter(t=>!t.before_period).sort(byDate);
+    const earlier=all.filter(t=>t.before_period).sort(byDate);
+    if(!rows.length&&!earlier.length)return null;
     const c=deepCard('What happened, and when','Dated moments that drove the conversation');
+    if(!rows.length){
+      c.appendChild(fwEmpty('no dated moment inside the period'));
+    }
     // The graph first, then the full list. The list is not a fallback for the
     // graph and the graph is not a summary of the list — one is for seeing
     // the shape of the window, the other for reading it, and a printed file
     // needs both because nothing in it can be clicked.
-    const graph=interactiveTimelineStrip(rows,null,{detail:true});
-    c.appendChild(graph);
-    c.appendChild(el('div','lbl','Every moment, in order'));
+    const graph=interactiveTimelineStrip(rows,null,{detail:true,key:false});
+    if(rows.length){
+      c.appendChild(graph);
+      c.appendChild(el('div','lbl','Every moment, in order'));
+    }
     rows.forEach((t,idx)=>{
       const row=el('div','mentr tl-row',
         `<div class="row" style="justify-content:space-between;align-items:flex-start">
-           <b style="font-size:14px;color:var(--sky2)">${esc(t.date?ukDate(t.date):'undated')}</b>
+           <span class="row" style="gap:8px;align-items:center"><span class="tl-key-n">${graph.numberOf(idx)||''}</span>
+           <b style="font-size:14px;color:var(--sky2)">${esc(t.date?ukDate(t.date):'undated')}</b></span>
            ${t.mentions_that_day?`<span class="chip">${share(t.mentions_that_day,CORPUS_TOTAL,"mentions that day")} of mentions</span>`:''}</div>
          <div class="tl-row-event">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>
          ${quotesHTML(t.quotes)}`);
@@ -3551,6 +3912,14 @@
       });
       c.appendChild(row);
     });
+    if(earlier.length){
+      const f=foldBlock(`Earlier events the coverage refers to (${earlier.length})`,
+                        'before this period — context, not part of it');
+      earlier.forEach(t=>f.appendChild(el('div','mentr',
+        `<b style="font-size:14px;color:var(--mut)">${esc(t.date?ukDate(t.date):'undated')}</b>
+         <div class="tl-row-event">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>`)));
+      c.appendChild(f);
+    }
     return c;
   }
 
@@ -4371,6 +4740,34 @@
     if(s.positive!=null){
       const sc=el('div','card');
       sc.innerHTML=`<div class="lbl">Sentiment split</div>`+sentBar('Positive',s.positive,'var(--pos)')+sentBar('Neutral',s.neutral,'var(--neu)')+sentBar('Negative',s.negative,'var(--neg)');
+      // What is under the three bars: the press and the public separately,
+      // and which storylines carry the negative and the positive. Three
+      // bars alone was the "so short" a reader complained of; both of these
+      // are counted, and the framework tab has them in full.
+      const fwSent=(r.sentiment_framework||{}).sentiment||{};
+      const segs=(fwSent.by_segment||[]).filter(x=>x&&x.scored);
+      if(segs.length){
+        const box=el('div','');box.style.marginTop='16px';
+        box.appendChild(el('div','lbl','By kind of outlet'));
+        segs.forEach(x=>{
+          const row=el('div','');row.style.marginTop='10px';
+          row.appendChild(el('div','row',`<b style="font-size:13px;color:${SEG_COLOR[x.outlet_type]||'inherit'}">${esc(SEG_LABEL[x.outlet_type]||x.label||'')}</b>
+            <span class="muted" style="font-size:12.5px">${x.lean?esc(leanPhrase(x.lean)):'too few scored to say'}</span>`));
+          row.appendChild(toneSplit(x));
+          box.appendChild(row);
+        });
+        sc.appendChild(box);
+      }
+      const drv=fwSent.drivers||{};
+      const sideLine=(list,word)=>(list||[]).filter(d=>d&&d.share_of_side!=null).slice(0,3)
+        .map(d=>`${esc(d.issue)} <span class="muted">(${d.share_of_side}%)</span>`).join(' · ');
+      const negLine=sideLine(drv.negative), posLine=sideLine(drv.positive);
+      if(negLine||posLine){
+        const box=el('div','');box.style.marginTop='14px';
+        if(negLine)box.appendChild(el('div','',`<div style="font-size:13px;margin-top:4px"><b style="color:${TONE.negative}">Negative coverage sits in</b> ${negLine}</div>`));
+        if(posLine)box.appendChild(el('div','',`<div style="font-size:13px;margin-top:4px"><b style="color:${TONE.positive}">Positive coverage sits in</b> ${posLine}</div>`));
+        sc.appendChild(box);
+      }
       wrap.appendChild(sc);
     }
     // What to do about it — risks, openings, what is moving.
@@ -4993,7 +5390,8 @@
           row.style.transition='background .2s';row.style.background='rgba(56,189,248,.14)';
           setTimeout(()=>{row.style.background='';},900);}
       };
-      c.appendChild(interactiveTimelineStrip(tl,jumpTo));
+      const strip=interactiveTimelineStrip(tl,jumpTo,{key:false});
+      c.appendChild(strip);
       const body=el('div','');c.appendChild(body);
       // Selecting a node in the graph filters this to the moments that node is
       // connected to. That connection is the graph's own edges, so the two
@@ -5022,6 +5420,7 @@
         (shown.length?shown:tl).forEach(t=>{const tc=t.corroboration;const row=el('div','mentr',
           `<div class="row" style="gap:10px;align-items:center;justify-content:space-between">
              <div class="row" style="gap:10px;align-items:center">
+               <span class="tl-key-n">${strip.numberOf(tl.indexOf(t))||''}</span>
                <b style="font-size:14px;color:var(--sky2)">${esc(t.date||t.when?ukDate(t.date||t.when):'undated')}</b>
                ${t.date&&t.when&&String(t.when)!==String(t.date)?`<span class="chip">${esc(asWritten(t.when))}</span>`:''}</div>
              ${tc?`<span class="pill ${tc.confirmed?'pos':'amber'}" style="font-size:11px" title="${esc(tc.outlets.join(', '))}">${esc(tc.label)}</span>`:''}</div>

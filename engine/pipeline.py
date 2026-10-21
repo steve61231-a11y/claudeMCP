@@ -545,7 +545,8 @@ def run_analysis(
                      "to keep a report arriving at all."),
         } if len(_for_clustering) < len(stored_mentions) else None)
         built_narratives = narrative_module.build_narratives(
-            _for_clustering, subject_terms=subject_terms)
+            _for_clustering, subject_terms=subject_terms,
+            window=(window_start, window_end))
     for n in built_narratives:
         narrative_row = Narrative(politician_id=politician.id, label=n["label"], description=n["description"])
         db.add(narrative_row)

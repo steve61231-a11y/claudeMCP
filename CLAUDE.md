@@ -356,6 +356,41 @@ the same subject; a tab the reader CHOSE survives, a default may move.
 `test_the_framework_stays_where_the_reader_left_it.py` drives it in a real
 browser, because none of it is visible to a string match.
 
+**A storyline handed over without its mentions can only be described by
+its size.** `narrative_breakdown` carried a label, a description and a
+count — not the mention ids, and no tone. So the framework's 4.0 skipped
+every storyline on every live report (it had no way to tell a lever from a
+barrier) and printed the analysts' generic risks instead; 5.0's "exact"
+grouping by storyline never matched; and 6.0 chose the most important issue
+by size, which on a live report was "Playful reactions thread" — emoji
+under a video — with the report's people, accounts and dates printed under
+it as the issue's. `reports/storylines.py` profiles each storyline from its
+own items (tone split, publishers, outlet segments, dated first/peak/last,
+representative items, people named in it) once, and 3.0, 4.0 and 6.0 read
+the same profile. A storyline is set aside as chatter only when its own
+label says so AND it is mostly reactions, and every exclusion is declared.
+The importance weight counts a reaction as a quarter of a published item.
+Names are merged ("Ruto" into "William Ruto" only when exactly one longer
+name contains it), the subject is never a person in his own story, and a
+role of "null" is no role.
+
+**A median split measures nothing.** Storyline growth compared the items
+before and after the storyline's own MEDIAN timestamp — half on each side
+by definition — so every rate was about zero and moved only when items
+shared a timestamp, which undated items stamped on the window's last day
+did. `narratives._growth` splits the REPORT window by time, counts dated
+items only, and carries the two halves so the page can say "12 in the
+second half against 5 in the first" rather than a bare "escalating".
+
+**A timeline must read without a cursor.** The key-dates strip was dots
+whose dates and events lived in a hover — nothing on a phone or on paper —
+and dates written out ("15 October 2026") could not be parsed, so the strip
+fell back to even spacing under a timeline whose dates were all there.
+Moments are now numbered in date order on the strip and in the list beside
+it, `whenOf` reads written-out dates, and an analyst entry dated before
+the period ("since he was elected in 2022") is marked `before_period` and
+listed as context rather than drawn as an event of the month.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

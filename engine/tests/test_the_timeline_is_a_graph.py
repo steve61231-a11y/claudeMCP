@@ -113,8 +113,14 @@ def test_points_are_positioned_by_date_not_by_index():
 def test_a_window_with_one_date_falls_back_and_says_so():
     """Every moment on one day would stack every marker on one x. Spacing
     them evenly is fine; doing it silently is not, because the picture then
-    implies a tempo the data does not have."""
-    assert "Not enough distinct dates to scale by time" in STRIP
+    implies a tempo the data does not have.
+
+    It says WHICH case it is: every moment on one day ("All 3 moments fall
+    on 2nd Oct 2026") is a different finding from moments that could not be
+    dated, and the old "Not enough distinct dates to scale by time" was
+    printed under strips whose dates were all there in words."""
+    assert "moments fall on" in STRIP
+    assert "too few of these moments carry a date to place them in time" in STRIP
 
 
 def test_undated_moments_are_counted_not_dropped():

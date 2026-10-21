@@ -542,10 +542,33 @@ def analyze_timeline(name: str, mentions: list[dict], by_day: dict[str, int]) ->
         merged.append(entry)
     result = {"timeline": merged}
     timeline = [t for t in result["timeline"] if isinstance(t, dict)]
+    # The period this report covers, from the dates of what it read. A
+    # mention published this month can describe something from years ago —
+    # "since he was elected in 2022…" — and the model dates the moment it
+    # describes, so the timeline of a one-month report could open on the
+    # last election. That moment is context the coverage refers to, not an
+    # event of the period, and it is marked so the page can say which.
+    published = [m["posted_at"].date() for m in mentions
+                 if isinstance(m.get("posted_at"), datetime) and not m.get("date_estimated")]
+    period_start = min(published) if published else None
     for t in timeline:
         t["quotes"] = _validate_quotes(t.get("quotes"), refs)
         t["mentions_that_day"] = by_day.get(str(t.get("date")), 0)
+        day = _iso_day(t.get("date"))
+        if period_start and day and day < period_start:
+            t["before_period"] = True
     return sorted(timeline, key=lambda t: str(t.get("date")))
+
+
+def _iso_day(value):
+    """A timeline date as a date, when it is one: "2026-06-02" or a longer
+    ISO timestamp. Anything looser ("mid-2025", "Q1 2026") is not placed."""
+    from datetime import date
+
+    try:
+        return date.fromisoformat(str(value or "")[:10])
+    except ValueError:
+        return None
 
 
 INFLUENCER_STANCES_PROMPT = """You are a political intelligence analyst profiling the highest-influence accounts driving conversation about {name}. Below are their actual posts.

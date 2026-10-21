@@ -130,8 +130,15 @@ def generate_report_payload(
                 "growth_rate": (round(n["growth_rate"], 2)
                                 if n.get("growth_rate") is not None else None),
                 "growth_basis": n.get("growth_basis"),
+                "growth_halves": n.get("growth_halves"),
                 "strength_basis": n.get("strength_basis"),
                 "mention_count": len(n["mention_ids"]),
+                # Which mentions the storyline holds. Without them the
+                # framework could not say anything about a storyline beyond
+                # its size — not its tone, its outlets, its dates or the
+                # people in it — and 4.0 never used storylines at all,
+                # because it had no way to tell a lever from a barrier.
+                "mention_ids": list(n["mention_ids"]),
                 # Carried, not summarised away: the page has to be able to open
                 # a narrative and show the posts it was built from.
                 "evidence": n.get("evidence", []),

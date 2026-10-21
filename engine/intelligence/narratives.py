@@ -414,11 +414,50 @@ def _evidence_for(cluster_mentions: list[dict], limit: int = 8) -> list[dict]:
     return evidence
 
 
-def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None) -> list[dict]:
+def _growth(cluster_mentions: list[dict], window: tuple | None) -> tuple:
+    """How a storyline moved across the period: `(rate, basis, halves)`.
+
+    The period is split in two by TIME and each half counted. This used to
+    split each storyline at its own MEDIAN timestamp, and a median split
+    puts half the items on each side by definition — so the rate was about
+    zero for every storyline ever measured, and moved only when items shared
+    a timestamp. The commonest shared timestamp was the last day of the
+    window, where undated items were stamped: the pile of items nobody could
+    date was the only thing that ever made a storyline "escalating".
+
+    Only items with a known date are counted, for the same reason.
+    """
+    stamps = sorted(m["posted_at"] for m in cluster_mentions
+                    if m.get("posted_at") is not None and not m.get("date_estimated"))
+    if not stamps:
+        return None, "undated", None
+    start, end = window if window else (stamps[0], stamps[-1])
+    if end <= start:
+        return None, "no_time_span", None
+    split_at = start + (end - start) / 2
+    first = sum(1 for t in stamps if t < split_at)
+    second = len(stamps) - first
+    halves = {"first": first, "second": second, "split_at": split_at.isoformat()}
+    # `max(first_half, 1)` turned "there was no earlier half" into a
+    # division by one, so a storyline that began inside the window came
+    # out as a growth rate equal to its own mention count — 69, printed as
+    # "69%". A thing that did not exist before is NEW; it has no growth
+    # rate, and inventing one is the same sin as a progress bar at 50% for
+    # anything in progress.
+    if first == 0:
+        return None, "no_earlier_half", halves
+    if len(stamps) < MIN_MENTIONS_FOR_GROWTH:
+        return None, "too_few_mentions", halves
+    return (second - first) / first, "measured", halves
+
+
+def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None,
+                     window: tuple | None = None) -> list[dict]:
     """Groups mentions into narrative clusters, labels each via the LLM,
     and computes strength/growth metrics per cluster.
 
     `mentions` items need: id, text, posted_at, engagement (dict with likes/shares/comments).
+    `window` is the report's `(start, end)`: growth compares its two halves.
     """
     if not mentions:
         return []
@@ -470,22 +509,7 @@ def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None
                           else "mentions_only")
 
         timestamps = sorted(m["posted_at"] for m in cluster_mentions_)
-        midpoint = timestamps[len(timestamps) // 2]
-        first_half = sum(1 for t in timestamps if t < midpoint)
-        second_half = len(timestamps) - first_half
-        # `max(first_half, 1)` turned "there was no earlier half" into a
-        # division by one, so a storyline that began inside the window came
-        # out as a growth rate equal to its own mention count — 69, printed
-        # as "69%". A thing that did not exist before is NEW; it has no
-        # growth rate, and inventing one is the same sin as a progress bar
-        # at 50% for anything in progress.
-        if first_half == 0:
-            growth_rate, growth_basis = None, "no_earlier_half"
-        elif len(timestamps) < MIN_MENTIONS_FOR_GROWTH:
-            growth_rate, growth_basis = None, "too_few_mentions"
-        else:
-            growth_rate = (second_half - first_half) / first_half
-            growth_basis = "measured"
+        growth_rate, growth_basis, growth_halves = _growth(cluster_mentions_, window)
 
         results.append(
             {
@@ -503,6 +527,10 @@ def build_narratives(mentions: list[dict], subject_terms: set[str] | None = None
                 "strength_basis": strength_basis,
                 "growth_rate": growth_rate,
                 "growth_basis": growth_basis,
+                # The two counts the rate came from, so a reader can be told
+                # "28 in the second half of the period against 9 in the first"
+                # instead of a bare percentage.
+                "growth_halves": growth_halves,
                 "window_start": min(timestamps),
                 "window_end": max(timestamps),
             }

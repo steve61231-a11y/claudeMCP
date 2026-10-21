@@ -30,7 +30,10 @@ so rather than inventing it — a blank in a due-diligence report is information
 """
 
 import re
+from collections import Counter
 from datetime import datetime, timedelta
+
+from engine.reports import storylines
 
 # The framework's own threshold for "high impact" on social media.
 HIGH_ENGAGEMENT_THRESHOLD = 100
@@ -351,8 +354,8 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
             "positive": 0, "neutral": 0, "negative": 0, "unscored": 0, "items": [],
         })
         entry["mentions"] += 1
-        tone = (sentiments.get(mention.get("id")) or {}).get("sentiment")
-        entry[tone if tone in ("positive", "neutral", "negative") else "unscored"] += 1
+        tone = storylines.sentiment_of(mention, sentiments)
+        entry[tone or "unscored"] += 1
         entry["items"].append((_engagement_of(mention), mention, tone))
 
     sources_detail = []
@@ -391,10 +394,23 @@ def build_overall_mentions(payload: dict, mentions: list[dict], previous: dict |
     for entry in sources_detail:
         covered[entry["outlet_type"]].add(entry["source"])
 
+    # Volume by day, dated items only — an undated item stamped on the last
+    # day of the window once drew "peak 380 mentions in a day" over a corpus
+    # of 699. With nothing datable there is no peak, not a peak of zero.
+    by_day = Counter(posted.date().isoformat() for posted in
+                     (storylines._posted(m) for m in mentions) if posted)
+    peak = None
+    if by_day:
+        day, count = max(by_day.items(), key=lambda kv: (kv[1], kv[0]))
+        peak = {"date": day, "count": count}
+
     return {
         "total": total,
         "previous_total": previous_total,
         "difference_pct": difference_pct,
+        "by_day": dict(sorted(by_day.items())),
+        "peak": peak,
+        "dated": sum(by_day.values()),
         "segmentation": [
             {"outlet_type": key, "label": key.replace("_", " ").title(),
              "count": value, "share": _pct(value, total)}
@@ -431,11 +447,96 @@ def _scoring_gap(payload: dict, analysed: int) -> str | None:
     return None
 
 
-def build_sentiment_section(payload: dict, sentiments: dict | None = None) -> dict:
-    """3.0 — positive / negative / neutral totals and the score (pie chart)."""
+def sentiment_by_segment(mentions: list[dict], sentiments: dict | None) -> list[dict]:
+    """The tone of Kenyan media, international media and social media,
+    separately. One blended score hides the thing a client most needs to
+    know: whether the press and the public are telling the same story."""
+    from engine.reports import outlets
+
+    tones = {seg: {"positive": 0, "negative": 0, "neutral": 0}
+             for seg in (outlets.LOCAL, outlets.INTERNATIONAL, outlets.SOCIAL)}
+    for mention in mentions or []:
+        tone = storylines.sentiment_of(mention, sentiments)
+        if tone:
+            tones[outlets.classify(mention)[0]][tone] += 1
+    rows = []
+    for segment, tone in tones.items():
+        scored = sum(tone.values())
+        rows.append({"outlet_type": segment, "label": segment.replace("_", " ").title(),
+                     **tone, "scored": scored,
+                     "score": sentiment_score(tone["positive"], tone["negative"],
+                                              tone["neutral"]) if scored else None,
+                     "lean": storylines.lean(tone)})
+    return rows
+
+
+def sentiment_over_time(mentions: list[dict], sentiments: dict | None) -> dict | None:
+    """Scored mentions by day — or by week across a long period — so a
+    reader can see WHEN the tone turned, not only where it ended up. Dated
+    items only: an undated item has no day to be counted on."""
+    points = []
+    for mention in mentions or []:
+        tone = storylines.sentiment_of(mention, sentiments)
+        when = storylines._posted(mention)
+        if tone and when:
+            points.append((when, tone))
+    if not points:
+        return None
+    span = (max(p[0] for p in points) - min(p[0] for p in points)).days
+    weekly = span > 35
+    buckets: dict[str, dict] = {}
+    for when, tone in points:
+        day = when.date()
+        key = (day - timedelta(days=day.weekday())).isoformat() if weekly else day.isoformat()
+        bucket = buckets.setdefault(key, {"period": key, "positive": 0, "negative": 0,
+                                          "neutral": 0})
+        bucket[tone] += 1
+    return {"granularity": "week" if weekly else "day",
+            "series": [buckets[k] for k in sorted(buckets)]}
+
+
+def sentiment_drivers(narratives: list[dict], profiles: dict, positive: int,
+                      negative: int) -> dict:
+    """Where the negative coverage sits, and where the positive does: each
+    storyline's share of ALL negative (or positive) items. "Negative 41%"
+    says how the period went; this says what it was about."""
+    out: dict[str, list] = {"negative": [], "positive": []}
+    for narrative in narratives:
+        prof = _profile_of(profiles, narrative)
+        if not prof:
+            continue
+        for side, whole in (("negative", negative), ("positive", positive)):
+            count = prof["tone"][side]
+            if count:
+                out[side].append({
+                    "issue": narrative.get("label"), "count": count,
+                    "share_of_side": _pct(count, whole) if whole else None,
+                    "mentions": prof["mentions"],
+                    "reaction_thread": bool(storylines.is_chatter(narrative, prof)),
+                })
+    for side in out:
+        out[side].sort(key=lambda d: d["count"], reverse=True)
+        out[side] = out[side][:4]
+    return out
+
+
+def build_sentiment_section(payload: dict, sentiments: dict | None = None,
+                            mentions: list[dict] | None = None,
+                            profiles: dict | None = None) -> dict:
+    """3.0 — positive / negative / neutral totals and the score (pie chart),
+    then what is under them: the tone of each kind of outlet, how it moved
+    through the period, and which storylines carried each side."""
     positive, negative, neutral = sentiment_counts(payload, sentiments)
     total = positive + negative + neutral
+    extra = {}
+    if mentions:
+        extra["by_segment"] = sentiment_by_segment(mentions, sentiments)
+        extra["over_time"] = sentiment_over_time(mentions, sentiments)
+    if profiles:
+        extra["drivers"] = sentiment_drivers(payload.get("narratives") or [], profiles,
+                                             positive, negative)
     return {
+        **extra,
         "positive": positive,
         "negative": negative,
         "neutral": neutral,
@@ -540,17 +641,67 @@ def _as_text_list(value) -> list[str]:
     return out
 
 
-def build_current_issues(payload: dict) -> dict:
+#: How many items must take a side before a storyline is called a lever or
+#: a barrier on its own scored mentions.
+MIN_SIDE = 2
+
+
+def trajectory(narrative: dict) -> tuple[str | None, str | None]:
+    """Which way a storyline moved across the period, and the counts that
+    say so. None where nothing was measured: "escalating" printed over a
+    storyline whose rate came from a pile of undated items stamped on the
+    last day was a direction nobody observed."""
+    growth = narrative.get("growth")
+    halves = narrative.get("growth_halves") or {}
+    first, second = halves.get("first"), halves.get("second")
+    counted = (f"{second} dated mention(s) in the second half of the period against "
+               f"{first} in the first") if first is not None and second is not None else None
+    if isinstance(growth, (int, float)):
+        label = ("escalating" if growth > 0.2 else "receding" if growth < -0.2 else "steady")
+        return label, counted or f"{round(100 * growth):+d}% between the two halves of the period"
+    if narrative.get("growth_basis") == "no_earlier_half" and (second or 0) >= 3:
+        return "new", (f"all {second} dated mentions fall in the second half of the "
+                       "period — it was not running before")
+    if counted:
+        return None, f"too few dated mentions to say which way it is moving ({counted})"
+    return None, None
+
+
+def _profile_of(profiles: dict | None, narrative: dict) -> dict | None:
+    """A storyline's profile. Keyed by the storyline itself, not its label:
+    two storylines can carry the same derived label, and a lookup by label
+    would describe one with the other's items."""
+    if not profiles:
+        return None
+    return profiles.get(id(narrative)) or profiles.get(narrative.get("label"))
+
+
+def _public(prof: dict | None) -> dict:
+    """A storyline profile without its working parts."""
+    if not prof:
+        return {}
+    return {k: v for k, v in prof.items() if not k.startswith("_")}
+
+
+def build_current_issues(payload: dict, profiles: dict | None = None) -> dict:
     """4.0 — potential levers (positive) and potential barriers (negative).
 
     The framework's own naming is kept: an analyst asked for levers and
     barriers, and renaming them would break the handover.
+
+    Which side a storyline is on is read from its own scored mentions.
+    Storylines arrived here with no tone at all, so on every live report
+    this section skipped every storyline and printed the analysts' generic
+    risks and opportunities instead — the "so short" a reader complained
+    of, in the section that should carry the most.
     """
     narratives = payload.get("narratives") or []
+    profiles = profiles or {}
 
     def _issue(narrative: dict, kind: str) -> dict:
         label = narrative.get("label")
-        return {
+        prof = _profile_of(profiles, narrative)
+        issue = {
             "issue": label,
             "description": narrative.get("description"),
             "mentions": narrative.get("mentions"),
@@ -559,32 +710,70 @@ def build_current_issues(payload: dict) -> dict:
             "type": kind,
             "evidence": _evidence_for(label, payload),
         }
+        if prof:
+            issue["profile"] = _public(prof)
+            issue["mentions"] = prof["mentions"]
+        issue["trajectory"], issue["trajectory_basis"] = trajectory(narrative)
+        return issue
 
-    positives, negatives = [], []
+    positives, negatives, set_aside = [], [], []
     for narrative in narratives:
+        prof = _profile_of(profiles, narrative)
+        why = storylines.is_chatter(narrative, prof)
+        if why:
+            set_aside.append({"label": narrative.get("label"),
+                              "mentions": (prof or {}).get("mentions", narrative.get("mentions")),
+                              "reason": why})
+            continue
         tone = str(narrative.get("tone") or narrative.get("sentiment") or "").lower()
+        if not tone and prof:
+            pos, neg = prof["tone"]["positive"], prof["tone"]["negative"]
+            if neg > pos and neg >= MIN_SIDE:
+                tone = "negative"
+            elif pos > neg and pos >= MIN_SIDE:
+                tone = "positive"
         if tone == "positive":
             positives.append(_issue(narrative, "lever"))
         elif tone == "negative":
             negatives.append(_issue(narrative, "barrier"))
 
+    def _side(issue: dict, side: str) -> tuple:
+        prof = issue.get("profile") or {}
+        return ((prof.get("tone") or {}).get(side, 0), issue.get("mentions") or 0)
+
+    positives.sort(key=lambda i: _side(i, "positive"), reverse=True)
+    negatives.sort(key=lambda i: _side(i, "negative"), reverse=True)
+
     # Without per-narrative tone, fall back to the analysts' own framing —
     # opportunities are levers and risks are barriers by definition.
+    fallback = []
     if not positives:
         positives = [
             {"issue": text[:120], "description": text, "type": "lever"}
             for text in _as_text_list(payload.get("opportunities"))[:MAX_CURRENT_ISSUES]
         ]
+        if positives:
+            fallback.append("levers")
     if not negatives:
         negatives = [
             {"issue": text[:120], "description": text, "type": "barrier"}
             for text in _as_text_list(payload.get("risks"))[:MAX_CURRENT_ISSUES]
         ]
+        if negatives:
+            fallback.append("barriers")
 
     return {
         "potential_levers": positives[:MAX_CURRENT_ISSUES],
         "potential_barriers": negatives[:MAX_CURRENT_ISSUES],
         "note": "Framework 4.0 caps current issues at three per side.",
+        "basis": ("Each storyline's side is read from its own scored mentions: a barrier "
+                  "carries more negative than positive coverage, a lever the reverse. "
+                  "Ranked by how many items take that side."),
+        # Where a side came from the analysts' written risks or opportunities
+        # instead, because no storyline took it. Said, so a reader knows
+        # which entries are counted and which are judgement.
+        "from_analysts": fallback,
+        "set_aside": set_aside,
     }
 
 
@@ -600,14 +789,25 @@ def build_emergent_issues(mentions: list[dict], now: datetime | None = None,
     reference = now or datetime.utcnow()
     cutoff = reference - timedelta(hours=EMERGENT_WINDOW_HOURS)
 
+    from engine.reports import outlets
+
     emergent = []
     for mention in mentions:
         posted = mention.get("posted_at")
         if not isinstance(posted, datetime) or posted < cutoff:
             continue
+        # An item nobody could date was stamped with the end of the window,
+        # which is inside every "last 72 hours" by construction — the whole
+        # undated pile qualified as emergent. And a reaction is a response
+        # to coverage, not coverage: a comment with a hundred likes is not
+        # an issue that emerged.
+        if mention.get("date_estimated") or mention.get("source_type") == "comment":
+            continue
         engagement = mention.get("engagement") or {}
         score = sum(int(engagement.get(k) or 0) for k in ("likes", "shares", "comments", "views"))
-        segment = classify_outlet(mention.get("platform"))
+        # The item decides, not its platform: NTV Kenya's channel is a
+        # newsroom's coverage, and the platform alone called it social.
+        segment = outlets.classify(mention)[0]
         qualifies = (
             score >= HIGH_ENGAGEMENT_THRESHOLD
             if segment == "social_media"
@@ -623,6 +823,7 @@ def build_emergent_issues(mentions: list[dict], now: datetime | None = None,
                 "mention_id": str(mention.get("id")) if mention.get("id") is not None else None,
                 "headline": (mention.get("text") or "")[:200],
                 "platform": mention.get("platform"),
+                "publisher": outlets.publisher(mention),
                 "outlet_type": segment,
                 "engagement": score,
                 "url": mention.get("source_url"),
@@ -818,15 +1019,24 @@ def group_emergent(items: list[dict], narratives: list[dict] | None = None,
     buckets.sort(key=lambda b: (b["engagement"], b["count"]), reverse=True)
     top, rest = buckets[:limit], buckets[limit:]
 
-    window_engagement = sum(b["engagement"] for b in buckets) or 1
+    # Shares of the window's engagement — or, where nothing in it carries
+    # any (news articles report no likes), of its items. Engagement alone
+    # printed "0% of the reaction" beside every theme in an all-editorial
+    # window, which is a measurement of nothing.
+    engagement_total = sum(b["engagement"] for b in buckets)
+    item_total = sum(b["count"] for b in buckets) or 1
+    basis = "engagement" if engagement_total else "items"
     for bucket in top:
-        bucket["share"] = round(100 * bucket["engagement"] / window_engagement, 1)
+        bucket["share"] = (round(100 * bucket["engagement"] / engagement_total, 1)
+                           if engagement_total else round(100 * bucket["count"] / item_total, 1))
 
     return {
         "themes": top,
         "other_themes": rest,
         "other_item_count": sum(b["count"] for b in rest),
-        "window_engagement": window_engagement,
+        "window_engagement": engagement_total or 1,
+        "window_items": item_total,
+        "share_basis": basis,
     }
 
 
@@ -880,15 +1090,112 @@ def rank_emergent(items: list[dict], limit: int) -> list[dict]:
     return ordered
 
 
-def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
-    """6.0 — the most important issue: outline, status, trajectory, dates, people."""
-    narratives = payload.get("narratives") or []
-    leading = max(
-        narratives,
-        key=lambda n: (n.get("strength") or 0, n.get("mentions") or 0),
-        default=None,
-    )
+def _issue_terms(label: str | None, description: str | None) -> set[str]:
+    return _distinctive_terms(f"{label or ''} {label or ''} {description or ''}")
 
+
+def _issue_dates(prof: dict, narrative: dict, payload: dict,
+                 sentiments: dict | None) -> list[dict]:
+    """The dates of THIS issue: when it was first seen, its busiest day,
+    the latest item — each with what was published that day — and the
+    analysts' dated briefings that are about it.
+
+    These came from the report's general timeline, so the key dates under
+    the most important issue were the report's first five dates, about
+    whatever happened on them."""
+    items = prof["_items"]
+    dated = sorted((m for m in items if storylines._posted(m)), key=storylines._posted)
+    by_day = prof.get("by_day") or {}
+    out: list[dict] = []
+
+    def _moment(kind: str, day: str, chosen: list[dict], event: str) -> dict:
+        return {"date": day, "kind": kind, "event": event,
+                "mentions_that_day": by_day.get(day),
+                "items": [storylines.item_card(m, sentiments) for m in chosen]}
+
+    def _headline(m: dict) -> str:
+        card = storylines.item_card(m)
+        return f"{card['publisher']}: {card['excerpt'][:160]}"
+
+    if dated:
+        first = dated[0]
+        first_day = storylines._posted(first).date().isoformat()
+        out.append(_moment("first", first_day, [first], f"First seen. {_headline(first)}"))
+        peak = prof.get("peak")
+        if peak and peak["date"] != first_day and peak["count"] > 1:
+            on_day = [m for m in dated if storylines._posted(m).date().isoformat() == peak["date"]]
+            top = storylines._representative(on_day, 2)
+            out.append(_moment("peak", peak["date"], top,
+                               f"Busiest day, {peak['count']} items. {_headline(top[0])}"))
+        last = dated[-1]
+        last_day = storylines._posted(last).date().isoformat()
+        if last_day not in {o["date"] for o in out}:
+            out.append(_moment("latest", last_day, [last], f"Most recent. {_headline(last)}"))
+
+    # The analysts' dated briefings, where they are about this issue: two
+    # distinctive words in common, the same bar 5.0 uses to group items.
+    terms = _issue_terms(narrative.get("label"), narrative.get("description"))
+    for entry in payload.get("timeline") or []:
+        if not isinstance(entry, dict) or not entry.get("date") or entry.get("before_period"):
+            continue
+        shared = terms & _distinctive_terms(str(entry.get("event") or ""))
+        if len(shared) >= GROUP_SHARED_TERMS:
+            out.append({"date": entry.get("date"), "kind": "briefing",
+                        "event": entry.get("event"),
+                        "quotes": (entry.get("quotes") or [])[:2],
+                        "mentions_that_day": entry.get("mentions_that_day")})
+    out.sort(key=lambda d: str(d.get("date") or ""))
+    return out[:7]
+
+
+def _status(prof: dict) -> str:
+    """The issue's standing in one sentence of counts."""
+    tone, scored = prof["tone"], prof["scored"]
+    parts = [f"{prof['mentions']} mention(s)"]
+    if prof.get("share_pct") is not None:
+        parts[0] += f" — {prof['share_pct']:g}% of the period's coverage"
+    carried = []
+    if prof["published"]:
+        carried.append(f"{prof['published']} published item(s) from {prof['outlets']} "
+                       f"outlet(s)")
+    if prof["reactions"]:
+        carried.append(f"{prof['reactions']} reaction(s)")
+    if carried:
+        parts.append(" and ".join(carried))
+    if scored:
+        parts.append(f"of {scored} scored, {_pct(tone['negative'], scored):g}% negative and "
+                     f"{_pct(tone['positive'], scored):g}% positive")
+    return "; ".join(parts) + "."
+
+
+def build_strategic_implications(payload: dict, current_issues: dict,
+                                 profiles: dict | None = None, subject=None,
+                                 sentiments: dict | None = None) -> dict:
+    """6.0 — the most important issue: outline, status, trajectory, dates, people.
+
+    "Most important" was "largest": on a live report it chose a thread of
+    emoji and laughter under a video. It is now the storyline with the most
+    PUBLISHED coverage — a reaction counts a quarter of an item — among
+    storylines that are issues at all, and the section says why it won and
+    what came next, so the choice can be argued with.
+    """
+    narratives = payload.get("narratives") or []
+    profiles = profiles or {}
+
+    candidates, set_aside = [], []
+    for narrative in narratives:
+        prof = _profile_of(profiles, narrative)
+        why = storylines.is_chatter(narrative, prof)
+        if why:
+            set_aside.append({"label": narrative.get("label"), "reason": why,
+                              "mentions": (prof or {}).get("mentions", narrative.get("mentions"))})
+            continue
+        weight = prof["weight"] if prof else (narrative.get("mentions") or 0)
+        candidates.append(((weight, narrative.get("mentions") or 0,
+                            narrative.get("strength") or 0), narrative, prof))
+    candidates.sort(key=lambda c: c[0], reverse=True)
+
+    leading, prof = (candidates[0][1], candidates[0][2]) if candidates else (None, None)
     barriers = current_issues.get("potential_barriers") or []
     if leading is None and barriers:
         leading = {"label": barriers[0].get("issue"), "description": barriers[0].get("description")}
@@ -903,58 +1210,96 @@ def build_strategic_implications(payload: dict, current_issues: dict) -> dict:
             "key_people": [],
             "key_amplifiers": [],
             "narrative_evidence": [],
+            "set_aside": set_aside,
         }
 
-    growth = leading.get("growth")
-    trajectory = (
-        "escalating" if isinstance(growth, (int, float)) and growth > 0.2
-        else "receding" if isinstance(growth, (int, float)) and growth < 0
-        else "steady"
-    )
+    trajectory_label, trajectory_basis = trajectory(leading)
 
-    timeline = payload.get("timeline") or []
-    # People named IN the coverage, not the accounts posting it. This read the
-    # influence ranking, so "key people" on a Kenyan senator's report came out
-    # as cpnnewz, plugtvkenya, simbatv_ke — YouTube channels. Those are
-    # amplifiers, and they belong under influence; the people in the story come
-    # from entity extraction over the mention text.
+    # People named IN the coverage, not the accounts posting it. Merged so
+    # one person is one row, without the subject, without a role of "null",
+    # and — where the storyline's items are in hand — counted in THIS
+    # issue's items rather than across the whole report.
     named = (payload.get("network_insights") or {}).get("top_people") or []
-    key_people = [
-        {"name": person.get("name"), "role": person.get("role"),
-         "affiliation": person.get("affiliation"), "co_mentions": person.get("co_mentions")}
-        for person in named[:8] if person.get("name")
-    ]
-    # Amplifiers stay, labelled as what they are, so the distinction is on the
-    # page rather than lost.
-    key_amplifiers = [
-        {"handle": entry.get("who"), "platform": entry.get("platform"),
-         "reach": entry.get("reach") or entry.get("score")}
-        for entry in (payload.get("influence") or [])[:5] if entry.get("who")
-    ]
+    people = storylines.merge_people(named, subject)
+    if prof:
+        key_people = storylines.people_in(prof["_items"], people)
+        people_basis = (f"named in this storyline's own {prof['mentions']} items"
+                        if key_people else None)
+    else:
+        key_people, people_basis = people[:8], "named across the whole report"
+    key_people = [{"name": p["name"], "role": p["role"], "affiliation": p["affiliation"],
+                   "co_mentions": p["co_mentions"], "named_in": p.get("named_in"),
+                   "of": p.get("of")} for p in key_people]
 
-    # The dated timeline entries the analyst wrote are mini-briefings, not
-    # headlines — carry the whole thing, because "what happened and why it
-    # mattered" is the section's entire job.
-    key_dates = [
-        {"date": item.get("date"), "event": item.get("event"),
-         "quotes": (item.get("quotes") or [])[:2],
-         "mentions_that_day": item.get("mentions_that_day")}
-        for item in timeline[:5]
-        if item.get("date")
-    ]
+    # Who carried THIS issue. The report-wide influence ranking put
+    # "Facebook, Daily Nation" under every issue whatever it was about.
+    if prof:
+        key_amplifiers = [{"handle": pub["name"], "outlet_type": pub["outlet_type"],
+                           "items": pub["count"]} for pub in prof["publishers"]]
+        amplifiers_basis = "who published this storyline's items"
+    else:
+        key_amplifiers = [
+            {"handle": entry.get("who"), "platform": entry.get("platform"),
+             "reach": entry.get("reach") or entry.get("score")}
+            for entry in (payload.get("influence") or [])[:5] if entry.get("who")
+        ]
+        amplifiers_basis = "the report's most influential accounts"
+
+    if prof:
+        key_dates = _issue_dates(prof, leading, payload, sentiments)
+    else:
+        # The dated timeline entries the analyst wrote are mini-briefings, not
+        # headlines — carry the whole thing, because "what happened and why it
+        # mattered" is the section's entire job.
+        key_dates = [
+            {"date": item.get("date"), "event": item.get("event"), "kind": "briefing",
+             "quotes": (item.get("quotes") or [])[:2],
+             "mentions_that_day": item.get("mentions_that_day")}
+            for item in (payload.get("timeline") or [])[:5]
+            if item.get("date")
+        ]
+
+    if prof:
+        chosen_because = (
+            f"The storyline with the most published coverage this period: "
+            f"{prof['published']} published item(s) and {prof['reactions']} reaction(s)"
+            + (f", ahead of “{candidates[1][1].get('label')}”" if len(candidates) > 1 else "")
+            + ". Reactions count a quarter of a published item, so a busy comment "
+              "thread cannot outrank the news.")
+    else:
+        chosen_because = "The largest storyline in the period."
+
+    contenders = []
+    for _, narrative, other in candidates[1:3]:
+        contenders.append({"issue": narrative.get("label"),
+                           "mentions": (other or {}).get("mentions", narrative.get("mentions")),
+                           "published": (other or {}).get("published"),
+                           "lean": (other or {}).get("lean")})
 
     return {
         "issue": leading.get("label"),
         "outline": leading.get("description") or "",
-        "status": f"{leading.get('mentions') or 0} mention(s) in period; strength {leading.get('strength')}",
-        "trajectory": trajectory,
+        "chosen_because": chosen_because,
+        "status": _status(prof) if prof else (
+            f"{leading.get('mentions') or 0} mention(s) in the period."),
+        "status_detail": ({k: v for k, v in _public(prof).items() if k != "representative"}
+                          if prof else None),
+        "trajectory": trajectory_label,
+        "trajectory_basis": trajectory_basis,
         "key_dates": key_dates,
         "key_people": key_people,
+        "people_basis": people_basis,
         "key_amplifiers": key_amplifiers,
+        "amplifiers_basis": amplifiers_basis,
+        "representative": (prof or {}).get("representative") or [],
+        "contenders": contenders,
+        "set_aside": set_aside,
         # The posts behind the leading narrative, so 6.0 can be opened too.
         "narrative_evidence": leading.get("evidence") or [],
         # The same evidence 4.0 carries, for the issue that matters most.
         "evidence": _evidence_for(leading.get("label"), payload),
+        # The report's single most important read — about the whole period,
+        # not necessarily this issue, and labelled so on the page.
         "the_one_thing": ((payload.get("deep_insights") or {}).get("the_one_thing") or None),
     }
 
@@ -993,6 +1338,14 @@ def normalise_payload(payload: dict) -> dict:
             "growth": n.get("growth", n.get("growth_rate")),
             "tone": n.get("tone") or n.get("sentiment"),
             "mention_ids": n.get("mention_ids") or [],
+            # Dropped here until now, so 6.0's "narrative_evidence" read a
+            # key this adapter had already thrown away: the receipts were
+            # empty on every report.
+            "evidence": n.get("evidence") or [],
+            "labelled_by": n.get("labelled_by"),
+            "growth_basis": n.get("growth_basis"),
+            "growth_halves": n.get("growth_halves"),
+            "strength_basis": n.get("strength_basis"),
         }
         for n in narratives
         if isinstance(n, dict)
@@ -1029,16 +1382,26 @@ def build(politician, payload: dict, mentions: list[dict], previous: dict | None
         profile = subject_profile_from_corpus(mentions)
         if profile:
             payload = {**payload, "subject_profile": profile}
-    current_issues = build_current_issues(payload)
+    # What each storyline holds, counted once from the corpus and read by
+    # 3.0, 4.0 and 6.0 alike — three sections describing one storyline from
+    # three separate computations would disagree with each other.
+    by_id = storylines.index_corpus(mentions)
+    profiles = {}
+    for narrative in payload.get("narratives") or []:
+        prof = storylines.profile(narrative, by_id, sentiments, len(mentions))
+        if prof:
+            profiles[id(narrative)] = prof
+    current_issues = build_current_issues(payload, profiles)
     return {
         "framework": "Sentiment Analysis Framework V1.0",
         "generated_at": (now or datetime.utcnow()).isoformat(),
         "summary_of_subject": build_summary_of_subject(politician, payload),
         "sentiment_score": build_sentiment_score_section(payload, previous, sentiments),
         "overall_mentions": build_overall_mentions(payload, mentions, previous, sentiments),
-        "sentiment": build_sentiment_section(payload, sentiments),
+        "sentiment": build_sentiment_section(payload, sentiments, mentions, profiles),
         "current_issues": current_issues,
         "emergent_issues": build_emergent_issues(
             mentions, now=now, narratives=payload.get("narratives")),
-        "strategic_implications": build_strategic_implications(payload, current_issues),
+        "strategic_implications": build_strategic_implications(
+            payload, current_issues, profiles, politician, sentiments),
     }

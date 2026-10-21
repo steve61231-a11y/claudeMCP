@@ -143,3 +143,50 @@ def test_the_end_of_the_run_does_not_throw_the_reader_out(run):
 def test_a_new_subject_starts_at_the_top(run):
     seen, _ = run
     assert seen["modeForANewSubject"] == "overview"
+
+
+#: The Issue Map redraws as each analyst lands, and its framework arrives
+#: late. A reader who has not picked a tab is moved to the framework when it
+#: lands — it is the deliverable — and one who has picked a tab is left on it.
+AN_ISSUE_MAP_RUN = """(m) => {
+  const Z = window.ZENITH, seen = {};
+  const tab = (out, label) => [...out.querySelectorAll('button')]
+      .find(b => b.textContent.includes(label));
+
+  const idle = document.createElement('div'); document.body.appendChild(idle);
+  Z.renderIssue(idle, Object.assign({}, m, {issue_framework: null}));
+  seen.idleBefore = idle.dataset.mode;
+  Z.renderIssue(idle, Object.assign({}, m, {issue_framework: {}}));
+  seen.idleAfter = idle.dataset.mode;
+
+  const reader = document.createElement('div'); document.body.appendChild(reader);
+  Z.renderIssue(reader, Object.assign({}, m, {issue_framework: {}}));
+  tab(reader, 'Intersection detail').click();
+  Z.renderIssue(reader, Object.assign({}, m, {issue_framework: {}}));
+  seen.chosenAfter = reader.dataset.mode;
+  return seen;
+}"""
+
+
+def test_the_issue_map_moves_an_idle_reader_and_keeps_a_choice():
+    from engine.api_server import render_frontend_document
+    from engine.tests.test_issue_map_page import _map
+
+    issue_map = json.loads(json.dumps(_map(), default=str))
+    server = _server(render_frontend_document())
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(executable_path=str(CHROME), args=["--no-sandbox"])
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            page.goto(f"http://127.0.0.1:{server.server_address[1]}/", wait_until="load")
+            page.wait_for_function("() => window.ZENITH && window.ZENITH.renderIssue")
+            seen = page.evaluate(AN_ISSUE_MAP_RUN, issue_map)
+            browser.close()
+    finally:
+        server.shutdown()
+    assert not errors, errors
+    assert seen["idleBefore"] == "detail"
+    assert seen["idleAfter"] == "framework", "the deliverable landed and the reader was not shown it"
+    assert seen["chosenAfter"] == "detail", "a redraw overrode the reader's choice"
