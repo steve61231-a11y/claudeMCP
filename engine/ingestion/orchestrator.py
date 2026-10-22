@@ -11,10 +11,10 @@ import uuid
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import func, text as sql_text
+from sqlalchemy import func, literal_column, text as sql_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -86,6 +86,39 @@ def resolve_social_tier() -> tuple[str, float | None, str]:
     if balance < settings.socialcrawl_min_credits:
         return "free", balance, f"SocialCrawl credits exhausted ({balance:g})"
     return "managed", balance, f"SocialCrawl active ({balance:g} credits)"
+
+
+#: Periods longer than this are collected month by month as well as whole.
+SLICE_ABOVE_DAYS = 45
+SLICE_DAYS = 30
+#: How far back GDELT's DOC API search reaches, whatever start date it is
+#: given — measured 22 Oct 2026: asked from six and from twelve months back,
+#: its earliest result was the same day three months back.
+GDELT_REACH_DAYS = 92
+
+
+def period_slices(window_start: datetime, window_end: datetime) -> list[tuple]:
+    """The period in consecutive 30-day slices, as dates — or none for a
+    period short enough that one query covers it."""
+    if (window_end - window_start).days <= SLICE_ABOVE_DAYS:
+        return []
+    slices, start = [], window_start.date()
+    last = window_end.date()
+    while start < last:
+        end = min(start + timedelta(days=SLICE_DAYS), last)
+        slices.append((start, end))
+        start = end
+    return slices
+
+
+def _not_asked(run: IngestionRun, source: str, reason: str) -> None:
+    """Record a source this run deliberately did not ask, and why — so a
+    report without it reads as a decision, not as a source with nothing to
+    say. Assigned, not mutated in place: an in-place change to a JSON column
+    is invisible to the session once the row has been flushed."""
+    stats = dict(run.stats or {})
+    stats["sources_not_asked"] = {**(stats.get("sources_not_asked") or {}), source: reason}
+    run.stats = stats
 
 
 def plan_run(
@@ -228,11 +261,24 @@ def plan_run(
 
     if settings.enable_gdelt:
         _keyword_tasks("gdelt", "news", "doc")
+        if (window_end - window_start).days > GDELT_REACH_DAYS:
+            run.stats = {**(run.stats or {}), "source_reach": {
+                **((run.stats or {}).get("source_reach") or {}),
+                "gdelt": ("GDELT's search reaches back about three months whatever "
+                          "it is asked (measured 22 Oct 2026); news before that "
+                          "comes from Google News, asked month by month")}}
 
+    # The Wayback Machine is not asked for a Search report. It returns
+    # archive captures with no publication date, and a Search report reads
+    # what was provably published in its period — so every capture was
+    # collected, paced at two seconds a request, and then excluded from the
+    # report it was collected for. Going deep into the archive is the Issue
+    # Map's job; the founder's words: "if it says one month, don't go down —
+    # those are for the issue map, that's where we use the Wayback Machine."
     if settings.enable_wayback:
-        tasks.append(
-            IngestionTask(run_id=run.id, connector="wayback", platform="news", endpoint="cdx", query=politician.name)
-        )
+        _not_asked(run, "wayback",
+                   "archive captures carry no publication date, so none can belong "
+                   "to a report period; reserved for the Issue Map")
 
     # Free social scrapers: normally opt-in, but AUTOMATICALLY activated the
     # moment the paid backbone is unavailable, so a credit-exhausted run still
@@ -286,9 +332,27 @@ def plan_run(
 
     if settings.enable_google_news:
         _keyword_tasks("google_news", "news", "rss")
+        # A long period, asked month by month. One query over a year returns
+        # Google's hundred most relevant results, and relevance is recency:
+        # measured on 22 Oct 2026 (scripts/period_probe.py), a `when:365d`
+        # query returned 97 of its 100 items from the last five months and 3
+        # from the seven before. "If it's one year, we do one year" — the
+        # founder. Each slice asks with explicit `after:` / `before:` dates,
+        # which the same probe found return only that slice's items.
+        for start, end in period_slices(window_start, window_end):
+            tasks.append(IngestionTask(
+                run_id=run.id, connector="google_news", platform="news", endpoint="rss",
+                query=f'"{politician.name}" after:{start.isoformat()} before:{end.isoformat()}'))
 
-    if settings.enable_reddit:
+    # Reddit refuses every keyless request from a cloud server ("403
+    # Blocked", measured from Railway and from GitHub), so without app
+    # credentials each task is a refusal. Not planned, and said so.
+    if settings.enable_reddit and settings.reddit_client_id and settings.reddit_client_secret:
         _keyword_tasks("reddit", "reddit", "search")
+    elif settings.enable_reddit:
+        _not_asked(run, "reddit",
+                   "no REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET — Reddit refuses keyless "
+                   "requests from cloud servers")
 
     if settings.enable_youtube:
         _keyword_tasks("youtube", "youtube", "search")
@@ -869,13 +933,28 @@ def _store_mentions(
             }
         )
 
-    stmt = pg_insert(RawMention).values(rows).on_conflict_do_nothing(
-        constraint="uq_raw_mentions_politician_platform_hash"
-    )
+    # An item already stored is left alone — unless this copy carries more
+    # of it. An article is identified by its outlet's headline
+    # (`cleaning.identity_text`), so the headline-only copy a past run
+    # stored and the full article this run fetched are one row, and the row
+    # is upgraded to the article in place rather than kept as a title.
+    insert = pg_insert(RawMention).values(rows)
+    stmt = insert.on_conflict_do_update(
+        constraint="uq_raw_mentions_politician_platform_hash",
+        set_={"text": insert.excluded.text,
+              "raw_payload": insert.excluded.raw_payload,
+              "source_url": insert.excluded.source_url},
+        where=func.length(insert.excluded.text) > func.length(RawMention.text),
+    ).returning(literal_column("(xmax = 0)").label("inserted"))
     result = session.execute(stmt)
+    # NEW rows only. `result_count` is what the learning loop ranks queries
+    # on — "new, non-duplicate mentions" — and an upgraded row is not new.
+    # Postgres marks a row this statement inserted (rather than updated)
+    # with xmax = 0.
+    inserted = sum(1 for row in result if row.inserted)
     _upsert_author_profiles(session, task.platform, cleaned)
     session.commit()
-    return result.rowcount or 0
+    return inserted
 
 
 def _store_documents(

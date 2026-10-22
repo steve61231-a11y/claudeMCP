@@ -38,6 +38,10 @@ HOST_MIN_INTERVAL = {
     # admission, and the cost of being greedy is losing the source.
     "new.kenyalaw.org": 2.0,
     "kenyalaw.org": 2.0,
+    # Resolving a Google News link to the publisher is two requests to
+    # Google per article (google_news_links.py). Unmetered as far as anyone
+    # has measured, and kept polite so it stays that way.
+    "news.google.com": 0.5,
 }
 
 _PACE_LOCK = threading.Lock()
@@ -184,6 +188,25 @@ def refusal_state() -> dict:
     with _PACE_LOCK:
         return {host: {"reason": reason, "minutes_left": round((until - now) / 60)}
                 for host, (until, reason) in _REFUSED.items() if until > now}
+
+
+def post(url: str, **kwargs) -> requests.Response:
+    """POST through the same session, pacing and refusal memory as `get`.
+    Not retried by the session's policy, which retries only GETs: a POST
+    that half-succeeded must not be sent twice."""
+    global _shared_session
+    reason = refused(url)
+    if reason:
+        raise HostRefused(f"not asked: {reason}")
+    if _shared_session is None:
+        _shared_session = build_session()
+    kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
+    host = _host_of(url)
+    _pace(host)
+    response = _shared_session.post(url, **kwargs)
+    if response.status_code == 429:
+        _widen(host)
+    return response
 
 
 def get(url: str, **kwargs) -> requests.Response:

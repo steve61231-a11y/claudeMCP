@@ -21,6 +21,7 @@ sentiment and grounding all read it) and stashed in
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlsplit
 
 from engine.config import settings
 from engine import stages
@@ -126,21 +127,43 @@ def enrich_with_article_text(mentions: list[IngestedMention], run_id=None,
         return 0
 
     max_chars = settings.article_text_max_chars
+    from engine.ingestion import google_news_links
 
     def _work(pair):
         m, url = pair
         if should_stop is not None and should_stop():
-            return m, "", None
-        body, backend = extract_body(url, max_chars)
-        return m, body, backend
+            return m, "", None, None
+        # A Google News link is Google's page, not the article: fetched as
+        # it is, it yields no body — 0 of 15 when measured. Resolve it to
+        # the publisher first; one that will not resolve stays a headline
+        # and is counted as such, rather than read as a page of Google.
+        publisher = google_news_links.decode(url)
+        if not publisher:
+            return m, "", None, None
+        body, backend = extract_body(publisher, max_chars)
+        return m, body, backend, (publisher if publisher != url else None)
 
     enriched = 0
     attempted = len(candidates)
+    decoded = undecoded = 0
     with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(candidates))) as pool:
-        for m, body, backend in pool.map(_work, candidates):
+        for m, body, backend, publisher in pool.map(_work, candidates):
+            raw = m.get("raw_payload") or {}
+            if google_news_links.is_google_news(_mention_url(m) or ""):
+                if publisher:
+                    decoded += 1
+                    # The newspaper's own address, so "open the original"
+                    # goes to the article and the outlet's domain is known.
+                    raw["google_news_url"] = raw.get("url")
+                    raw["url"] = publisher
+                    if not raw.get("outlet_domain"):
+                        host = (urlsplit(publisher).hostname or "").lower()
+                        raw["outlet_domain"] = host.removeprefix("www.") or None
+                    m["raw_payload"] = raw
+                else:
+                    undecoded += 1
             if not body:
                 continue
-            raw = m.get("raw_payload") or {}
             raw["article_text"] = body
             # Provenance: which tier got past the site's door.
             raw["article_text_backend"] = backend
@@ -153,9 +176,11 @@ def enrich_with_article_text(mentions: list[IngestedMention], run_id=None,
     # value, so a run where every body fetch was refused looked exactly like a
     # run of headline-only sources.
     if enriched < attempted:
+        google = (f"; Google News links resolved to the publisher: {decoded} of "
+                  f"{decoded + undecoded}" if decoded + undecoded else "")
         stages.current().record(
             "article_text", stages.STATUS_OK if enriched else stages.STATUS_FAILED,
             detail=f"{enriched} of {attempted} article bodies extracted; the rest "
-                   f"contribute only their headline "
+                   f"contribute only their headline{google} "
                    f"(fetch tiers: {fetch_backend.snapshot()})")
     return enriched

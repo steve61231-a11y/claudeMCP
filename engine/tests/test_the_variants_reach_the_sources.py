@@ -86,6 +86,13 @@ def only(monkeypatch):
         monkeypatch.setattr(settings, "socialcrawl_api_key", "")
         monkeypatch.setattr(settings, "newsapi_key", "")
         monkeypatch.setattr(settings, f"enable_{name}", True, raising=False)
+        # Reddit is planned only with app credentials (it refuses keyless
+        # requests from cloud servers). These tests are about the queries
+        # reaching the source, so it is given some.
+        monkeypatch.setattr(settings, "reddit_client_id", "id" if name == "reddit" else None,
+                            raising=False)
+        monkeypatch.setattr(settings, "reddit_client_secret",
+                            "secret" if name == "reddit" else None, raising=False)
     return _enable
 
 
@@ -152,20 +159,22 @@ def test_the_probes_are_among_the_queries_that_run(db_session, monkeypatch, only
         f"{source} ran no probe query at all: {recorder.asked[:4]}")
 
 
-def test_a_connector_that_is_not_a_keyword_search_is_left_alone(
+def test_the_archive_is_not_asked_for_a_period_report(
         db_session, monkeypatch, only):
-    """Wayback filters a CDX index over a fixed domain list by surname, and
-    Wikipedia looks up a title. Handing either a probe query would turn a
-    working source into an empty one — the fix has to know which sources it
-    is for."""
+    """The Wayback Machine returns archive captures with no publication
+    date, and a Search report reads only what was provably published in its
+    period — so every capture was collected, paced, and then excluded from
+    the report it was collected for. The founder: "if it says one month,
+    don't go down — that's for the issue map, that's where we use the
+    Wayback Machine." Not planned, and the run says why rather than looking
+    like a source that found nothing."""
     only("wayback")
     politician = _subject(db_session)
     run = orchestrator.plan_run(db_session, politician, *WINDOW)
-    planned = [t.query for t in db_session.query(IngestionTask)
-               .filter(IngestionTask.run_id == run.id,
-                       IngestionTask.connector == "wayback").all()]
-    assert planned == [politician.name], (
-        "wayback is being handed query variants it cannot use")
+    planned = db_session.query(IngestionTask).filter(
+        IngestionTask.run_id == run.id, IngestionTask.connector == "wayback").count()
+    assert planned == 0
+    assert "Issue Map" in run.stats["sources_not_asked"]["wayback"]
 
 
 def test_every_keyword_connector_accepts_the_query_it_is_handed():
@@ -217,3 +226,17 @@ def test_x_is_asked_more_than_its_own_three_terms(db_session, monkeypatch, only)
         probes = set(queries.DISCOVERY_PROBES) | set(queries.DISCOVERY_TIMESPAN_PROBES)
         assert any(p in " ".join(planned).lower() for p in probes), (
             f"{source} is asked more queries but still no probe")
+
+
+def test_reddit_without_credentials_is_not_asked_and_says_why(db_session, monkeypatch, only):
+    """Reddit answers every keyless request from a cloud server with "403
+    Blocked" — measured from Railway and from GitHub. Planning tasks for it
+    without credentials only manufactured refusals."""
+    only("reddit")
+    monkeypatch.setattr(settings, "reddit_client_id", None, raising=False)
+    monkeypatch.setattr(settings, "reddit_client_secret", None, raising=False)
+    politician = _subject(db_session)
+    run = orchestrator.plan_run(db_session, politician, *WINDOW)
+    assert db_session.query(IngestionTask).filter(
+        IngestionTask.run_id == run.id, IngestionTask.connector == "reddit").count() == 0
+    assert "REDDIT_CLIENT_ID" in run.stats["sources_not_asked"]["reddit"]

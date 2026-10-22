@@ -95,6 +95,36 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
     return corpus
 
 
+def _one_row_per_article(rows: list) -> list:
+    """One row per article, the fullest one.
+
+    An article used to be identified by a hash of its whole text, so the
+    headline-only copy one run stored and the full article a later run
+    fetched were two rows — counted twice in every figure, and read once as
+    nothing but a title. New rows are identified by outlet and headline and
+    upgraded in place (`cleaning.identity_text`); this folds the pairs that
+    were stored before that, keeping whichever copy carries the most text.
+    Everything that is not an article passes through untouched."""
+    from engine.processing.cleaning import normalize_text
+
+    kept: dict[tuple, object] = {}
+    order: list = []
+    for row in rows:
+        if row.source_type != "article":
+            order.append(row)
+            continue
+        title = ((row.raw_payload or {}).get("title") or (row.text or "")[:160])
+        key = (row.platform, (row.author_handle or "").lower(),
+               normalize_text(title).lower())
+        current = kept.get(key)
+        if current is None:
+            kept[key] = row
+            order.append(key)
+        elif len(row.text or "") > len(current.text or ""):
+            kept[key] = row
+    return [kept[item] if isinstance(item, tuple) else item for item in order]
+
+
 def _as_corpus_dicts(rows) -> list[dict]:
     """RawMention rows in the shape every reader downstream expects.
 
@@ -122,6 +152,11 @@ def _as_corpus_dicts(rows) -> list[dict]:
             # spike. Carried as a flag rather than the whole raw_payload,
             # which is large and has no other reader here.
             "date_estimated": bool((m.raw_payload or {}).get("date_estimated")),
+            # Whether the article itself was read, or only its headline. The
+            # report's depth rests on this more than on any count, and it was
+            # invisible: a corpus of titles looked like a corpus of articles.
+            "full_text": bool((m.raw_payload or {}).get("article_text"))
+                         or m.source_type in ("judgment", "gazette"),
             # Who published it, for local / international / social. Carried
             # explicitly — raw_payload is not, and the outlet's own domain
             # and GDELT's source country are the best evidence there is.
@@ -419,7 +454,7 @@ def run_analysis(
         _fetch_transcripts_for_top_videos(db, politician, politician_entity, window_start, window_end, ingestion_run)
 
     stages.current().lap("transcripts")
-    linked_mentions = (
+    linked_mentions = _one_row_per_article(
         db.query(RawMention)
         .join(MentionEntity, MentionEntity.mention_id == RawMention.id)
         .filter(MentionEntity.entity_id == politician_entity.id, *window_filter)

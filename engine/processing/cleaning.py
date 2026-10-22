@@ -30,6 +30,23 @@ def content_hash(author_handle: str, text: str) -> str:
     return hashlib.sha256(f"{author_handle}:{normalize_text(text).lower()}".encode()).hexdigest()
 
 
+def identity_text(mention: dict) -> str:
+    """What makes two items the same item.
+
+    For an article it is the outlet's headline, not the text: the same story
+    arrives as a headline in one run (its body could not be fetched) and as
+    the full article in the next, and hashing the text made those two rows —
+    the report then counted one article twice and read it once as nothing
+    but a title. The store upgrades the stored row in place instead
+    (`orchestrator._store_mentions`). Everything else is identified by what
+    it says, as before."""
+    if mention.get("source_type") == "article":
+        title = ((mention.get("raw_payload") or {}).get("title") or "").strip()
+        if title:
+            return title
+    return mention.get("text") or ""
+
+
 def link_density(text: str) -> float:
     words = text.split()
     if not words:
@@ -46,7 +63,7 @@ def clean_mentions(mentions: list[IngestedMention]) -> list[dict]:
     cleaned = []
     for mention in mentions:
         text = normalize_text(mention["text"])
-        h = content_hash(mention["author_handle"], text)
+        h = content_hash(mention["author_handle"], normalize_text(identity_text(mention)))
         if h in seen_hashes:
             continue
         seen_hashes.add(h)

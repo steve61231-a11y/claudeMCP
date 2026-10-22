@@ -403,6 +403,33 @@ it, `whenOf` reads written-out dates, and an analyst entry dated before
 the period ("since he was elected in 2022") is marked `before_period` and
 listed as context rather than drawn as an event of the month.
 
+**A Google News link is Google's page, not the article.** The connector
+stores `news.google.com/rss/articles/<id>`; fetched as it is, it lands on
+Google and yields no body — 0 of 15 measured (`scripts/article_probe.py`),
+so the largest news source contributed headlines only. `ingestion/
+google_news_links.py` resolves it to the publisher (the page's
+`data-n-a-sg`/`data-n-a-ts` attributes posted to `batchexecute`: 15 of 15
+resolved, 11 of 15 then gave the article); the `googlenewsdecoder` library
+resolved 0 of 15, which is why it is done here. The publisher URL replaces
+the stored link, so "open the original" goes to the article. An article is
+identified by outlet + headline (`cleaning.identity_text`), not by its whole
+text, so the headline copy one run stored is upgraded in place to the full
+article a later run fetched (`_store_mentions`, ON CONFLICT DO UPDATE when
+the new text is longer; `result_count` still counts only new rows, via
+`xmax = 0`), and `pipeline._one_row_per_article` folds pairs stored before
+that.
+
+**One year means one year.** A `when:365d` Google News query returns its
+hundred most relevant results and relevance is recency: 97 of 100 came from
+the last five months (`scripts/period_probe.py`). Periods over 45 days are
+also asked month by month with explicit `after:`/`before:` dates
+(`orchestrator.period_slices`), which return only that month's items. GDELT
+reaches back about three months whatever it is asked, and a long run says
+so in `source_reach`. The Wayback Machine is not asked for a Search report
+— its captures carry no publication date, so none can belong to a period —
+and is kept for the Issue Map; Reddit is not planned without app
+credentials. Both are recorded in `sources_not_asked`.
+
 **Never state a cause you have not checked.** This has cost an evening three
 times: an operator sent to a Railway "Networking" menu that cannot exist for
 a crashed service; a nightly backup diagnosed as holding the wrong hostname

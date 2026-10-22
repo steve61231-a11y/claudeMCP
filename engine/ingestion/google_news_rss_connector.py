@@ -48,7 +48,10 @@ class GoogleNewsRssConnector(IngestionConnector):
         # every one was clamped into it. `when:Nd` keeps them out (0 of 699)
         # at almost no cost in volume.
         days = max(1, -(-int((window_end - window_start).total_seconds()) // 86400))
-        if "when:" not in query:
+        # A month slice of a long period carries its own after:/before: dates
+        # (orchestrator.period_slices); `when:` on top would cut it back to
+        # the most recent days of the whole period.
+        if "when:" not in query and "after:" not in query and "before:" not in query:
             query = f"{query} when:{days}d"
         url = RSS_URL.format(query=quote_plus(query))
         try:

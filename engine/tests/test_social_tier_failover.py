@@ -85,6 +85,10 @@ def test_news_and_web_sources_run_in_both_tiers(db_session, monkeypatch):
     # quality and has nothing to do with the social tier, which is what
     # this test is about.
     expected = {"gdelt", "google_news", "reddit", "youtube"}
+    # Reddit is planned only with app credentials — it refuses keyless
+    # requests from cloud servers. Also not what this test is about.
+    monkeypatch.setattr(settings, "reddit_client_id", "id", raising=False)
+    monkeypatch.setattr(settings, "reddit_client_secret", "secret", raising=False)
 
     for tier in ("managed", "free"):
         monkeypatch.setattr(orchestrator, "resolve_social_tier", lambda t=tier: (t, 0.0, t))
