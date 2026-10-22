@@ -652,6 +652,10 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # report from an inventive one, and a client reading an invented name
         # is the fastest way to lose them.
         "grounding": payload.get("grounding"),
+        # How good this report is, measured: full text versus headlines,
+        # sentences a source backs, figures that match nothing, citations
+        # that point at nothing. Operator view only — see reports/quality.py.
+        "quality": payload.get("quality"),
     }
 
 
@@ -2250,6 +2254,46 @@ def model_check(x_api_key: str | None = Header(default=None)):
             "note": "the model answered a minimal JSON request"}
 
 
+@app.get("/api/admin/quality")
+def admin_quality(name: str | None = None, limit: int = 20,
+                  x_api_key: str | None = Header(default=None)):
+    """The measured quality of recent reports, newest first.
+
+    Phase 0 of docs/FOUNDATION.md: a change is better when these numbers say
+    so on the same subjects — read in full, sentences a source backs, figures
+    and citations that match nothing — not when one report looks better by
+    eye. Each row names the commit that wrote it, so a deploy can be judged
+    against the one before. Behind the API key because it names subjects.
+
+    Reads the measurement out of the stored payload in the database rather
+    than loading whole reports: twenty payloads are megabytes."""
+    _require_api_key(x_api_key)
+    from sqlalchemy import func
+
+    from engine.db.models import IntelligenceReport
+
+    db = SessionLocal()
+    try:
+        query = (db.query(IntelligenceReport.id, IntelligenceReport.generated_at,
+                          IntelligenceReport.window_start, IntelligenceReport.window_end,
+                          IntelligenceReport.payload["quality"], Politician.name)
+                 .join(Politician, Politician.id == IntelligenceReport.politician_id))
+        if name and name.strip():
+            query = query.filter(func.lower(Politician.name) == name.strip().lower())
+        rows = (query.order_by(IntelligenceReport.generated_at.desc())
+                .limit(max(1, min(int(limit), 100))).all())
+        return {"ok": True, "reports": [
+            {"report_id": str(rid), "subject": subject, "generated_at": str(at),
+             "window": [str(start), str(end)],
+             # Absent on reports written before the measurement existed —
+             # said, rather than shown as a report with nothing wrong.
+             "quality": measured or {"measured": False,
+                                     "error": "written before reports were measured"}}
+            for rid, at, start, end, measured, subject in rows]}
+    finally:
+        db.close()
+
+
 @app.get("/api/admin/source-check")
 def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default=None)):
     """Live per-source probe: runs EVERY connector against a sample query RIGHT
@@ -2447,10 +2491,9 @@ def _build_identity(commit: str) -> dict:
         out["source"] = "host environment"
 
     try:
-        stamp = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), "BUILD_STAMP")
-        with open(stamp, encoding="utf-8") as handle:
-            lines = [ln.strip() for ln in handle.read().splitlines()]
+        from engine import build as build_info
+
+        lines = build_info.read_stamp()
         baked = lines[0] if lines else ""
         out["built_at"] = lines[1] if len(lines) > 1 else None
         if baked and not out["commit"]:
@@ -2690,10 +2733,9 @@ def health():
     # anyone, including the person who wrote it, to tell whether it had been
     # deployed. Diagnosing a deploy you cannot identify is guessing, which is
     # the one thing this file keeps saying not to do.
-    commit = (os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
-              or os.environ.get("RENDER_GIT_COMMIT", "")
-              or os.environ.get("GIT_COMMIT", "")
-              or os.environ.get("SOURCE_COMMIT", ""))
+    from engine import build as build_info
+
+    commit = build_info.commit_from_environment()
     build = _build_identity(commit)
     return {
         # Serving a page is not the same as working. Without a database every

@@ -26,6 +26,7 @@ from engine.intelligence import graph, influence, narratives as narrative_module
 # `sentiment` was imported here and never called — per-mention scoring lives in
 # engine.agents.score, which is batched. A dead import reads as a live stage.
 from engine.processing import cleaning, entities, sentiment
+from engine.reports import quality
 from engine.reports.generator import generate_report_payload
 from engine.reports.sections import _bounded, enrich_report_payload
 
@@ -90,6 +91,9 @@ def _document_corpus(db: Session, politician: Politician, window_start, window_e
                 "engagement": {},
                 "language": doc.language,
                 "source_url": doc.url,
+                # A document is the page itself, so it was read in full
+                # whenever it has a body — the same flag a mention carries.
+                "full_text": bool((doc.body or "").strip()),
             }
         )
     return corpus
@@ -865,6 +869,12 @@ def run_analysis(
     payload["section_status"] = stages.current().summary()
     publish("run_health", payload["run_health"])
     publish("section_status", payload["section_status"])
+    # Measured, not believed: how much of the corpus was read in full, how
+    # much of the prose a source backs, which figures and citations match
+    # nothing. Without it "better" is an opinion — phase 0 of FOUNDATION.md.
+    # Last, so it measures the report as delivered, after every guard ran.
+    payload["quality"] = quality.assess(payload, corpus)
+    publish("quality", payload["quality"])
 
     report = IntelligenceReport(
         politician_id=politician.id,

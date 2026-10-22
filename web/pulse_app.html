@@ -4717,6 +4717,52 @@
       wrap.appendChild(card);
     }
 
+    // How good this report is — measured, not believed (reports/quality.py).
+    // Operator only: it is how a change is judged better or worse than the
+    // last, and a reader has no use for it. A measurement that failed says
+    // so rather than showing nothing, which would read as nothing wrong.
+    const q=r.quality||null;
+    if(q){
+      const qc=el('div','card op-only');
+      if(!q.measured){
+        qc.innerHTML=`<div class="lbl">Quality check</div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">Could not be measured
+          for this report: ${esc(q.error||'no reason recorded')}</div>`;
+      }else{
+        const cp=q.corpus||{}, pr=q.prose||{};
+        const backed=(pr.cited||0)+(pr.beside_quotes||0);
+        const of=(n,total)=>`${fmt(n)} of ${fmt(total)}${total?` (${Math.round(100*n/total)}%)`:''}`;
+        const tile=(k,v,bad)=>`<span class="chip"${bad?' style="border-color:var(--neg);color:var(--neg)"':''}>${esc(k)}: ${v}</span>`;
+        const ex=pr.figures_matching_nothing_examples||[];
+        qc.innerHTML=`<div class="lbl">Quality check</div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px">${esc(q.headline||'')}</div>
+          <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+            ${tile('News read in full',of(cp.articles_full_text||0,cp.articles||0))}
+            ${tile('Sentences backed by a source',of(backed,pr.sentences||0))}
+            ${tile('of which cite inline',fmt(pr.cited))}
+            ${tile('Figures matching nothing',`${fmt(pr.figures_matching_nothing)} of ${fmt(pr.figures)}`,pr.figures_matching_nothing>0)}
+            ${tile('Citations to no collected item',fmt(pr.citations_to_nothing),pr.citations_to_nothing>0)}
+            ${tile('Themes whose quotes all failed',fmt(pr.themes_without_a_quote),pr.themes_without_a_quote>0)}
+            ${tile('Sentences removed: unknown names',fmt(pr.sentences_removed_for_names))}
+            ${tile('Sentences removed: identity',fmt(pr.sentences_removed_for_identity))}
+            ${tile('Primary records',fmt(cp.primary_records))}
+            ${tile('Reactions',of(cp.reactions||0,cp.items||0))}
+            ${tile('Outlets',fmt(cp.publishers))}
+            ${tile('Dated',cp.dated_share==null?'—':`${Math.round(cp.dated_share)}%`)}
+          </div>
+          ${(pr.computed_sections||[]).length?`<div class="muted" style="font-size:12px;margin-top:6px">
+            Counted from the sources, not written by an analyst: ${esc(pr.computed_sections.join(', '))}.</div>`:''}`;
+        if(ex.length){
+          const f=foldBlock('Figures that match nothing', `${ex.length} shown`);
+          ex.forEach(x=>f.appendChild(el('div','mentr',
+            `<b style="font-size:13px">${esc(x.figure)}</b>
+             <div class="muted" style="font-size:12px;margin-top:3px">${esc(x.sentence)}</div>`)));
+          qc.appendChild(f);
+        }
+      }
+      wrap.appendChild(qc);
+    }
+
     if(r.grade&&r.grade.production===false){
       // A cheap run must never read as a client deliverable. The pill above is
       // easy to miss; this is not.

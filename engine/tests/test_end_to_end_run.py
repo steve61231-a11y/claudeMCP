@@ -267,6 +267,19 @@ def test_run_health_and_section_status_reach_the_api(db_session, scripted_model)
     assert isinstance(response["sectionStatus"]["stages"], list)
 
 
+def test_every_report_is_measured_and_the_measurement_reaches_the_page(db_session, scripted_model):
+    """Phase 0 of FOUNDATION.md: without a measurement on every report,
+    "better" is an opinion. Measured last, on the report as delivered."""
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    measured = payload["quality"]
+    assert measured["measured"] is True, measured.get("error")
+    assert measured["corpus"]["items"] > 0
+    assert measured["corpus"]["articles"] > 0
+    response = _api_shape(payload, db_session, subject.id)
+    assert response["quality"]["measured"] is True
+
+
 def test_the_api_response_is_json_serialisable(db_session, scripted_model):
     import json
 
