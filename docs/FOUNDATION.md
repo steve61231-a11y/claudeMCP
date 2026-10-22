@@ -180,7 +180,9 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   the stored reports served in place of failed runs, the Neo4j projection;
   and, with the founder's approval, the legacy `frontend/` and NestJS
   `api/` apps, `engine/main.py` and its Dockerfile, and the Neo4j modules.
-  `docker-compose.yml` now runs the same image as the host.
+  `docker-compose.yml` now runs the same image as the host. The sample
+  report shown when the engine cannot be reached is about a fictional
+  person, its links go nowhere real, and it says so above itself.
 
 ---
 

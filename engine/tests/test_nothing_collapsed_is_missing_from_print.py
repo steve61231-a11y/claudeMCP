@@ -65,11 +65,11 @@ def _printed(tmp_path: Path) -> str:
 #: opening something, and each a different mechanism from the others.
 BURIED = {
     "a collapsed section (.sect / [open])":
-        "SHA rollout is the true center",
+        "Afya Mfano rollout is the true center",
     "a folded block (details.fold)":
         "Oncology unit says approval delays",
     "a receipts body ([hidden])":
-        "Over 4.2 million members now registered",
+        "Over 420,000 members now registered",
     "a presentation that is not the open tab (.mode-off)":
         "What to act on, what it is about",
     "evidence under a current-issues card (nested fold)":

@@ -213,7 +213,7 @@ def test_the_printed_file_still_contains_the_folded_sections(tmp_path):
     # outside the element that folds — so checking only those passed happily
     # with the print override deleted and every BODY missing, which is the
     # whole defect. Assert on text that only exists inside a folded body.
-    for inside in ("SHA rollout is the true center",   # Beneath the surface
+    for inside in ("Afya Mfano rollout is the true center",   # Beneath the surface
                    "Registered, paid, walked",         # a Public Voice quote
                    "Comment sections are markedly"):   # Platform pulse
         assert inside in text, (

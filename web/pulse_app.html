@@ -3567,7 +3567,7 @@
           }
           return;
         }
-        if(!LIVE){ out.appendChild(noteCard('Demo preview','Showing a sample report. Host this file (or open Settings and point it at your API) to run this live for real.')); renderReport(out,DEMO.report,{live:false}); }
+        if(!LIVE){ renderReport(out,DEMO.report,{live:false}); out.prepend(noteCard('Sample','The analysis engine could not be reached, so nothing was searched. Below is a sample report about a fictional person, to show what a report contains. Try again in a minute; if you are setting this up, point Settings at the engine.')); }
         else out.appendChild(el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>Report call failed: ${esc(e.message||e)}</span></div>
           <div class="muted" style="font-size:13px;margin-top:10px">${httpCause(e)}</div>`));
       } finally{ btn.disabled=false; }
@@ -5016,7 +5016,7 @@
         if(done.ok&&done.issue_map)renderIssue(out,done.issue_map);
         else out.appendChild(errCard(done.error||'Issue map failed.'));
       }catch(e){msg.textContent='';
-        if(!LIVE){out.appendChild(noteCard('Demo preview','Sample intersection. Host this / connect your API to run live.'));renderIssue(out,DEMO.issue);}
+        if(!LIVE){renderIssue(out,DEMO.issue);out.prepend(noteCard('Sample','The analysis engine could not be reached, so nothing was searched. Below is a sample map about a fictional person.'));}
         else if(e.jobLost || e.stillRunning){
           // The engine restarted mid-run. The map is stored as soon as it
           // finishes, so ask for it by subject rather than by a job id that
@@ -5882,16 +5882,16 @@
 
   /* ---------------- DEMO DATA (preview only) ---------------- */
   const DEMO={
-    report:{name:'William Ruto',window:'2025-08-01 – 2026-07-13',generatedAt:new Date().toISOString(),
+    report:{name:'Amani Mfano (fictional)',window:'2025-08-01 – 2026-07-13',generatedAt:new Date().toISOString(),
       freshness:{mentionsLast24h:37,newestMentionAt:new Date().toISOString()},
-      executiveBrief:'Coverage this window is dominated by the health financing transition (SHA) and new taxation measures. Official messaging frames both as reform; grassroots reaction is sharply cost-of-living framed. Sentiment is net-negative but concentrated among a small set of high-reach accounts rather than broad-based.',
+      executiveBrief:'Coverage this window is dominated by the health financing transition (Afya Mfano) and new taxation measures. Official messaging frames both as reform; grassroots reaction is sharply cost-of-living framed. Sentiment is net-negative but concentrated among a small set of high-reach accounts rather than broad-based.',
       deepInsights:{the_one_thing:'The loudest opposition is narrow, not wide — a handful of high-follower accounts generate most negative volume, while ordinary mentions are more ambivalent than hostile.',
-        insights:[{headline:'SHA rollout is the true center of gravity, not taxation',reasoning:'SHA appears in 2.3× more mentions than tax and drives the sharpest sentiment swings across news and Reddit alike.',confidence:'high',implication:'Message discipline on SHA moves the needle more than defending the budget.'},
+        insights:[{headline:'Afya Mfano rollout is the true center of gravity, not taxation',reasoning:'Afya Mfano appears in 2.3× more mentions than tax and drives the sharpest sentiment swings across news and Reddit alike.',confidence:'high',implication:'Message discipline on Afya Mfano moves the needle more than defending the budget.'},
           {headline:'Amplification is concentrated',reasoning:'~70% of negative reach traces to under a dozen accounts reposting the same framing.',confidence:'medium',implication:'A few targeted rebuttals reach most of the critical audience.'}]},
       sentiment:{positive:31,neutral:34,negative:35,totalAnalyzed:612},
       coverage:{mentions_analyzed:612,mentions_total:612,chunks:5,complete:true},
-      volume:{total:612,platforms:5,topMentions:[{platform:'news',author:'nation.africa',text:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'},{platform:'reddit',author:'r/Kenya',text:'The SHA transition has been rough for anyone with a chronic condition — clinics still asking for cash.'},{platform:'youtube',author:'Citizen TV',text:'Ruto: "No Kenyan will be turned away" — full address on health financing.'}]},
-      narratives:[{label:'SHA rollout pain',mentions:214,description:'Facilities allegedly still charging; delays in registration.'},{label:'Taxation & cost of living',mentions:151,description:'New levies framed against household budgets.'},{label:'Reform defense',mentions:98,description:'Official framing of long-term gains.'}],
+      volume:{total:612,platforms:5,topMentions:[{platform:'news',author:'Mfano Daily',text:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'},{platform:'reddit',author:'r/MfanoCounty',text:'The Afya Mfano transition has been rough for anyone with a chronic condition — clinics still asking for cash.'},{platform:'youtube',author:'Mfano TV',text:'Mfano: "No resident will be turned away" — full address on health financing.'}]},
+      narratives:[{label:'Afya Mfano rollout pain',mentions:214,description:'Facilities allegedly still charging; delays in registration.'},{label:'Taxation & cost of living',mentions:151,description:'New levies framed against household budgets.'},{label:'Reform defense',mentions:98,description:'Official framing of long-term gains.'}],
       // --- the dashboard's own data -------------------------------------
       // Every key below was missing, so the demo — which is the thing a
       // prospective client is actually shown — opened on a page of "no
@@ -5908,15 +5908,15 @@
       sentimentScoring:{eligible:612,scored:612},
       sentiment_framework:{
         summary_of_subject:{
-          who_they_are:'Head of state, two years into a term defined by two reforms the public experiences at the till: health financing and taxation.',
-          position:'President of Kenya',subject_type:'Head of state',
+          who_they_are:'A fictional county governor, invented for this sample: two years into a term defined by two reforms residents experience at the till, health financing and county levies.',
+          position:'Governor of Mfano County, a fictional county',subject_type:'County governor',
           executive_summary:'The window divides cleanly. Taxation led the conversation for the first two reporting periods and has since receded; health financing has taken its place and is still climbing. The two are not read separately by the public — the levy is deducted reliably and the service it buys is described as unreliable, which lets a service complaint be voiced as a tax complaint and makes the pair harder to answer than either alone.\n\nSentiment is net-negative but shallow. The negative share grew from 23% to 45% across the three periods, and almost all of that growth traces to a single reproducible claim: that registered members are still asked for cash at the point of care. It is specific, it is checkable, and no source in the corpus names a directive behind it — which is why it has outlasted three rebuttals.\n\nThe critical voice is narrow. Two accounts carry just over half of the measurable engagement, and the ambivalent middle is larger than either camp: a third of all scored mentions withhold judgement and distinguish the design of the scheme from its rollout. That is the audience this still turns on.'},
         sentiment_score:{score:47.3,change:-6.1,previous_score:53.4,direction:'declining',
           definition:'The share of scored mentions that are positive, plus half the neutral share — so a corpus that is entirely neutral scores 50, not 0.',
           reading:['612 of 612 collected mentions were scored, so the number rests on the whole corpus rather than a readable subset of it.',
                    'Positive 190, neutral 208, negative 214. 190 + (208 / 2) = 294, and 294 / 612 = 48.0 — the headline 47.3 is the same arithmetic over the scored window rather than the collected one.',
                    'It fell 6.1 points on the previous period. Every point of that fall is in the third reporting period, and the whole of it is health financing: taxation sentiment improved over the same weeks.',
-                   'What it is not: a measure of approval. It counts how coverage and conversation lean, weighted by nothing — a single national front page and a single forum comment count the same. Reach is in the Drivers section, deliberately kept separate.']},
+                   'What it is not: a measure of approval. It counts how coverage and conversation lean, weighted by nothing — a single front page and a single forum comment count the same. Reach is in the Drivers section, deliberately kept separate.']},
         overall_mentions:{total:612,difference_pct:18.4,
           segmentation:[{label:'National press',count:187,share:30.6},
                         {label:'Social platforms',count:149,share:24.3},
@@ -5924,32 +5924,32 @@
                         {label:'Broadcast',count:96,share:15.7},
                         {label:'Other',count:37,share:6.0}],
           sources_detail:[
-            {source:'nation.africa',outlet_type:'national_press',mentions:187,scored:187,positive:41,neutral:96,negative:50,unscored:0,lean:'neutral',
-             top_mentions:[{author:'nation.africa',platform:'news',posted_at:'2026-07-09',excerpt:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.',url:'https://nation.africa/sha-90-days',sentiment:'neutral',engagement:1840}]},
-            {source:'r/Kenya',outlet_type:'community_forum',mentions:143,scored:143,positive:24,neutral:41,negative:78,unscored:0,lean:'negative',
-             top_mentions:[{author:'r/Kenya',platform:'reddit',posted_at:'2026-06-02',excerpt:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.',url:'https://reddit.com/r/Kenya/sha',sentiment:'negative',engagement:2210}]},
-            {source:'Citizen TV',outlet_type:'broadcast',mentions:96,scored:96,positive:22,neutral:38,negative:36,unscored:0,lean:'neutral',
-             top_mentions:[{author:'Citizen TV',platform:'youtube',posted_at:'2026-07-09',excerpt:'Ruto: "No Kenyan will be turned away" — full address on health financing.',url:'https://youtube.com/watch?v=sha',sentiment:'neutral',engagement:3100}]},
-            {source:'standardmedia.co.ke',outlet_type:'national_press',mentions:68,scored:68,positive:19,neutral:29,negative:20,unscored:0,lean:'neutral',
-             top_mentions:[{author:'standardmedia.co.ke',platform:'news',posted_at:'2026-06-14',excerpt:'Counties report uneven SHA readiness as registration outpaces facility capacity.',url:'https://standardmedia.co.ke/sha-counties',sentiment:'neutral',engagement:640}]},
-            {source:'patient_voice_ke',outlet_type:'social',mentions:29,scored:29,positive:2,neutral:5,negative:22,unscored:0,lean:'negative',
-             top_mentions:[{author:'patient_voice_ke',platform:'twitter',posted_at:'2026-06-28',excerpt:'Chronic illness patients are the ones paying for this experiment.',url:'',sentiment:'negative',engagement:910}]},
-            {source:'sha_kenya',outlet_type:'social',mentions:37,scored:35,positive:30,neutral:5,negative:0,unscored:2,lean:'positive',
-             top_mentions:[{author:'sha_kenya',platform:'twitter',posted_at:'2026-07-10',excerpt:'Over 4.2 million members now registered. Cover does not expire.',url:'',sentiment:'positive',engagement:180}]}]},
+            {source:'Mfano Daily',outlet_type:'national_press',mentions:187,scored:187,positive:41,neutral:96,negative:50,unscored:0,lean:'neutral',
+             top_mentions:[{author:'Mfano Daily',platform:'news',posted_at:'2026-07-09',excerpt:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.',url:'https://mfanodaily.example/afya-90-days',sentiment:'neutral',engagement:1840}]},
+            {source:'r/MfanoCounty',outlet_type:'community_forum',mentions:143,scored:143,positive:24,neutral:41,negative:78,unscored:0,lean:'negative',
+             top_mentions:[{author:'r/MfanoCounty',platform:'reddit',posted_at:'2026-06-02',excerpt:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.',url:'https://forum.example/r/MfanoCounty/afya',sentiment:'negative',engagement:2210}]},
+            {source:'Mfano TV',outlet_type:'broadcast',mentions:96,scored:96,positive:22,neutral:38,negative:36,unscored:0,lean:'neutral',
+             top_mentions:[{author:'Mfano TV',platform:'youtube',posted_at:'2026-07-09',excerpt:'Mfano: "No resident will be turned away" — full address on health financing.',url:'https://video.example/watch?v=afya',sentiment:'neutral',engagement:3100}]},
+            {source:'Mfano Tribune',outlet_type:'national_press',mentions:68,scored:68,positive:19,neutral:29,negative:20,unscored:0,lean:'neutral',
+             top_mentions:[{author:'Mfano Tribune',platform:'news',posted_at:'2026-06-14',excerpt:'Wards report uneven Afya Mfano readiness as registration outpaces facility capacity.',url:'https://mfanotribune.example/afya-wards',sentiment:'neutral',engagement:640}]},
+            {source:'patient_voice_mfano',outlet_type:'social',mentions:29,scored:29,positive:2,neutral:5,negative:22,unscored:0,lean:'negative',
+             top_mentions:[{author:'patient_voice_mfano',platform:'twitter',posted_at:'2026-06-28',excerpt:'Chronic illness patients are the ones paying for this experiment.',url:'',sentiment:'negative',engagement:910}]},
+            {source:'afya_mfano',outlet_type:'social',mentions:37,scored:35,positive:30,neutral:5,negative:0,unscored:2,lean:'positive',
+             top_mentions:[{author:'afya_mfano',platform:'twitter',posted_at:'2026-07-10',excerpt:'Over 420,000 members now registered. Cover does not expire.',url:'',sentiment:'positive',engagement:180}]}]},
         sentiment:{positive:190,neutral:208,negative:214},
         current_issues:{
           potential_levers:[
             {issue:'The ambivalent middle is the largest group',description:'A third of scored mentions explicitly separate the design of the scheme from its rollout. They are arguing about delivery, not principle, which is a far narrower thing to answer.',mentions:208,strength:121.4,growth:0.06,
              evidence:{quotes:[{ref:'c1d2e3f4',text:'The idea is fine. The execution is what will decide this.'}]}},
             {issue:'People now covered who were not before',description:'The supportive case rests on a concrete, checkable class of beneficiary rather than on the reform in the abstract — and it is barely being made.',mentions:61,strength:44.8,growth:0.12,
-             evidence:{quotes:[{ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'}]}}],
+             evidence:{quotes:[{ref:'a1b2c3d4',text:'My mother was never covered by the old clinic card. Under Afya Mfano she is. That is the part nobody wants to talk about.'}]}}],
           potential_barriers:[
-            {issue:'Cash demanded at the point of care',description:'The single most repeated claim in the corpus, reported across counties and platforms, and unanswered by any named directive. It has survived three rebuttals because each one argued the policy rather than the counter.',mentions:214,strength:186.2,growth:0.68,
+            {issue:'Cash demanded at the point of care',description:'The single most repeated claim in the corpus, reported across wards and platforms, and unanswered by any named directive. It has survived three rebuttals because each one argued the policy rather than the counter.',mentions:214,strength:186.2,growth:0.68,
              evidence:{how_it_unfolded:'Scattered registration complaints consolidate around one reproducible claim, then advocacy groups begin collating cases and the framing moves from administrative teething to systemic failure.',
-               driven_by:['r/Kenya','patient_voice_ke'],
+               driven_by:['r/MfanoCounty','patient_voice_mfano'],
                supporter_framing:'Transitional friction in a scheme that covers more people than the one it replaced.',
                critic_framing:'A levy collected reliably that delivers unreliably, with the sickest patients absorbing the gap.',
-               quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},
+               quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'},
                        {ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}},
             {issue:'The levy reads as a tax',description:'Deduction is visible monthly and the benefit is not, so a service failure is voiced in cost-of-living terms — which attaches health financing to the budget argument it would otherwise be separate from.',mentions:151,strength:98.1,growth:-0.14,
              evidence:{quotes:[{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}}]},
@@ -5962,55 +5962,55 @@
         emergent_issues:{window_hours:72,engagement_threshold:100,count:6,
           window_engagement:15110,other_item_count:0,other_themes:[],
           themes:[
-            {label:'SHA rollout pain',labelled_by:'narrative',count:3,engagement:8950,share:59.2,
+            {label:'Afya Mfano rollout pain',labelled_by:'narrative',count:3,engagement:8950,share:59.2,
              platforms:['news'],shared_terms:[],
              items:[
-               {headline:'Patient advocacy groups publish a county-by-county list of facilities turning away registered members',platform:'news',engagement:4120,posted_at:'2026-07-11T09:00:00',url:'https://nation.africa/sha-county-list'},
-               {headline:'Two counties confirm facilities were asking for cash, blame a reimbursement backlog',platform:'news',engagement:2870,posted_at:'2026-07-12T09:00:00',url:'https://standardmedia.co.ke/sha-backlog'},
-               {headline:'Health ministry says a circular on point-of-care charges is "being finalised"',platform:'news',engagement:1960,posted_at:'2026-07-12T09:00:00',url:'https://nation.africa/sha-circular'}]},
+               {headline:'Patient advocacy groups publish a ward-by-ward list of facilities turning away registered members',platform:'news',engagement:4120,posted_at:'2026-07-11T09:00:00',url:'https://mfanodaily.example/afya-ward-list'},
+               {headline:'Two wards confirm facilities were asking for cash, blame a reimbursement backlog',platform:'news',engagement:2870,posted_at:'2026-07-12T09:00:00',url:'https://mfanotribune.example/afya-backlog'},
+               {headline:'County health department says a circular on point-of-care charges is "being finalised"',platform:'news',engagement:1960,posted_at:'2026-07-12T09:00:00',url:'https://mfanodaily.example/afya-circular'}]},
             {label:'Approval',labelled_by:'derived',count:2,engagement:5520,share:36.5,
              platforms:['twitter'],shared_terms:['approval'],
              items:[
                {headline:'Chronic illness patients describe rationing medication while waiting on approvals',platform:'twitter',engagement:3340,posted_at:'2026-07-11T09:00:00',url:''},
                {headline:'Oncology unit says approval delays have pushed treatment dates by weeks',platform:'twitter',engagement:2180,posted_at:'2026-07-13T09:00:00',url:''}]},
-            {label:'Registration passes 4.2 million members',labelled_by:'derived',count:1,engagement:640,share:4.2,
+            {label:'Registration passes 420,000 members',labelled_by:'derived',count:1,engagement:640,share:4.2,
              platforms:['twitter'],shared_terms:[],
              items:[
-               {headline:'Registration passes 4.2 million members, authority says cover does not expire',platform:'twitter',engagement:640,posted_at:'2026-07-12T09:00:00',url:''}]}],
+               {headline:'Registration passes 420,000 members, authority says cover does not expire',platform:'twitter',engagement:640,posted_at:'2026-07-12T09:00:00',url:''}]}],
           items:[
-            {headline:'Patient advocacy groups publish a county-by-county list of facilities turning away registered members',platform:'news',engagement:4120,posted_at:'2026-07-11T09:00:00',url:'https://nation.africa/sha-county-list'},
+            {headline:'Patient advocacy groups publish a ward-by-ward list of facilities turning away registered members',platform:'news',engagement:4120,posted_at:'2026-07-11T09:00:00',url:'https://mfanodaily.example/afya-ward-list'},
             {headline:'Chronic illness patients describe rationing medication while waiting on approvals',platform:'twitter',engagement:3340,posted_at:'2026-07-11T09:00:00',url:''},
-            {headline:'Two counties confirm facilities were asking for cash, blame a reimbursement backlog',platform:'news',engagement:2870,posted_at:'2026-07-12T09:00:00',url:'https://standardmedia.co.ke/sha-backlog'},
+            {headline:'Two wards confirm facilities were asking for cash, blame a reimbursement backlog',platform:'news',engagement:2870,posted_at:'2026-07-12T09:00:00',url:'https://mfanotribune.example/afya-backlog'},
             {headline:'Oncology unit says approval delays have pushed treatment dates by weeks',platform:'twitter',engagement:2180,posted_at:'2026-07-13T09:00:00',url:''},
-            {headline:'Health ministry says a circular on point-of-care charges is "being finalised"',platform:'news',engagement:1960,posted_at:'2026-07-12T09:00:00',url:'https://nation.africa/sha-circular'},
-            {headline:'Registration passes 4.2 million members, authority says cover does not expire',platform:'twitter',engagement:640,posted_at:'2026-07-12T09:00:00',url:''}],
+            {headline:'County health department says a circular on point-of-care charges is "being finalised"',platform:'news',engagement:1960,posted_at:'2026-07-12T09:00:00',url:'https://mfanodaily.example/afya-circular'},
+            {headline:'Registration passes 420,000 members, authority says cover does not expire',platform:'twitter',engagement:640,posted_at:'2026-07-12T09:00:00',url:''}],
           note:'Qualified on engagement within the window, not on volume — a single item carrying more reaction than a week of routine coverage is the thing worth knowing about today.'},
         strategic_implications:{
           issue:'Health financing: the levy is collected reliably and the service is described as unreliable',
           outline:'Taxation has receded and health financing has replaced it as the dominant storyline, still climbing in the latest period. The argument has narrowed to one reproducible claim about the point of care, which is both the problem and the opportunity: a narrow claim can be answered with a document, where a broad mood cannot.',
-          the_one_thing:'The evidence strongly suggests this is now a delivery argument rather than a policy one — and the critical voice is two accounts and one claim, not a national mood.',
+          the_one_thing:'The evidence strongly suggests this is now a delivery argument rather than a policy one — and the critical voice is two accounts and one claim, not a county-wide mood.',
           trajectory:'escalating',status:'Active, with a stated 90-day commitment running',
           key_dates:[
             {date:'2026-05-18',event:'First reproducible account of a registered member being asked for cash, on a community forum.',type:'origin',sources:1},
             {date:'2026-06-02',event:'Advocacy groups begin collating cases; the claim moves from individual anecdote into organised reporting and crosses into mainstream coverage.',type:'escalation',sources:4},
-            {date:'2026-07-09',event:'The President addresses the rollout directly and commits to fixes within 90 days. Largest single-day volume in the window.',type:'response',sources:11},
+            {date:'2026-07-09',event:'The Governor addresses the rollout directly and commits to fixes within 90 days. Largest single-day volume in the window.',type:'response',sources:11},
             {date:'2026-10-07',event:'The 90-day commitment falls due. Nothing in the corpus sets out what will be published to show it was met.',type:'deadline',sources:0}],
-          key_people:[{name:'Ministry of Health',role:'Implementer',co_mentions:113},
+          key_people:[{name:'County health department',role:'Implementer',co_mentions:113},
                       {name:'Patient advocates',role:'Claimant',co_mentions:89},
-                      {name:'SHA Authority',role:'Operator',co_mentions:71},
-                      {name:'County governments',role:'Delivery',co_mentions:29}],
-          key_amplifiers:[{handle:'r/Kenya',platform:'reddit'},{handle:'nation.africa',platform:'news'},
-                          {handle:'Citizen TV',platform:'youtube'},{handle:'patient_voice_ke',platform:'twitter'}],
+                      {name:'Afya Mfano Board',role:'Operator',co_mentions:71},
+                      {name:'Ward administrators',role:'Delivery',co_mentions:29}],
+          key_amplifiers:[{handle:'r/MfanoCounty',platform:'reddit'},{handle:'Mfano Daily',platform:'news'},
+                          {handle:'Mfano TV',platform:'youtube'},{handle:'patient_voice_mfano',platform:'twitter'}],
           recommended_actions:[
-            'Publish facility-level SHA readiness by county, weekly.',
+            'Publish facility-level Afya Mfano readiness by ward, weekly.',
             'Answer the cash-at-the-counter claim with a named directive.',
             'Separate the levy from the rollout in all messaging.'],
-          evidence:{how_it_unfolded:'A registration complaint becomes a point-of-care complaint, which becomes a collated list, which becomes a national story. Each step narrowed the claim and made it harder to answer in general terms.',
-            driven_by:['r/Kenya','patient_voice_ke','nation.africa'],
+          evidence:{how_it_unfolded:'A registration complaint becomes a point-of-care complaint, which becomes a collated list, which becomes a county-wide story. Each step narrowed the claim and made it harder to answer in general terms.',
+            driven_by:['r/MfanoCounty','patient_voice_mfano','Mfano Daily'],
             supporter_framing:'Year-one friction in a scheme that covers more people than the one it replaced; fixable, and worth fixing.',
             critic_framing:'A levy collected reliably that delivers unreliably, with the sickest patients absorbing the gap.',
-            quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},
-                    {ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'},
+            quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'},
+                    {ref:'a1b2c3d4',text:'My mother was never covered by the old clinic card. Under Afya Mfano she is. That is the part nobody wants to talk about.'},
                     {ref:'c1d2e3f4',text:'The idea is fine. The execution is what will decide this.'}]}}},
       periodSeries:{
         labels:['01 Aug-15 Nov','15 Nov-01 Apr','01 Apr-13 Jul'],buckets:3,
@@ -6019,24 +6019,24 @@
           {label:'15 Nov-01 Apr',values:{positive:62,neutral:68,negative:64},scored:194,mentions:194},
           {label:'01 Apr-13 Jul',values:{positive:56,neutral:74,negative:108},scored:238,mentions:238}],
         personalities:{
-          keys:['Ministry of Health','Patient advocates','SHA Authority','Opposition','County governments'],
+          keys:['County health department','Patient advocates','Afya Mfano Board','Opposition','Ward administrators'],
           periods:[
-            {label:'01 Aug-15 Nov',values:{'Ministry of Health':34,'Patient advocates':9,'SHA Authority':21,'Opposition':18,'County governments':12}},
-            {label:'15 Nov-01 Apr',values:{'Ministry of Health':41,'Patient advocates':23,'SHA Authority':26,'Opposition':22,'County governments':10}},
-            {label:'01 Apr-13 Jul',values:{'Ministry of Health':38,'Patient advocates':57,'SHA Authority':24,'Opposition':31,'County governments':7}}]},
+            {label:'01 Aug-15 Nov',values:{'County health department':34,'Patient advocates':9,'Afya Mfano Board':21,'Opposition':18,'Ward administrators':12}},
+            {label:'15 Nov-01 Apr',values:{'County health department':41,'Patient advocates':23,'Afya Mfano Board':26,'Opposition':22,'Ward administrators':10}},
+            {label:'01 Apr-13 Jul',values:{'County health department':38,'Patient advocates':57,'Afya Mfano Board':24,'Opposition':31,'Ward administrators':7}}]},
         themes:{
-          keys:['SHA rollout pain','Taxation & cost of living','Reform defense'],
+          keys:['Afya Mfano rollout pain','Taxation & cost of living','Reform defense'],
           periods:[
-            {label:'01 Aug-15 Nov',values:{'SHA rollout pain':48,'Taxation & cost of living':61,'Reform defense':30}},
-            {label:'15 Nov-01 Apr',values:{'SHA rollout pain':62,'Taxation & cost of living':52,'Reform defense':34}},
-            {label:'01 Apr-13 Jul',values:{'SHA rollout pain':104,'Taxation & cost of living':38,'Reform defense':34}}]}},
+            {label:'01 Aug-15 Nov',values:{'Afya Mfano rollout pain':48,'Taxation & cost of living':61,'Reform defense':30}},
+            {label:'15 Nov-01 Apr',values:{'Afya Mfano rollout pain':62,'Taxation & cost of living':52,'Reform defense':34}},
+            {label:'01 Apr-13 Jul',values:{'Afya Mfano rollout pain':104,'Taxation & cost of living':38,'Reform defense':34}}]}},
       influence:[
-        {rank:1,who:'r/Kenya',platform:'reddit',score:84.2,sentiment:-18.4,impact:27.4,band:'high',coverage_share:23.4,engagement_share:31.4,note:'143 mention(s)'},
-        {rank:2,who:'nation.africa',platform:'news',score:79.6,sentiment:-3.1,impact:24.4,band:'high',coverage_share:30.6,engagement_share:18.2,note:'187 mention(s)'},
-        {rank:3,who:'Citizen TV',platform:'youtube',score:61.3,sentiment:-9.7,impact:18.9,band:'medium',coverage_share:15.7,engagement_share:22.1,note:'96 mention(s)'},
-        {rank:4,who:'standardmedia.co.ke',platform:'news',score:38.1,sentiment:-1.2,impact:9.8,band:'medium',coverage_share:11.2,engagement_share:8.4,note:'68 mention(s)'},
-        {rank:5,who:'patient_voice_ke',platform:'twitter',score:24.9,sentiment:-14.0,impact:7.1,band:'medium',coverage_share:4.8,engagement_share:9.3,note:'29 mention(s)'},
-        {rank:6,who:'sha_kenya',platform:'twitter',score:19.4,sentiment:6.2,impact:5.2,band:'low',coverage_share:6.1,engagement_share:4.2,note:'37 mention(s)'}],
+        {rank:1,who:'r/MfanoCounty',platform:'reddit',score:84.2,sentiment:-18.4,impact:27.4,band:'high',coverage_share:23.4,engagement_share:31.4,note:'143 mention(s)'},
+        {rank:2,who:'Mfano Daily',platform:'news',score:79.6,sentiment:-3.1,impact:24.4,band:'high',coverage_share:30.6,engagement_share:18.2,note:'187 mention(s)'},
+        {rank:3,who:'Mfano TV',platform:'youtube',score:61.3,sentiment:-9.7,impact:18.9,band:'medium',coverage_share:15.7,engagement_share:22.1,note:'96 mention(s)'},
+        {rank:4,who:'Mfano Tribune',platform:'news',score:38.1,sentiment:-1.2,impact:9.8,band:'medium',coverage_share:11.2,engagement_share:8.4,note:'68 mention(s)'},
+        {rank:5,who:'patient_voice_mfano',platform:'twitter',score:24.9,sentiment:-14.0,impact:7.1,band:'medium',coverage_share:4.8,engagement_share:9.3,note:'29 mention(s)'},
+        {rank:6,who:'afya_mfano',platform:'twitter',score:19.4,sentiment:6.2,impact:5.2,band:'low',coverage_share:6.1,engagement_share:4.2,note:'37 mention(s)'}],
       // The worklist in the shape the engine now produces: each action
       // matched to the narrative it is about, so the list can be ordered by
       // the size of the thing being addressed; a state rather than an
@@ -6046,9 +6046,9 @@
         note:'Ordered by the share of the conversation each action addresses. There is no completion figure: a status and a movement in the underlying issue are the two things that can be checked.',
         items:[
           {action:'Answer the cash-at-the-counter claim with a named directive',kind:'defend',posture:'Answer',
-           issue:'SHA rollout pain',issue_share:46.2,issue_mentions:214,status:'carried',runs:3,
+           issue:'Afya Mfano rollout pain',issue_share:46.2,issue_mentions:214,status:'carried',runs:3,
            movement:11.2,movement_basis:'measured',movement_direction:'growing',
-           why:'The single most repeated claim in the corpus, reported across counties and platforms, and unanswered by any named directive. It has survived three rebuttals because each one argued the policy rather than the counter. Registered members describe being asked for cash at the point of care, which is specific and checkable.'},
+           why:'The single most repeated claim in the corpus, reported across wards and platforms, and unanswered by any named directive. It has survived three rebuttals because each one argued the policy rather than the counter. Registered members describe being asked for cash at the point of care, which is specific and checkable.'},
           {action:'Separate the levy from the rollout in all messaging',kind:'defend',posture:'Answer',
            issue:'Taxation & cost of living',issue_share:32.6,issue_mentions:151,status:'carried',runs:2,
            movement:-9.9,movement_basis:'measured',movement_direction:'shrinking',
@@ -6057,10 +6057,10 @@
            issue:'Reform defense',issue_share:21.2,issue_mentions:98,status:'new',runs:1,
            movement:-1.3,movement_basis:'measured',movement_direction:'steady',
            why:'A third of scored mentions explicitly separate the design of the scheme from its rollout. They are arguing about delivery rather than principle, which is a far narrower thing to answer, and they are larger than either camp.'},
-          {action:'Publish facility-level readiness by county, weekly',kind:'advance',posture:'Act on',
+          {action:'Publish facility-level readiness by ward, weekly',kind:'advance',posture:'Act on',
            issue:null,issue_share:null,issue_mentions:null,status:'new',runs:1,
            movement:null,movement_basis:'no_issue_matched',
-           why:'The dominant critical claim is facility-level and no source in the corpus names a circular or directive behind it. A weekly county list converts an unanswerable mood into a checkable record.'}],
+           why:'The dominant critical claim is facility-level and no source in the corpus names a circular or directive behind it. A weekly ward list converts an unanswerable mood into a checkable record.'}],
         deferred:[
           {action:'Name the people now covered who were not before',issue:'Reform defense',issue_share:21.2},
           {action:'Brief oncology and chronic-care units ahead of the 90-day date',issue:null,issue_share:null}]},
@@ -6079,58 +6079,58 @@
             gdelt:'14 queries remembered; 2 repeated because they returned material; 2 never asked before; 3 set aside as answered (asked again after 6 runs)',
             google_news:'31 queries remembered; 4 repeated because they returned material; 5 never asked before; 9 set aside as answered (asked again after 6 runs)'}}},
       publicVoice:{
-        supportive:[{theme:'Universal cover is worth the disruption',summary:'A minority argue the transition pain is the price of ending NHIF\u2019s exclusions, and point to people now covered who were not before.',quotes:[{ref:'a1b2c3d4',text:'My mother was never covered under NHIF. Under SHA she is. That is the part nobody wants to talk about.'},{ref:'e5f6a7b8',text:'Every reform hurts in year one. Judge it in year three.'}]}],
-        critical:[{theme:'Facilities still demand cash',summary:'The dominant critical theme: registration is done, the card exists, and the clinic still asks for money at the counter \u2014 reported across counties and platforms.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},
-          {theme:'Deductions without service',summary:'Salaried workers describe the levy leaving their payslip while the service it buys is unavailable, which reframes SHA as a tax rather than a benefit.',quotes:[{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}],
+        supportive:[{theme:'Universal cover is worth the disruption',summary:'A minority argue the transition pain is the price of ending the old clinic card\u2019s exclusions, and point to people now covered who were not before.',quotes:[{ref:'a1b2c3d4',text:'My mother was never covered by the old clinic card. Under Afya Mfano she is. That is the part nobody wants to talk about.'},{ref:'e5f6a7b8',text:'Every reform hurts in year one. Judge it in year three.'}]}],
+        critical:[{theme:'Facilities still demand cash',summary:'The dominant critical theme: registration is done, the card exists, and the clinic still asks for money at the counter \u2014 reported across wards and platforms.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'},{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},
+          {theme:'Deductions without service',summary:'Salaried workers describe the levy leaving their payslip while the service it buys is unavailable, which reframes Afya Mfano as a tax rather than a benefit.',quotes:[{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}]}],
         neutral:[{theme:'Wait and see',summary:'A large ambivalent middle withholds judgement, distinguishing the design of the scheme from its rollout.',quotes:[{ref:'c1d2e3f4',text:'The idea is fine. The execution is what will decide this.'}]}]},
       platformPulse:[
-        {platform:'reddit',mention_count:143,tone:'Long, specific, first-person accounts \u2014 the most detailed evidence in the corpus. Sceptical but not partisan; commenters correct each other on facts.',themes:['registration failures','chronic illness cover','comparison to NHIF'],notable_voices:['r/Kenya'],quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'}]},
-        {platform:'news',mention_count:187,tone:'Official-source led. Announcements and rebuttals dominate; facility-level reporting is thinner than the volume suggests.',themes:['90-day fix promise','parliamentary questions'],notable_voices:['nation.africa','standardmedia.co.ke'],quotes:[{ref:'b1c2d3e4',text:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'}]},
-        {platform:'youtube',mention_count:96,tone:'Comment sections are markedly angrier than the videos they sit under \u2014 broadcast framing is neutral, audience reaction is not.',themes:['cost of living','trust in delivery'],notable_voices:['Citizen TV'],quotes:[{ref:'f5a6b7c8',text:'Ruto: "No Kenyan will be turned away" \u2014 full address on health financing.'}]}],
+        {platform:'reddit',mention_count:143,tone:'Long, specific, first-person accounts \u2014 the most detailed evidence in the corpus. Sceptical but not partisan; commenters correct each other on facts.',themes:['registration failures','chronic illness cover','comparison to the old clinic card'],notable_voices:['r/MfanoCounty'],quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'}]},
+        {platform:'news',mention_count:187,tone:'Official-source led. Announcements and rebuttals dominate; facility-level reporting is thinner than the volume suggests.',themes:['90-day fix promise','county assembly questions'],notable_voices:['Mfano Daily','Mfano Tribune'],quotes:[{ref:'b1c2d3e4',text:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]},
+        {platform:'youtube',mention_count:96,tone:'Comment sections are markedly angrier than the videos they sit under \u2014 broadcast framing is neutral, audience reaction is not.',themes:['cost of living','trust in delivery'],notable_voices:['Mfano TV'],quotes:[{ref:'f5a6b7c8',text:'Mfano: "No resident will be turned away" \u2014 full address on health financing.'}]}],
       timeline:[
         {date:'2026-06-02',mentions_that_day:41,event:'Facility-level complaints cross from individual anecdote into organised reporting: patient advocacy groups begin collating cases of registered members being turned away, and the story moves from Reddit threads into mainstream coverage. The shift matters because it changes the claim from "my clinic failed" to "the system fails", which is far harder to answer with individual remedies.',quotes:[{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},
-        {date:'2026-07-09',mentions_that_day:118,event:'The President addresses the rollout directly and commits to fixes within 90 days. Coverage is heavy and broadly neutral in framing, but the comment reaction is sharply negative \u2014 the promise is read as confirmation that the problems are real. This is the largest single-day volume in the window.',quotes:[{ref:'f5a6b7c8',text:'Ruto: "No Kenyan will be turned away" \u2014 full address on health financing.'}]}],
+        {date:'2026-07-09',mentions_that_day:118,event:'The Governor addresses the rollout directly and commits to fixes within 90 days. Coverage is heavy and broadly neutral in framing, but the comment reaction is sharply negative \u2014 the promise is read as confirmation that the problems are real. This is the largest single-day volume in the window.',quotes:[{ref:'f5a6b7c8',text:'Mfano: "No resident will be turned away" \u2014 full address on health financing.'}]}],
       influencerStances:[
-        {handle:'nation.africa',account_type:'National newspaper',stance:'neutral',influence_score:88.4,what_they_say:'Reports both the official commitment and the facility complaints, generally sourcing the government first and patients second.',quotes:[{ref:'b1c2d3e4',text:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'}]},
-        {handle:'r/Kenya',account_type:'Community forum',stance:'critical',influence_score:71.2,what_they_say:'Aggregates first-person failure accounts; the single richest source of specific, checkable claims in this corpus.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'}]}],
+        {handle:'Mfano Daily',account_type:'County newspaper',stance:'neutral',influence_score:88.4,what_they_say:'Reports both the official commitment and the facility complaints, generally sourcing the government first and patients second.',quotes:[{ref:'b1c2d3e4',text:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]},
+        {handle:'r/MfanoCounty',account_type:'Community forum',stance:'critical',influence_score:71.2,what_they_say:'Aggregates first-person failure accounts; the single richest source of specific, checkable claims in this corpus.',quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'}]}],
       verification:{checked:24,verified:18,unverified:5,contradicted:1},
       evidence_gate:{examined:512,on_topic:431,off_topic:81,ambiguous:0},
       open_questions:[
         {question:'Which facilities are still charging registered members, and under what instruction?',why:'Every critical account describes it and no source names the circular or directive behind it.',priority:'high'},
         {question:'What share of registered members have actually used their cover?',why:'Registration numbers are reported; utilisation is not, which is the number that would settle the argument.',priority:'medium'}],
-      investigation_leads:['"SHA" facility circular','"SHA" utilisation rate county','"SHA" chronic illness cover'],
+      investigation_leads:['"Afya Mfano" facility circular','"Afya Mfano" utilisation rate county','"Afya Mfano" chronic illness cover'],
       claims:[
         {section:'executive_brief',status:'contradicted',confidence:0.72,independent_sources:2,
          text:'Facilities stopped charging cash after the 90-day commitment.',
          note:'Two independent sources report the opposite after that date.',
-         citations:[{source:'nation.africa',url:'https://nation.africa/sha-complaints',quote:'Patients were still asked for cash three weeks after the deadline.'},
-                    {source:'r/Kenya',url:'https://reddit.com/r/Kenya/sha',quote:'Went in last Tuesday. Cash or go home.'}]},
+         citations:[{source:'Mfano Daily',url:'https://mfanodaily.example/afya-complaints',quote:'Patients were still asked for cash three weeks after the deadline.'},
+                    {source:'r/MfanoCounty',url:'https://forum.example/r/MfanoCounty/afya',quote:'Went in last Tuesday. Cash or go home.'}]},
         {section:'risks',status:'unverified',confidence:0.35,independent_sources:0,
-         text:'SHA registration reached sixty percent of households.',
+         text:'Afya Mfano registration reached sixty percent of households.',
          note:'No source in the collected corpus states this figure.',citations:[]},
         {section:'executive_brief',status:'verified',confidence:0.91,independent_sources:1,
-         text:'The President committed to fixes within 90 days.',
-         citations:[{source:'nation.africa',url:'https://nation.africa/sha-90-days',quote:'President defends SHA rollout amid facility complaints, promises fixes within 90 days.'}]}],
+         text:'The Governor committed to fixes within 90 days.',
+         citations:[{source:'Mfano Daily',url:'https://mfanodaily.example/afya-90-days',quote:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]}],
       narrativeDeepDives:[
-        {label:'SHA rollout pain',mention_count:214,
+        {label:'Afya Mfano rollout pain',mention_count:214,
           how_it_unfolded:'The storyline begins as scattered individual complaints about registration, then consolidates around a single reproducible claim \u2014 that registered members are still being asked for cash at the point of care. Once advocacy groups began collecting cases, the framing shifted from administrative teething to systemic failure, and mainstream outlets picked it up.',
-          who_is_driving_it:['r/Kenya','nation.africa'],
+          who_is_driving_it:['r/MfanoCounty','Mfano Daily'],
           supporter_framing:'Transitional friction in a scheme that covers more people than the one it replaced; fixable, and worth fixing.',
           critic_framing:'A levy that is collected reliably and delivers unreliably \u2014 with the sickest patients absorbing the gap.',
-          quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told SHA is not working today. Cash or go home.'},{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}],
-          origin:{first_seen:{date:'2026-05-18',author:'r/Kenya',platform:'reddit'},spread_path:[{platform:'reddit',date:'2026-05-18'},{platform:'youtube',date:'2026-06-01'},{platform:'news',date:'2026-06-02'}],peak:{date:'2026-07-09',mentions:118},platforms_reached:3}}]},
-    issue:{principal:'William Ruto',issue:'SHA',thin:false,coverage:{mentions_analyzed:143,mentions_total:143},
+          quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'},{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}],
+          origin:{first_seen:{date:'2026-05-18',author:'r/MfanoCounty',platform:'reddit'},spread_path:[{platform:'reddit',date:'2026-05-18'},{platform:'youtube',date:'2026-06-01'},{platform:'news',date:'2026-06-02'}],peak:{date:'2026-07-09',mentions:118},platforms_reached:3}}]},
+    issue:{principal:'Amani Mfano (fictional)',issue:'Afya Mfano',thin:false,coverage:{mentions_analyzed:143,mentions_total:143},
       // The map runs the same name check the report does. It did not, for
       // three rounds of this codebase fixing things where they were seen.
       grounding:{checked:18,ungrounded:[],rate:0,method:'capitalised-names'},
-      intersection:{verdict:'Ruto is the chief architect and public face of SHA — his political capital is directly tied to whether the rollout stabilizes.',
+      intersection:{verdict:'Mfano is the chief architect and public face of Afya Mfano — the governor’s political capital is directly tied to whether the rollout stabilises.',
         involvement:'Positioned as the reform\'s owner: personally launched it, repeatedly defends it, and has staked credibility on its success.',
-        linking_narratives:[{narrative:'Universal coverage promise',framing:'health as a right',pushed_by:'State House / MoH'},{narrative:'Botched rollout',framing:'implementation failure hurting the sick',pushed_by:'opposition + patient advocates'}],
-        key_actors:[{name:'Ministry of Health',relation:'implementer'},{name:'SHA authority',relation:'operator'},{name:'Opposition',relation:'critic'}],
-        timeline:[{when:'2024',event:'SHA replaces NHIF'},{when:'Q1 2026',event:'Registration backlog complaints peak'},{when:'Jul 2026',event:'President promises 90-day fixes'}],
-        tension_or_risk:'If facility-level complaints persist, the reform Ruto personally owns becomes his single largest cost-of-living liability.'}},
-    sc:{total_items:0,working_sources:['google_news','reddit','youtube','wikipedia'],sources:{google_news:{enabled:true,items:41,sample:'Ruto defends SHA rollout…'},reddit:{enabled:true,items:18,sample:'r/Kenya thread on SHA'},youtube:{enabled:true,items:12,sample:'Citizen TV address'},wikipedia:{enabled:true,items:9,sample:'William Ruto — background'},gdelt:{enabled:true,items:6},scweet_x:{enabled:false,error:'disabled'}}},
-    metrics:{reports:{total:31,last_7d:14},corpus:{total_mentions:5230,last_24h:212},credits:{anthropic_7d:{usd:2.71},socialcrawl_balance:0},pipeline:{recent:[1,2,3,4,5]},system:{db_ok:true,scheduler_enabled:true,refresh_hours:6,uptime_seconds:5400,prewarm_names:['William Ruto','John Mbadi']}}
+        linking_narratives:[{narrative:'Universal coverage promise',framing:'health as a right',pushed_by:'Governor’s office / county health department'},{narrative:'Botched rollout',framing:'implementation failure hurting the sick',pushed_by:'opposition + patient advocates'}],
+        key_actors:[{name:'County health department',relation:'implementer'},{name:'Afya Mfano Board',relation:'operator'},{name:'Opposition',relation:'critic'}],
+        timeline:[{when:'2024',event:'Afya Mfano replaces the old clinic card'},{when:'Q1 2026',event:'Registration backlog complaints peak'},{when:'Jul 2026',event:'Governor promises 90-day fixes'}],
+        tension_or_risk:'If facility-level complaints persist, the reform Mfano personally owns becomes the governor’s single largest cost-of-living liability.'}},
+    sc:{total_items:0,working_sources:['google_news','reddit','youtube','wikipedia'],sources:{google_news:{enabled:true,items:41,sample:'Mfano defends Afya Mfano rollout…'},reddit:{enabled:true,items:18,sample:'r/MfanoCounty thread on Afya Mfano'},youtube:{enabled:true,items:12,sample:'Mfano TV address'},wikipedia:{enabled:true,items:9,sample:'Amani Mfano — background'},gdelt:{enabled:true,items:6},scweet_x:{enabled:false,error:'disabled'}}},
+    metrics:{reports:{total:31,last_7d:14},corpus:{total_mentions:5230,last_24h:212},credits:{anthropic_7d:{usd:2.71},socialcrawl_balance:0},pipeline:{recent:[1,2,3,4,5]},system:{db_ok:true,scheduler_enabled:true,refresh_hours:6,uptime_seconds:5400,prewarm_names:['Amani Mfano (fictional)']}}
   };
 
   renderTabs();go('search');ping();

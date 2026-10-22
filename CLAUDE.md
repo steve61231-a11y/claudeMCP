@@ -201,6 +201,18 @@ period's report as the answer — and it pre-empted `_partial_payload`, which
 hands over what the failed run did produce under a banner. Removed with the
 `SERVE_PRECACHE_FIRST` switch. A failed run is a failure or an honest partial.
 
+**A sample may not make claims about anyone real.** When the engine cannot
+be reached the page shows a sample report. It was about William Ruto —
+invented findings, invented quotes attributed to Citizen TV and the Daily
+Nation, links to made-up articles on their real domains — and the note
+explaining it was appended and then wiped, because the renderer clears its
+container first; a reader searching someone else saw it with only a
+"Cached / demo" pill. It is now a fictional governor of a fictional county,
+every link is on an RFC 2606 `.example` domain, the note is added after
+rendering, and `test_the_demo_names_no_one_real.py` checks the sample
+against the same outlet lists `reports/outlets.py` classifies the live
+corpus with.
+
 **Who is being researched is itself confidential.** `/api/baraza` served,
 without a key, a weekly leaderboard of every subject in the database with
 counts and sentiment. For this product the list of names is the client's
