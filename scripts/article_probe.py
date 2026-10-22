@@ -81,18 +81,61 @@ def _fetch(url: str) -> dict:
     return out
 
 
+DECODE_NOTES: list[str] = []
+
+
+def _decode_by_hand(link: str) -> str | None:
+    """Google's own two-step: the article page carries a signature and a
+    timestamp (`data-n-a-sg`, `data-n-a-ts`); posting them with the article
+    id to the batchexecute endpoint returns the publisher's URL. This is what
+    the decoder libraries do; done here so a failure says WHICH step failed."""
+    import re
+
+    article_id = urlsplit(link).path.rstrip("/").split("/")[-1]
+    try:
+        page = requests.get(f"https://news.google.com/rss/articles/{article_id}",
+                            headers=UA, timeout=20)
+    except Exception as exc:  # noqa: BLE001
+        DECODE_NOTES.append(f"page fetch error {type(exc).__name__}")
+        return None
+    sg = re.search(r'data-n-a-sg="([^"]+)"', page.text)
+    ts = re.search(r'data-n-a-ts="([^"]+)"', page.text)
+    if not (sg and ts):
+        DECODE_NOTES.append(f"page HTTP {page.status_code}, {len(page.text)} bytes, "
+                            "no signature/timestamp attributes")
+        return None
+    req = [["Fbv4je", json.dumps(["garturlreq", [["X", "X", ["X", "X"], None, None, 1, 1,
+            "US:en", None, 1, None, None, None, None, None, 0, 1], "X", "X", 1, [1, 1, 1],
+            1, 1, None, 0, 0, None, 0], article_id, int(ts.group(1)), sg.group(1)])]]
+    try:
+        resp = requests.post("https://news.google.com/_/DotsSplashUi/data/batchexecute",
+                             headers={**UA, "Content-Type":
+                                      "application/x-www-form-urlencoded;charset=UTF-8"},
+                             data=f"f.req={quote_plus(json.dumps([req]))}", timeout=20)
+    except Exception as exc:  # noqa: BLE001
+        DECODE_NOTES.append(f"batchexecute error {type(exc).__name__}")
+        return None
+    try:
+        body = resp.text.split("\n\n", 1)[1]
+        url = json.loads(json.loads(body)[0][2])[1]
+    except Exception:  # noqa: BLE001
+        DECODE_NOTES.append(f"batchexecute HTTP {resp.status_code}: unparseable "
+                            f"({resp.text[:80]!r})")
+        return None
+    return url if isinstance(url, str) and url.startswith("http") else None
+
+
 def _decode(link: str) -> str | None:
     try:
         from googlenewsdecoder import gnewsdecoder
-    except Exception:  # noqa: BLE001
-        return None
-    try:
+
         result = gnewsdecoder(link, interval=1)
-    except Exception:  # noqa: BLE001
-        return None
-    if isinstance(result, dict) and result.get("status"):
-        return result.get("decoded_url")
-    return None
+        if isinstance(result, dict) and result.get("status"):
+            return result.get("decoded_url")
+        DECODE_NOTES.append(f"library: {str((result or {}).get('message'))[:120]}")
+    except Exception as exc:  # noqa: BLE001
+        DECODE_NOTES.append(f"library error {type(exc).__name__}: {str(exc)[:100]}")
+    return _decode_by_hand(link)
 
 
 def google_news(out: dict) -> None:
@@ -142,6 +185,13 @@ def google_news(out: dict) -> None:
     for r in decoded:
         print("DECODED\t" + "\t".join(str(r.get(k, "")) for k in
                                       ("decoded", "final_host", "status", "tier", "chars")))
+    # Why decoding failed, by distinct reason — the step that broke decides
+    # whether this is a fix or a replacement.
+    reasons = {}
+    for note in DECODE_NOTES:
+        reasons[note] = reasons.get(note, 0) + 1
+    for note, count in sorted(reasons.items(), key=lambda kv: -kv[1])[:6]:
+        _note("Google News — decode failure", f"{count}x {note}")
     out["google_news"] = {"as_stored": s_stored, "decoded": s_decoded,
                           "stored_rows": as_stored, "decoded_rows": decoded}
 
