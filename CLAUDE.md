@@ -57,26 +57,29 @@ engine/
   health.py         Did the model actually answer? Preflight + run health.
   stages.py         The ledger: what ran, what failed, what was empty.
   config.py         Every setting, with its default and why.
-  reports/          Analysts, digest, issue map, citations, PDF export.
+  reports/          Analysts, digest, issue map, citations, PDF export,
+                    quality.py (every report measured).
   ingestion/        Connectors (GDELT, Google News, Reddit, YouTube, X,
                     Kenya Law + Kenya Gazette…) + http.py
   agents/           Resolution, verification, credibility, knowledge graph.
-  intelligence/     Narratives, embeddings, people graph, simulator.
+  intelligence/     Narratives and embeddings, influence, alerts.
   processing/       Sentiment, entities.
   admin/purge.py    Deleting accumulated run data, with rails.
   alembic/          Migrations. Run automatically on deploy.
-  tests/            109 files, ~1155 tests. They are the specification.
-web/pulse_app.html  The ENTIRE frontend. One file, ~3,400 lines, no build step.
+  tests/            162 files, ~1850 tests. They are the specification.
+web/pulse_app.html  The ENTIRE frontend. One file, ~6,100 lines, no build step.
 railway.json        Deploy config — Railway. THIS is the live one.
                     docs/DEPLOY.md is the click-only guide; no terminal needed.
 fly.toml            Deploy config — Fly.io. The CLI alternative, cheaper.
 render.yaml         The old Render blueprint. Kept as a reference; not in use.
 docs/               Recovery runbook, data policy, this project's history.
+docker-compose.yml  Local: the same image as the host, plus Postgres and SearXNG.
 ```
 
 **The frontend is one HTML file served by the backend.** No npm, no bundler,
-no `frontend/` build (that directory is legacy). Edit `web/pulse_app.html`
-directly. `window.ZENITH = {...}` at the bottom exports the render functions,
+no build step. Edit `web/pulse_app.html` directly. (A legacy `frontend/`
+app and a NestJS `api/` gateway lived here until 22 Oct 2026; nothing
+deployed them, and they are in git history.) `window.ZENITH = {...}` at the bottom exports the render functions,
 which is how the PDF exporter reuses them.
 
 ## Running it
@@ -161,9 +164,11 @@ words the founder can act on when neither did.
 
 **A guard wired to a module nothing serves is worse than no guard.**
 `settings.validate_for_startup()` exists to refuse a container with no model
-credential. It is registered on `engine/main.py`'s app and the container
-runs `engine.api_server:app`, so it has never executed in a deployment — and
-it reads, to anyone who finds it, as proof the case is handled. A deployment
+credential. It was registered on `engine/main.py`'s app while the container
+ran `engine.api_server:app`, so it never executed in a deployment — and it
+read, to anyone who found it, as proof the case was handled. (`engine/main.py`
+and the gateway it served were deleted on 22 Oct 2026; `validate_for_startup`
+stays only as the raising form for scripts and tests.) A deployment
 therefore ran for days with no key and said nothing until a report died
 against someone else's 401. `/api/health` now reports `llm` — the backend,
 whether the credential it needs is PRESENT (never any part of its value;
@@ -172,8 +177,9 @@ production-grade. `configuration_problems()` is the non-raising half, because
 a startup check wants to refuse and a health endpoint wants to report. It
 used to list `NEO4J_PASSWORD` and `INTERNAL_API_TOKEN` as missing on every
 deployment — variables of the legacy `engine/main.py` stack, which nothing
-serves — so the one honest list of what is wrong opened with two false
-alarms. It lists only what the served app needs now.
+served — so the one honest list of what is wrong opened with two false
+alarms. It lists only what the served app needs now, and a variable left
+over from a removed feature is ignored rather than stopping the engine.
 
 **Measured, not believed.** Every report carries `quality`
 (`reports/quality.py`): how much of the news was read in full rather than as

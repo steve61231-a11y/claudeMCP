@@ -18,14 +18,6 @@ class Settings(BaseSettings):
     # what is missing (`configuration_problems`).
     app_env: str = "local-dev"
     database_url: str = ""
-    # The legacy stack only — engine/main.py, the NestJS api/ and the Neo4j
-    # service in docker-compose. No deployment serves it and nothing in the
-    # served app reads these; they stay until that stack is deleted, and are
-    # not reported as problems, because they are not the served app's.
-    neo4j_uri: str = "bolt://neo4j:7687"
-    neo4j_user: str = "neo4j"
-    neo4j_password: str = ""
-    internal_api_token: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
     # Cheap/fast model for the high-volume mechanical stages (classification,
@@ -387,13 +379,6 @@ class Settings(BaseSettings):
         if self.is_local_dev:
             return "postgresql+psycopg2://postgres:postgres@postgres:5432/political_intel"
         raise RuntimeError("DATABASE_URL must be set explicitly when APP_ENV is not 'local-dev'")
-
-    def resolved_neo4j_password(self) -> str:
-        if self.neo4j_password:
-            return self.neo4j_password
-        if self.is_local_dev:
-            return "password"
-        raise RuntimeError("NEO4J_PASSWORD must be set explicitly when APP_ENV is not 'local-dev'")
 
     def configuration_problems(self) -> list[str]:
         """What is missing, without raising.

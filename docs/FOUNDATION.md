@@ -175,13 +175,12 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   article are one item, upgraded in place; a long period is collected month
   by month and GDELT's three-month reach is declared, not mistaken for a
   quiet past.
-- **Cuts — done in the served app.** Network tab and endpoints, the six
-  endpoints nothing called, the public leaderboard (it listed every subject
-  without a key), the stored reports served in place of failed runs, the
-  Neo4j projection. **Awaiting the founder's OK:** deleting the legacy
-  `frontend/` and NestJS `api/` apps, `engine/main.py` and its Dockerfile,
-  and the now-unused Neo4j modules — the permission system stops a bulk
-  deletion without it.
+- **Cuts — done.** Network tab and endpoints, the six endpoints nothing
+  called, the public leaderboard (it listed every subject without a key),
+  the stored reports served in place of failed runs, the Neo4j projection;
+  and, with the founder's approval, the legacy `frontend/` and NestJS
+  `api/` apps, `engine/main.py` and its Dockerfile, and the Neo4j modules.
+  `docker-compose.yml` now runs the same image as the host.
 
 ---
 

@@ -76,8 +76,7 @@ def test_the_run_is_labelled_test_grade(monkeypatch):
 def _settings(**overrides):
     from engine.config import Settings
 
-    base = dict(app_env="production", anthropic_api_key="", internal_api_token="t",
-                database_url="postgresql://x/y", neo4j_password="p")
+    base = dict(app_env="production", anthropic_api_key="", database_url="postgresql://x/y")
     base.update(overrides)
     return Settings(**base)
 

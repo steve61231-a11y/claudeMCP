@@ -4,6 +4,10 @@ __pycache__/
 node_modules/
 dist/
 mock-data/fixtures/
+# twscrape's account pool. It holds X usernames, passwords and session
+# cookies once an account is added, and this repository is public. It was
+# tracked (empty) until 22 Oct 2026; twscrape creates it when missing.
+accounts.db
 *.egg-info/
 .venv/
 

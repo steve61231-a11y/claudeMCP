@@ -2105,9 +2105,9 @@ def _model_backend_state() -> dict:
     received no key. The engine already knew: `configuration_problems()`
     says LLM_API_KEY is required and unset. Nobody asked it.
 
-    Two reasons nobody asked, both fixed here. `validate_for_startup()` is
-    registered on `engine/main.py`'s app and production runs
-    `engine.api_server:app`, so the fail-closed check has never run in a
+    Two reasons nobody asked, both fixed here. `validate_for_startup()` was
+    registered on `engine/main.py`'s app (since deleted) while production
+    ran `engine.api_server:app`, so the fail-closed check never ran in a
     deployment. And nothing reported configuration anywhere an operator
     could see it, so "is my key set?" could only be answered by generating
     a whole report and reading the error.
