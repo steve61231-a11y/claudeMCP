@@ -114,7 +114,8 @@
      passages the verdict actually rests on. */
   #zenith details.ev{margin-top:8px}
   #zenith details.ev>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;
-    font-size:12px;padding:4px 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--line2);color:var(--mut)}
+    font-size:12.5px;font-weight:700;padding:5px 11px;border-radius:10px;background:rgba(125,211,252,.07);
+    border:1px solid rgba(125,211,252,.4);color:var(--sky2)}
   #zenith details.ev>summary::-webkit-details-marker{display:none}
   #zenith details.ev>summary:hover{color:var(--txt);border-color:var(--sky2)}
   #zenith details.ev[open]>summary{color:var(--sky2);border-color:var(--sky2)}
@@ -250,13 +251,27 @@
 --------------------------------------------------------------------------- */
 /* A section's number badge, and the fold blocks inside it. */
 #zenith .sect-no{flex-shrink:0;margin-right:2px}
-#zenith .fold{margin-top:12px;border-top:1px solid var(--line2);padding-top:10px}
-#zenith .fold-summary{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:6px}
-#zenith .fold-summary::-webkit-details-marker{display:none}
-#zenith .fold-summary::before{content:'▸';color:var(--sky2);font-size:10px;transition:transform .15s}
-#zenith .fold[open] .fold-summary::before{content:'▾'}
-#zenith .fold-summary:hover{color:var(--sky2)}
-#zenith .fold-note{text-transform:none;letter-spacing:0;font-size:12px}
+/* A dropdown inside a section is a control, and has to look like one.
+   It was a grey caption with a 10px triangle — "they blend into the
+   sentences and you can't see them", in the client's words — so the
+   evidence, the sources and the rest of the brief sat behind controls a
+   reader read past. Now a bordered bar, the title in the accent colour,
+   and a Show / Hide pill on the right like the section headers have. */
+#zenith .fold{margin-top:14px}
+#zenith summary.fold-summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;
+  padding:9px 12px;border:1px solid rgba(125,211,252,.35);border-radius:10px;
+  background:rgba(125,211,252,.07);color:var(--sky2);font-weight:700;font-size:12.5px;
+  letter-spacing:.08em;transition:background .15s,border-color .15s}
+#zenith summary.fold-summary::-webkit-details-marker{display:none}
+#zenith summary.fold-summary:hover{background:rgba(125,211,252,.15);border-color:rgba(125,211,252,.7)}
+#zenith summary.fold-summary::before{content:'▸';font-size:13px;line-height:1}
+#zenith .fold[open]>summary.fold-summary::before{content:'▾'}
+#zenith summary.fold-summary::after{content:'Show';margin-left:auto;flex-shrink:0;font-size:11px;
+  letter-spacing:.08em;text-transform:uppercase;border:1px solid rgba(125,211,252,.45);
+  border-radius:999px;padding:3px 10px}
+#zenith .fold[open]>summary.fold-summary::after{content:'Hide'}
+#zenith .fold[open]>summary.fold-summary{margin-bottom:8px}
+#zenith .fold-note{text-transform:none;letter-spacing:0;font-size:12px;font-weight:400;color:var(--mut)}
 /* Section titles carry the weight that separates one section from the next.
    They were the same size as the labels inside them, so the page read as one
    long column rather than a set of answers. */
@@ -333,8 +348,10 @@
 #zenith .sect-body{padding:0 16px 14px}
 #zenith .sect:not([open]) .sect-body{display:none}
 
-.drill{background:none;border:1px solid var(--line,#2a3444);color:var(--sky2,#7dd3fc);border-radius:8px;padding:5px 10px;font-size:12.5px;cursor:pointer;margin-top:10px}
-.drill:hover{background:rgba(125,211,252,.08)}
+.drill{background:rgba(125,211,252,.07);border:1px solid rgba(125,211,252,.4);color:var(--sky2,#7dd3fc);
+  border-radius:10px;padding:7px 12px;font-size:12.5px;font-weight:700;letter-spacing:.02em;
+  cursor:pointer;margin-top:10px;transition:background .15s,border-color .15s}
+.drill:hover{background:rgba(125,211,252,.16);border-color:rgba(125,211,252,.75)}
 .drill-body{margin-top:8px;max-height:520px;overflow-y:auto;padding-right:4px}
 .src-link{color:var(--sky2,#7dd3fc);font-size:12.5px;text-decoration:none}
 .src-link:hover{text-decoration:underline}
@@ -388,8 +405,10 @@
     content-visibility:visible!important;display:block!important;
     block-size:auto!important}
   #zenith details.fold:not([open]) > *{display:block!important}
-  #zenith .fold-summary::before{display:none!important}
-  #zenith .fold{border-top:1px solid #ddd}
+  #zenith .fold-summary::before,#zenith summary.fold-summary::after{display:none!important}
+  #zenith summary.fold-summary{border:none!important;background:none!important;
+    padding:0!important;color:#111!important}
+  #zenith .fold{border-top:1px solid #ddd;padding-top:8px}
 
   /* Nothing on paper is mid-flight. Belt to the braces in animate(). */
   #zenith *,#zenith *::before,#zenith *::after{
@@ -2196,9 +2215,8 @@
     } else {
       const allCovered=[].concat(...Object.values(covered));
       if(allCovered.length){
-        const det=el('details','');det.style.marginTop='14px';
-        det.innerHTML=`<summary class="muted" style="cursor:pointer;font-size:12px">Sources covered (${allCovered.length})</summary>
-          <div class="row" style="margin-top:10px">${allCovered.slice(0,60).map(x=>'<span class="chip">'+esc(x)+'</span>').join('')}</div>`;
+        const det=foldBlock(`Sources covered (${allCovered.length})`,'every outlet in this period');
+        det.appendChild(el('div','row',allCovered.slice(0,60).map(x=>'<span class="chip">'+esc(x)+'</span>').join('')));
         s2b.appendChild(det);
       }
     }
@@ -3209,16 +3227,19 @@
        percentiles, so a run where nobody dominates shows an empty top band
        rather than promoting whoever happened to come first.
 
-       Share of Voice folds in here on the client's instruction, and it
-       belongs here: "which narratives own the conversation" is the same
-       question as "who is driving this", asked of the stories instead of
-       the accounts. As two sections, the reader had to join them up.
+       Share of Voice was folded in here once, as a dropdown, and is its own
+       section again on the client's later instruction: folded, it was the
+       half of the answer nobody opened. It follows directly, so the two
+       still read as one question asked of the accounts and then the stories.
     */
     const drivers=(r.influence||[]).filter(d=>d&&(d.who||d.name));
     const named=namesInPlay(ps.personalities);
     const narr=(r.narratives||[]).slice(0,6);
     const themes=ps.themes||{};
-    if(drivers.length||named.length||narr.length){
+    // Always present, like every section of the dashboard: a section that
+    // appears on one report and is absent from the next reads as the product
+    // losing things. With nothing to show it says so in a line.
+    {
       const cD=dashCard('Drivers','Who is pushing this — ranked by impact (coverage + engagement)', {open:true});
       const BANDS=[['high','Driving the conversation','neg'],
                    ['medium','Contributing','amber'],
@@ -3247,44 +3268,6 @@
       if(!shown&&drivers.length)cD.appendChild(fwEmpty('no account accounts for a measurable share'));
       if(!drivers.length)cD.appendChild(fwEmpty('no account could be attributed a share of this coverage'));
 
-      // Share of voice — the same ranking, asked of the stories.
-      if(narr.length){
-        const sv=foldBlock(`Share of voice (${narr.length})`,
-                           'which narratives own the conversation, and what they are saying');
-        // It was printing raw mention counts, so the one section whose
-        // entire purpose is proportion gave the reader the numerator and
-        // left them to find the denominator.
-        const svTotal=narr.reduce((a,n)=>a+(n.mentions||n.strength||0),0)||1;
-        sv.appendChild(hBars(narr.map((n,i)=>{
-          const val=n.mentions||n.strength||0;
-          return {label:n.label, value:val, color:SERIES[i%SERIES.length],
-                  note:`${Math.round(100*val/svTotal)}% of the conversation · ${n.description||''}`,
-                  display:Math.round(100*val/svTotal)+'%'};
-        }),{total:svTotal}));
-        // Each bar is openable. A bar chart of narrative names answers "how
-        // big" and nothing else; the reader's next question is always "big
-        // saying WHAT?", and the answer is the posts themselves.
-        narr.forEach((n,i)=>{
-          const row=el('div','');row.style.marginTop='14px';
-          row.appendChild(el('div','',`<b style="font-size:14px;color:${SERIES[i%SERIES.length]}">${esc(n.label)}</b>
-            <span class="chip" style="margin-left:8px">${share(n.mentions,CORPUS_TOTAL)} of mentions</span>
-            ${n.labelled_by==='derived'?'<span class="chip" style="margin-left:6px">named from the text</span>':''}`));
-          if(n.description)row.appendChild(el('div','muted',`<div style="font-size:13px;margin-top:4px">${esc(n.description)}</div>`));
-          row.appendChild(receipts(n.evidence));
-          sv.appendChild(row);
-        });
-        // "Climat politique" — which themes own the conversation, period by
-        // period. Previously drawn from (mentions * (1 + 0.15*sin(i))): a
-        // sine wave. It looked like movement and was invented, which in a
-        // due-diligence product is worse than an empty chart.
-        if((themes.keys||[]).length && (themes.periods||[]).length>1){
-          sv.appendChild(el('div','lbl','Theme mix over the period'));
-          sv.appendChild(stackedArea(themes.periods,
-            themes.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
-            {width:640,height:220}));
-        }
-        cD.appendChild(sv);
-      } else cD.appendChild(fwEmpty('no narratives identified'));
 
       // Who the conversation is ABOUT. Folded, because the accounts above
       // are the answer to "who is driving this" and this is the answer to
@@ -3315,6 +3298,53 @@
         cD.appendChild(nf);
       }
       out.appendChild(cD);
+    }
+
+    /* Share of Voice — the same ranking as Drivers, asked of the stories.
+       ------------------------------------------------------------------
+       Its own section, on the client's instruction. It was folded inside
+       Drivers as a dropdown, and both hold too much to sit one inside the
+       other: "who is pushing this" and "which stories own the conversation"
+       are two answers, and the second was the one a reader never opened. */
+    {
+      const cS=dashCard('Share of Voice','Which storylines own the conversation, and what they are saying', {open:true});
+      if(!narr.length)cS.appendChild(fwEmpty('no storylines identified in this period'));
+      // It was printing raw mention counts, so the one section whose
+      // entire purpose is proportion gave the reader the numerator and
+      // left them to find the denominator. One denominator, the whole
+      // period's mentions: the bars were shares of the six storylines'
+      // total while the chip under each read its share of ALL mentions, so
+      // one storyline showed 43% in the bar and 42% beside its name.
+      const svTotal=CORPUS_TOTAL||narr.reduce((a,n)=>a+(n.mentions||n.strength||0),0)||1;
+      cS.appendChild(hBars(narr.map((n,i)=>{
+        const val=n.mentions||n.strength||0;
+        return {label:n.label, value:val, color:SERIES[i%SERIES.length],
+                note:`${fmt(val)} of ${fmt(svTotal)} mentions · ${n.description||''}`,
+                display:share(val,svTotal)};
+      }),{total:svTotal}));
+      // Each storyline is openable. A bar chart of narrative names answers
+      // "how big" and nothing else; the reader's next question is always
+      // "big saying WHAT?", and the answer is the posts themselves.
+      narr.forEach((n,i)=>{
+        const row=el('div','');row.style.marginTop='14px';
+        row.appendChild(el('div','',`<b style="font-size:14px;color:${SERIES[i%SERIES.length]}">${esc(n.label)}</b>
+          <span class="chip" style="margin-left:8px">${share(n.mentions,CORPUS_TOTAL)} of mentions</span>
+          ${n.labelled_by==='derived'?'<span class="chip" style="margin-left:6px">named from the text</span>':''}`));
+        if(n.description)row.appendChild(el('div','muted',`<div style="font-size:13px;margin-top:4px">${esc(n.description)}</div>`));
+        row.appendChild(receipts(n.evidence));
+        cS.appendChild(row);
+      });
+      // "Climat politique" — which themes own the conversation, period by
+      // period. Previously drawn from (mentions * (1 + 0.15*sin(i))): a
+      // sine wave. It looked like movement and was invented, which in a
+      // due-diligence product is worse than an empty chart.
+      if((themes.keys||[]).length && (themes.periods||[]).length>1){
+        cS.appendChild(el('div','lbl','Theme mix over the period'));
+        cS.appendChild(stackedArea(themes.periods,
+          themes.keys.map((k,i)=>({key:k,label:k,color:SERIES[i%SERIES.length]})),
+          {width:640,height:220}));
+      }
+      out.appendChild(cS);
     }
 
     /* One Channels section, three groups.
