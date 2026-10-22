@@ -23,7 +23,6 @@ memory limits of a small instance.
 - `ANTHROPIC_API_KEY` — for the LLM analysis (required for live reports)
 - `DATABASE_URL` — a Postgres connection string (Neon)
 - `LOW_MEMORY` = `false` — full-power pipeline (we have 16GB here)
-- `SERVE_PRECACHE_FIRST` = `false` — run genuinely live for any subject
 
 ## Optional
 - `PULSE_API_KEY` — gate the API (must also be entered in the app's Settings tab)

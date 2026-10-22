@@ -38,13 +38,6 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false
-      # Serve the stored pre-generated report instantly for matched names (e.g.
-      # "John Mbadi") with ZERO LLM spend. Keep "false" whenever you want live
-      # runs: with this on, a matched name never reaches the pipeline, so a
-      # model/provider switch appears to have changed nothing. /api/health
-      # reports the live value as `serving_precache`.
-      - key: SERVE_PRECACHE_FIRST
-        value: "false"
       # Model backend. Unset/"anthropic" = production Claude. Set these in the
       # dashboard to run testing on a cheap or free provider instead; every
       # report produced that way is stamped test-grade and banner-labelled.

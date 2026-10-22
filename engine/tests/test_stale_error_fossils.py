@@ -58,18 +58,25 @@ def test_the_report_job_claims_the_row_before_any_work(db_session, monkeypatch):
     key = api_server._subject_key("Ordering Probe")
     api_server._save_progress(key, "report", job_id="old", status="failed", error="ancient")
 
-    # Make the job bail immediately after the claim.
-    monkeypatch.setattr(api_server.settings, "serve_precache_first", True, raising=False)
-    monkeypatch.setattr(api_server, "_lookup_precache", lambda name: {"name": "cached"})
+    # Record every write, and make the job fail at its first piece of work.
+    writes = []
+    real_save = api_server._save_progress
+    monkeypatch.setattr(api_server, "_save_progress",
+                        lambda *a, **k: (writes.append(k), real_save(*a, **k))[1])
+    monkeypatch.setattr(api_server, "_ensure_politician",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("first work")))
     api_server._jobs["ordering-job"] = {"status": "running", "created_at": time.time()}
     try:
         api_server._run_report_job("ordering-job", "Ordering Probe")
     finally:
         api_server._jobs.pop("ordering-job", None)
 
+    claim = writes[0]
+    assert claim["job_id"] == "ordering-job" and claim["status"] == "running"
+    assert claim["error"] is None, "the fossil survived into a new run"
     progress = api_server._read_progress(key, "report")
-    assert progress["error"] is None, "the fossil survived into a new run"
     assert progress["job_id"] == "ordering-job"
+    assert "ancient" not in (progress["error"] or ""), "another run's error is on this one"
 
 
 def test_the_ui_refuses_to_show_another_run_s_error():

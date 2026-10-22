@@ -4541,7 +4541,6 @@
       <div><div class="eyebrow">${esc(ukWindow(r.window))}</div><h2 style="margin-top:4px">${esc(r.name||'')}</h2></div>
       <div class="row">
         ${live?'<span class="pill pos">● Live</span>':'<span class="pill amber">Cached / demo</span>'}
-        ${meta&&meta.stale_fallback?'<span class="pill amber">stale fallback</span>':''}
         ${r.grade&&r.grade.production===false?`<span class="pill neg" title="${esc(r.grade.warning||'')}">⚠ Test-grade · ${esc(r.grade.backend||'')}</span>`:''}
       </div></div>
       <div class="row" style="margin-top:12px;gap:16px;align-items:center">

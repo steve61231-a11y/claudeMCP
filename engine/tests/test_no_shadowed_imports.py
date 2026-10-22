@@ -75,7 +75,6 @@ def test_a_failing_run_marks_the_job_failed_instead_of_hanging(monkeypatch, db_s
     monkeypatch.setattr(api_server, "SessionLocal", lambda: db_session)
     monkeypatch.setattr(api_server, "_save_progress", lambda *a, **k: None)
     monkeypatch.setattr(api_server, "_set_stage", lambda *a, **k: None)
-    monkeypatch.setattr(api_server, "_lookup_precache", lambda name: None)
     monkeypatch.setattr(api_server, "_ensure_politician",
                         lambda db, name, t: (_ for _ in ()).throw(RuntimeError("boom")))
 
