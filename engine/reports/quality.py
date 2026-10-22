@@ -87,6 +87,10 @@ _FIGURE = re.compile(
     r"(?<![\w.:/-])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)"
     r"(\s?%|\s?per\s?cent|\s?percent)?(?![\w:/-])", re.IGNORECASE)
 _YEARS = range(1900, 2101)
+#: Every number a source states, however it is attached: a source's
+#: "56-year-old", "2022-2027" or "KSh3.2bn" supports an analyst's "aged 56".
+#: The prose side stays strict (`_FIGURE`) so ids and dates are not judged.
+_ANY_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +210,7 @@ def _normal(token: str) -> str:
 def corpus_figures(corpus: list[dict]) -> set[str]:
     found: set[str] = set()
     for m in corpus:
-        for match in _FIGURE.finditer(m.get("text") or ""):
-            found.add(_normal(match.group(1)))
+        found.update(_normal(n) for n in _ANY_NUMBER.findall(m.get("text") or ""))
     return found
 
 

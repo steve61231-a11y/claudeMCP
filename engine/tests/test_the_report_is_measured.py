@@ -72,6 +72,13 @@ def test_figures_from_the_sources_or_the_engine_are_not_flagged():
     assert prose["figures_matching_nothing"] == 0, prose["figures_matching_nothing_examples"]
 
 
+def test_a_number_the_source_states_in_any_form_supports_the_prose():
+    corpus = [{**ARTICLE, "text": "The 56-year-old senator served 2017-2022 and was paid KSh3,400,000."}]
+    payload = {"executive_brief": ("The senator, aged 56, served from 2017, "
+                                   "and was paid 3,400,000 shillings for the term.")}
+    assert _prose(payload, corpus)["figures_matching_nothing"] == 0
+
+
 def test_a_count_is_not_a_percentage():
     """`37%` matching a day on which 37 items were published is a coincidence,
     not a source."""
