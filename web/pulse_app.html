@@ -299,6 +299,12 @@
   text-align:left;cursor:pointer;padding:14px 16px;font:inherit}
 #zenith .sect-head:hover{background:rgba(125,211,252,.05)}
 #zenith .sect-head .lbl{margin:0}
+/* The title takes the free space and sits on the left. With the header's
+   parts spread by space-between, a section that also carries a number badge
+   — every Weekly Dashboard and Sentiment Framework section — put its title
+   and subtitle in the middle of the bar, between the badge and the Show
+   button, while every other section's sat on the left. */
+#zenith .sect-title{flex:1;min-width:0;text-align:left}
 #zenith .sect-sub{display:block;font-size:12.5px;color:var(--mut);margin-top:3px}
 #zenith .sect-meta{display:flex;gap:8px;align-items:center;flex-shrink:0}
 #zenith .sect-count{font-size:11.5px;color:var(--mut2,#6b7a8d);
@@ -3575,7 +3581,7 @@
 
     const head=el('button','sect-head');
     head.type='button';
-    head.innerHTML=`<span><span class="lbl">${esc(label)}</span>`
+    head.innerHTML=`<span class="sect-title"><span class="lbl">${esc(label)}</span>`
       +`${sub?`<span class="sect-sub">${esc(sub)}</span>`:''}</span>`
       +`<span class="sect-meta"><span class="sect-count"></span>`
       +`<span class="sect-chev"><span class="w-open">Show</span>`
