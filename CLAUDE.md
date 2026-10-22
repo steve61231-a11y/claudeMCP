@@ -39,6 +39,12 @@ about sources that failed.
 
 If you change something here, keep that rule. It is the product.
 
+**The plan in force is `docs/FOUNDATION.md`** (22 Oct 2026): what was
+measured to be wrong, why the reports got worse as features were added, and
+the phased rebuild around a verified fact store. Read it before adding a
+feature — the founder's standing instruction is a strong foundation before
+more breadth, and no room for hallucination.
+
 ---
 
 ## Layout
