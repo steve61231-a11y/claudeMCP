@@ -25,7 +25,29 @@ name: deploy
 # made. So this workflow does the deploying, and `deploy-drift.yml` catches
 # the case where neither path ran.
 #
-# ## What it needs, once
+# ## Two paths, so no single key can stop a deploy
+#
+# A key is a single point of failure too. The one this workflow used
+# deployed every push from 14 to 20 October; on 21 October Railway first put
+# the account in "Limited Access" ("Deploys have been paused temporarily" —
+# how it treats Free and Hobby plans when its platform is busy) and hours
+# later rejected the key outright. Nothing here changes or expires a key, and
+# nothing here can see why Railway stopped accepting it. A deploy that waits
+# on the founder replacing a credential is the same silent stall as the
+# broken GitHub App, one step removed.
+#
+# So, in order:
+#
+#   1. Railway's own GitHub connection (no key at all). When it is connected
+#      it deploys the push itself; this workflow waits for the live site to
+#      report the commit and stops there. Connect it once: Railway -> the
+#      service -> Settings -> Source -> connect this repository and branch.
+#   2. The key, only if (1) did not land the commit. Same as before.
+#   3. If neither landed it, an issue is opened in this repository saying
+#      exactly which and what to click — GitHub emails the owner. A red cross
+#      in the Actions tab is not a notification.
+#
+# ## The backup key
 #
 # One repository secret, `RAILWAY_TOKEN`:
 #
@@ -74,10 +96,41 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      # Path 1. No key: Railway deploys the push itself when its GitHub
+      # connection is working. Asking the live site is the only thing that
+      # counts — a connection that says "deploying" and a container that
+      # still serves yesterday's code look the same from everywhere else.
+      - name: Wait for Railway's own deploy
+        env:
+          ENGINE_URL: ${{ vars.ENGINE_URL || 'https://muugi-production-8e01.up.railway.app' }}
+          WAIT_MINUTES: ${{ vars.NATIVE_DEPLOY_WAIT_MINUTES || '8' }}
+        run: |
+          want=$(printf '%s' "$GITHUB_SHA" | cut -c1-7)
+          url="${ENGINE_URL%/}/api/health"
+          tries=$(( WAIT_MINUTES * 4 ))
+          for attempt in $(seq 1 "$tries"); do
+            body=$(curl -fsS --max-time 20 "$url" 2>/dev/null || true)
+            live=$(printf '%s' "$body" | python3 -c 'import json,sys; print(((json.load(sys.stdin).get("build_detail") or {}).get("commit")) or "-")' 2>/dev/null || echo "-")
+            # This commit, or one built on top of it: a newer push that
+            # landed first carries this one's code too.
+            if [ "$live" = "$want" ] || { [ "$live" != "-" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$live" 2>/dev/null; }; then
+              echo "NATIVE_OK=true" >> "$GITHUB_ENV"
+              echo "::notice::Railway's own GitHub connection deployed it: live is ${live}. No key was needed."
+              echo "### Deployed by Railway's GitHub connection — live is \`${live}\`" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::notice::Railway's own deploy did not land ${want} within ${WAIT_MINUTES} minutes (live: ${live}); trying the backup key."
 
       - name: Check the token is set
+        if: env.NATIVE_OK != 'true'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
@@ -94,6 +147,7 @@ jobs:
           fi
 
       - name: Install the Railway CLI
+        if: env.NATIVE_OK != 'true'
         run: |
           # Pinned to the major, not the exact version: an exact pin breaks
           # the day npm garbage-collects it, and an unpinned one breaks the
@@ -103,6 +157,7 @@ jobs:
           railway --version
 
       - name: Stamp this commit into the source tree
+        if: env.NATIVE_OK != 'true'
         run: |
           # `railway up` uploads a tarball, so Railway sets none of the
           # RAILWAY_GIT_* variables the image would otherwise bake in, and
@@ -125,6 +180,7 @@ jobs:
       # the only thing left to guess — and when there is exactly one, there
       # is nothing to guess.
       - name: Find the service to deploy
+        if: env.NATIVE_OK != 'true'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           CONFIGURED: ${{ vars.RAILWAY_SERVICE }}
@@ -154,8 +210,8 @@ jobs:
             echo "::error::This Railway project has more than one service, so which to deploy cannot be inferred. Set a repository variable RAILWAY_SERVICE to one of: $(printf '%s' "$names" | tr '\n' ' ')"
             exit 1
           else
-            echo "::warning::Could not list the project's services; falling back to 'muugi'. If the deploy fails on an unknown service, set the RAILWAY_SERVICE repository variable."
-            echo "SERVICE=muugi" >> "$GITHUB_ENV"
+            echo "::warning::Could not list the project's services — usually the key itself was refused. Falling back to 'claudeMCP', the project's one service as of 20 Oct; set the RAILWAY_SERVICE repository variable if that changes."
+            echo "SERVICE=claudeMCP" >> "$GITHUB_ENV"
           fi
 
       # Tell the service its commit through its environment as well as
@@ -172,6 +228,7 @@ jobs:
       # Never fatal. An unidentifiable build is a worse diagnosis later, not
       # a reason to refuse to ship now.
       - name: Tell the service which commit it is
+        if: env.NATIVE_OK != 'true'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
@@ -186,6 +243,7 @@ jobs:
           fi
 
       - name: Deploy
+        if: env.NATIVE_OK != 'true'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
@@ -229,6 +287,7 @@ jobs:
       #             proof, of a slightly different thing: that the code
       #             running is the code this run shipped.
       - name: Verify the live site is running this commit
+        if: env.NATIVE_OK != 'true'
         env:
           ENGINE_URL: ${{ vars.ENGINE_URL || 'https://muugi-production-8e01.up.railway.app' }}
         run: |
@@ -309,3 +368,31 @@ jobs:
             echo "3. The Railway deployment log, for a container that built and then crash-looped."
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
+
+      # Path 3. Neither landed the commit. Say so where it will be read, in
+      # words the founder can act on without opening a log.
+      - name: Open an issue when nothing deployed
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Deploys are blocked — the live site is not getting new code"
+          existing=$(gh issue list --repo "$GH_REPO" --state open --search "$title in:title" --json number --jq '.[0].number' 2>/dev/null || true)
+          body=$(printf '%s\n' \
+            "Commit \`$(printf '%s' "$GITHUB_SHA" | cut -c1-7)\` did not reach the live site." \
+            "" \
+            "- Railway's own GitHub connection did not deploy it (or is not connected)." \
+            "- The backup key (\`RAILWAY_TOKEN\`) failed — see the run for Railway's exact words." \
+            "" \
+            "**Fix it once, without a key:** Railway → the service → Settings → Source → connect this repository and branch. Railway then deploys every push itself and no key is needed." \
+            "" \
+            "**Or replace the backup key:** Railway → the project → Settings → Tokens → create a project token; GitHub → Settings → Secrets and variables → Actions → \`RAILWAY_TOKEN\`. Never paste it into a chat." \
+            "" \
+            "Run: $RUN_URL")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GH_REPO" --body "$body"
+          else
+            gh issue create --repo "$GH_REPO" --title "$title" --body "$body"
+          fi

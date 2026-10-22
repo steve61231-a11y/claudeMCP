@@ -151,7 +151,13 @@ fix. `.github/workflows/deploy.yml` pushes the code to the host instead of
 waiting to be pulled, and verifies the commit against the live container
 rather than trusting the deploying tool's exit code.
 `.github/workflows/deploy-drift.yml` catches the one case a deploy workflow
-structurally cannot: the deploy that was never triggered at all.
+structurally cannot: the deploy that was never triggered at all. A key is a
+single point of failure too: the `RAILWAY_TOKEN` deployed every push from 14
+to 20 October, then Railway paused deploys ("Limited Access", its treatment
+of Free/Hobby plans when busy) and hours later rejected the key. So
+`deploy.yml` now waits first for Railway's own GitHub connection (no key),
+uses the key only if that did not land the commit, and opens an issue in
+words the founder can act on when neither did.
 
 **A guard wired to a module nothing serves is worse than no guard.**
 `settings.validate_for_startup()` exists to refuse a container with no model

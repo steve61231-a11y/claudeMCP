@@ -288,3 +288,45 @@ def test_the_guide_says_how_to_tell_whether_a_deploy_landed():
         "the next person reads the branch setting and finds it correct")
     assert "RAILWAY_TOKEN" in guide, (
         "the guide does not say how to set up the push-based deploy it needs")
+
+
+# --- no single key can stop a release ---------------------------------------
+#
+# The key this workflow deployed with worked every push from 14 to 20 October
+# 2026. On 21 October Railway paused deploys ("Limited Access") and hours
+# later rejected the key, and every push after that stalled until a human
+# replaced a credential. "How come I need to keep changing the key" — the
+# founder. A key is a single point of failure in the same way the broken
+# GitHub App was, so it is now the backup, not the route.
+
+def _steps() -> list[dict]:
+    return _yaml(DEPLOY)["jobs"]["deploy"]["steps"]
+
+
+def test_railway_s_own_deploy_is_waited_for_before_any_key_is_used():
+    names = [s.get("name") or "" for s in _steps()]
+    native = names.index("Wait for Railway's own deploy")
+    assert native < names.index("Check the token is set")
+    step = _steps()[native]
+    assert "RAILWAY_TOKEN" not in str(step.get("env")), "the keyless path must need no key"
+    assert "/api/health" in step["run"], "only the live site can say the deploy landed"
+
+
+def test_every_key_step_is_a_fallback():
+    for step in _steps():
+        if "RAILWAY_TOKEN" in str(step.get("env")):
+            assert step.get("if") == "env.NATIVE_OK != 'true'", step.get("name")
+
+
+def test_nothing_deployed_is_said_where_the_founder_will_see_it():
+    last = _steps()[-1]
+    assert last.get("if") == "failure()"
+    assert "gh issue create" in last["run"] and "Settings → Source" in last["run"]
+    assert _yaml(DEPLOY)["jobs"]["deploy"]["permissions"]["issues"] == "write"
+
+
+def test_a_newer_live_commit_is_not_drift():
+    """Railway's own deploys include documentation commits, which the
+    expected commit skips — so live can be newer than expected, and calling
+    that drift would train the reader to ignore the alarm."""
+    assert "merge-base --is-ancestor" in DRIFT.read_text()

@@ -121,6 +121,14 @@ jobs:
             echo "::notice::Live and branch agree on ${want}."
             exit 0
           fi
+          # Newer than expected is not drift. Railway's own GitHub connection
+          # deploys every push, documentation included, so the live commit
+          # can be a later docs commit built on top of the code expected.
+          if [ "$live" != "-" ] && git merge-base --is-ancestor "$want_full" "$live" 2>/dev/null; then
+            echo "state=current" >> "$GITHUB_OUTPUT"
+            echo "::notice::Live is ${live}, which contains ${want}."
+            exit 0
+          fi
 
           # A deploy takes a few minutes, and a commit pushed thirty seconds
           # ago is in flight, not stranded. Only call it drift once it has
