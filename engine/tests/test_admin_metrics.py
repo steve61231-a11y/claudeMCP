@@ -39,9 +39,10 @@ def test_metrics_endpoint_shape(db_session, monkeypatch):
     m = body["metrics"]
     for section in ("credits", "sources", "corpus", "pipeline", "reports", "alerts", "system"):
         assert section in m, f"missing section {section}"
-    # source board covers every connector + tipline
+    # source board covers every connector, and nothing that is not one
     names = {s["name"] for s in m["sources"]}
-    assert {"socialcrawl", "gdelt", "twscrape", "facebook", "tipline"}.issubset(names)
+    assert {"socialcrawl", "gdelt", "twscrape", "facebook"}.issubset(names)
+    assert "tipline" not in names, "a source with no intake was shown as ok"
     assert m["credits"]["anthropic_today"]["usd"] >= 0
     assert m["system"]["db_ok"] is True
 

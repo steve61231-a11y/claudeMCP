@@ -4,9 +4,7 @@ never be the thing that breaks a run.
 The report path resolved the tier per run and scheduled SocialCrawl tasks; the
 issue map swept four free news and forum sources and nothing else, so paying
 for SocialCrawl would have improved the report and left the map exactly as it
-was. The network is built from the database and improves for free — behind a
-thirty-minute cache that would have shown the same graph for half an hour
-after the money was spent.
+was.
 """
 
 import pytest
@@ -114,13 +112,3 @@ def test_the_tier_is_resolved_live_so_paying_needs_no_redeploy():
 def test_the_paid_budget_is_smaller_than_the_free_ones():
     """Free calls cost time; paid calls cost money."""
     assert issue_map.PAIR_BUDGET["socialcrawl"] <= issue_map.PAIR_BUDGET["gdelt"]
-
-
-def test_a_finished_run_clears_the_cached_network():
-    from engine import api_server
-
-    api_server._network_cache["okiya omtatah"] = {"at": 0, "graph": {"stale": True}}
-    api_server._invalidate_network("Okiya Omtatah")
-    assert "okiya omtatah" not in api_server._network_cache
-    # And an unknown name is not an error.
-    api_server._invalidate_network("nobody at all")

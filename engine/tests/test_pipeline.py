@@ -4,7 +4,6 @@ import numpy as np
 
 from engine import llm
 from engine.db.models import MentionEntity, Politician, RawMention
-from engine.intelligence import graph as graph_module
 from engine.intelligence import narratives as narratives_module
 from engine.pipeline import run_pipeline
 from engine.processing import sentiment as sentiment_module
@@ -38,29 +37,6 @@ def fake_embed_texts(texts):
     return np.array([np.ones(8) * i for i in range(len(texts))])
 
 
-class FakeGraphSession:
-    def __init__(self, recorder):
-        self.recorder = recorder
-
-    def run(self, query, **params):
-        self.recorder.append((query.strip().splitlines()[0], params))
-        return []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        pass
-
-
-class FakeDriver:
-    def __init__(self):
-        self.recorded_calls = []
-
-    def session(self):
-        return FakeGraphSession(self.recorded_calls)
-
-
 def patch_pipeline_dependencies(monkeypatch):
     # Force the mock ingestion source: without this the orchestrator makes
     # REAL SocialCrawl/NewsAPI calls, so the suite's outcome would depend on
@@ -78,15 +54,6 @@ def patch_pipeline_dependencies(monkeypatch):
     monkeypatch.setattr(llm, "call_json", fake_call_json)
     monkeypatch.setattr(sentiment_module, "local_sentiment", fake_local_sentiment)
     monkeypatch.setattr(narratives_module, "embed_texts", fake_embed_texts)
-
-    fake_driver = FakeDriver()
-    monkeypatch.setattr(graph_module, "get_driver", lambda: fake_driver)
-    monkeypatch.setattr(
-        graph_module,
-        "get_network_snapshot",
-        lambda politician_id, limit=50: {"politician_id": politician_id, "top_users": []},
-    )
-    return fake_driver
 
 
 def make_politician(db_session) -> Politician:
@@ -118,23 +85,6 @@ def test_pipeline_links_indirect_mentions_to_politician_entity(db_session, monke
 
     indirect_links = db_session.query(MentionEntity).filter_by(match_type="indirect_llm").all()
     assert len(indirect_links) > 0
-
-
-def test_pipeline_writes_graph_only_after_postgres_commit(db_session, monkeypatch):
-    """Regression test for the write-ordering fix: Neo4j upserts must happen
-    after the Postgres commit, and only contain data that's actually durable.
-    """
-    fake_driver = patch_pipeline_dependencies(monkeypatch)
-    politician = make_politician(db_session)
-
-    report = run_pipeline(
-        db_session, politician, "weekly", datetime(2026, 6, 1), datetime(2026, 6, 22, 23, 59, 59)
-    )
-
-    assert len(fake_driver.recorded_calls) > 0
-    mention_count = db_session.query(RawMention).count()
-    assert mention_count > 0
-    assert report.id is not None
 
 
 def test_pipeline_rerun_does_not_duplicate_mentions(db_session, monkeypatch):

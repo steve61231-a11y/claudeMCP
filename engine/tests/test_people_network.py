@@ -129,8 +129,8 @@ def test_a_failed_batch_leaves_items_unanswered_rather_than_empty(monkeypatch):
     assert entities_module.extract_people_items([("a", "one")], "John Mbadi") == {}
 
 
-def test_run_analysis_maps_people_and_writes_graph_edges(db_session, monkeypatch):
-    fake_driver = patch_pipeline_dependencies(monkeypatch)
+def test_run_analysis_maps_people(db_session, monkeypatch):
+    patch_pipeline_dependencies(monkeypatch)
     monkeypatch.setattr(
         entities_module,
         "extract_people_items",
@@ -151,8 +151,6 @@ def test_run_analysis_maps_people_and_writes_graph_edges(db_session, monkeypatch
     assert person.affiliation == "Citizen TV"
     assert person.canonical_key == "person:linus kaikai"
     assert db_session.query(MentionEntity).filter_by(entity_id=person.id).count() == 1
-    graph_queries = " ".join(q for q, _ in fake_driver.recorded_calls)
-    assert "MERGE (person:Person {canonical_key: $canonical_key})" in graph_queries
 
 
 def test_influencer_threshold_boundary(db_session, monkeypatch):

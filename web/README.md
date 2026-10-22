@@ -35,4 +35,4 @@ Add your hosted URL to the engine's **`ALLOWED_ORIGINS`** env var on Render
 (comma-separated), e.g. `https://pulse-intel.pages.dev`. Save → it redeploys.
 Without this the browser blocks the requests (you'll see "Unreachable (CORS…)" on the
 Settings test). Endpoints used: `/api/report`, `/api/issue-map`, `/api/report/{id}`,
-`/api/network`, `/api/baraza`, `/api/admin/metrics`, `/api/admin/source-check`, `/api/health`.
+`/api/progress`, `/api/admin/metrics`, `/api/admin/source-check`, `/api/health`.

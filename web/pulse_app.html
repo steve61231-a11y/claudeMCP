@@ -1048,7 +1048,7 @@
     return c;
   }
 
-  const TABS=[['search','Search'],['issue','Issue Map'],['network','Network'],['mission','Mission Control'],['settings','Settings']];
+  const TABS=[['search','Search'],['issue','Issue Map'],['mission','Mission Control'],['settings','Settings']];
   let active='search';
   function renderTabs(){
     const t=$('#tabs'); t.innerHTML='';
@@ -5776,103 +5776,9 @@
     restoreReaderState(out, kept);
   }
 
-  /* ---------------- NETWORK (pseudo-3D canvas) ---------------- */
-  function networkView(){
-    const w=el('div','grid');
-    w.appendChild(el('div','',`<div class="eyebrow">Relationship network</div><h1>Who moves around them.</h1>
-      <div class="sub">Drag to rotate, scroll to zoom, click a node for detail. Nodes are people and outlets; size is influence; lines are co-mention.</div>`));
-    const bar=el('div','card');bar.innerHTML=`<div class="row"><div style="flex:1;min-width:180px"><label class="fl">Subject</label><input id="nq" placeholder="William Ruto"></div>
-      <button class="btn" id="nrun" style="align-self:flex-end">Load network</button><span class="muted" id="nmsg" style="align-self:flex-end;font-size:14px"></span></div>`;
-    w.appendChild(bar);
-    const stage=el('div','card');stage.style.padding='10px';
-    const cv=el('canvas');cv.height=460;stage.appendChild(cv);
-    const panel=el('div','',`<div class="muted" style="font-size:13px;padding:8px 4px 2px">Click a node to inspect.</div>`);
-    stage.appendChild(panel);w.appendChild(stage);
-    let graph=null,G=NET();
-    const draw=g=>{graph=g;G.set(cv,g,sel=>{
-      if(!sel){panel.innerHTML='<div class="muted" style="font-size:13px;padding:8px 4px 2px">Click a node to inspect.</div>';return;}
-      panel.innerHTML=`<div class="mentr"><div class="row" style="justify-content:space-between"><b>${esc(sel.label)}</b><span class="pill sky">${esc(sel.group||'')}</span></div>
-        ${sel.role?`<div class="muted" style="font-size:13px;margin-top:4px">${esc(sel.role)}${sel.affiliation?' · '+esc(sel.affiliation):''}</div>`:''}
-        ${sel.co_mentions?`<div class="chip" style="margin-top:8px">${sel.co_mentions} co-mentions</div>`:''}</div>`;
-    });};
-    const run=async()=>{const name=$('#nq',bar).value.trim()||'William Ruto';const msg=$('#nmsg',bar);
-      msg.innerHTML='<span class="spinner"></span>';
-      try{ if(!LIVE)throw 0; const g=await api('/api/network?name='+encodeURIComponent(name)); msg.textContent=''; draw(normNet(g.graph||g)); }
-      catch(e){ msg.textContent=LIVE?'no network yet':''; draw(DEMO.net); }
-    };
-    $('#nrun',bar).onclick=run; setTimeout(()=>{draw(DEMO.net); if(LIVE)run();},30);
-    return w;
-  }
-  function normNet(g){
-    const grp=n=>{ if(n.id==='subject'||n.node_type==='subject')return 'subject';
-      if(n.stance&&n.stance!=='neutral'&&n.stance!=='subject')return n.stance;   // ally/rival
-      return n.node_type||n.group||'person'; };
-    const nodes=(g.nodes||[]).map(n=>({id:n.id,label:n.label||n.id,group:grp(n),
-      val:n.influence||n.value||n.weight||8,role:n.role,affiliation:n.affiliation,
-      co_mentions:n.mention_count||n.co_mentions}));
-    const ids=new Set(nodes.map(n=>n.id));
-    const edges=(g.edges||[]).map(e=>({from:e.from||e.source,to:e.to||e.target,w:e.weight||1}))
-      .filter(e=>ids.has(e.from)&&ids.has(e.to));
-    return {nodes,edges};
-  }
-  // tiny force + pseudo-3D renderer
-  function NET(){
-    let cv,ctx,g,onSel,W,H,rot=0,tilt=.3,zoom=1,drag=null,sel=null,raf;
-    const colors={core:'#7dd3fc',subject:'#7dd3fc',politician:'#fbbf24',person:'#c4b5fd',public_figure:'#c4b5fd',influencer:'#86efac',author:'#86efac',ally:'#86efac',rival:'#fb7185',neutral:'#9fb4c7'};
-    function layout(){const N=g.nodes;N.forEach((n,i)=>{const a=i/N.length*Math.PI*2;const r=n.id==='subject'?0:120+ (i%3)*40;
-      n.x=Math.cos(a)*r;n.y=(Math.random()-.5)*140;n.z=Math.sin(a)*r;n.vx=n.vy=n.vz=0;});}
-    function sim(){for(let s=0;s<70;s++){const N=g.nodes;
-      for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y,dz=a.z-b.z;let d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;let f=1400/(d*d);a.vx+=dx/d*f;a.vy+=dy/d*f;a.vz+=dz/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;b.vz-=dz/d*f;}
-      g.edges.forEach(e=>{const a=g.nodes.find(n=>n.id===e.from),b=g.nodes.find(n=>n.id===e.to);if(!a||!b)return;let dx=b.x-a.x,dy=b.y-a.y,dz=b.z-a.z;let d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;let f=(d-150)*.01;a.vx+=dx/d*f;a.vy+=dy/d*f;a.vz+=dz/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;b.vz-=dz/d*f;});
-      N.forEach(n=>{if(n.id==='subject'){n.x*=.8;n.z*=.8;}n.x+=n.vx*.05;n.y+=n.vy*.05;n.z+=n.vz*.05;n.vx*=.8;n.vy*=.8;n.vz*=.8;});}}
-    function proj(n){const cs=Math.cos(rot),sn=Math.sin(rot);let x=n.x*cs-n.z*sn,z=n.x*sn+n.z*cs;let y=n.y*Math.cos(tilt)-z*Math.sin(tilt);let zz=n.y*Math.sin(tilt)+z*Math.cos(tilt);
-      const sc=zoom*(320/(320+zz));return{sx:W/2+x*sc,sy:H/2+y*sc,scale:sc,depth:zz};}
-    function render(){ctx.clearRect(0,0,W,H);const pts=g.nodes.map(n=>({n,p:proj(n)})).sort((a,b)=>a.p.depth-b.p.depth);
-      ctx.lineWidth=1;g.edges.forEach(e=>{const a=g.nodes.find(n=>n.id===e.from),b=g.nodes.find(n=>n.id===e.to);if(!a||!b)return;const pa=proj(a),pb=proj(b);ctx.strokeStyle='rgba(125,211,252,'+(.06+.06*Math.min(1,(e.w||1)/4))+')';ctx.beginPath();ctx.moveTo(pa.sx,pa.sy);ctx.lineTo(pb.sx,pb.sy);ctx.stroke();});
-      pts.forEach(({n,p})=>{const rad=Math.max(4,(n.id==='subject'?16:6+Math.sqrt(n.val||6))*p.scale);const col=colors[n.group]||'#9fb4c7';
-        const fog=Math.max(.35,Math.min(1,(p.depth+220)/440));ctx.globalAlpha=fog;
-        if(n===sel){ctx.beginPath();ctx.arc(p.sx,p.sy,rad+6,0,7);ctx.strokeStyle=col;ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;}
-        ctx.beginPath();ctx.arc(p.sx,p.sy,rad,0,7);ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=n===sel?18:8;ctx.fill();ctx.shadowBlur=0;
-        if(p.scale>.55||n.id==='subject'){ctx.globalAlpha=Math.min(1,fog+.2);ctx.fillStyle='#dbe7f2';ctx.font=(n.id==='subject'?'600 13px ':'500 11px ')+'system-ui';ctx.textAlign='center';ctx.fillText((n.label||'').slice(0,18),p.sx,p.sy+rad+13);}
-        n._p=p;n._r=rad;ctx.globalAlpha=1;});}
-    function loop(){render();raf=requestAnimationFrame(loop);}
-    function resize(){W=cv.clientWidth;H=cv.height;cv.width=W*devicePixelRatio;cv.height=H*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);}
-    function set(canvas,graph,cb){cv=canvas;g=graph;onSel=cb;sel=null;ctx=cv.getContext('2d');resize();layout();sim();cancelAnimationFrame(raf);
-      let auto=setInterval(()=>{if(!drag)rot+=0.0025;},16);
-      cv.onpointerdown=e=>{drag={x:e.clientX,y:e.clientY,r:rot,t:tilt,moved:0};cv.setPointerCapture(e.pointerId);};
-      cv.onpointermove=e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.moved+=Math.abs(dx)+Math.abs(dy);rot=drag.r+dx*.008;tilt=Math.max(-1.2,Math.min(1.2,drag.t+dy*.006));};
-      cv.onpointerup=e=>{if(drag&&drag.moved<6){const mx=e.offsetX,my=e.offsetY;let best=null,bd=1e9;g.nodes.forEach(n=>{if(!n._p)return;const d=Math.hypot(n._p.sx-mx,n._p.sy-my);if(d<(n._r+8)&&d<bd){bd=d;best=n;}});sel=best;onSel&&onSel(best);}drag=null;};
-      cv.onwheel=e=>{e.preventDefault();zoom=Math.max(.4,Math.min(2.5,zoom*(e.deltaY<0?1.1:.9)));};
-      window.addEventListener('resize',resize);loop();}
-    return {set};
-  }
-
-  /* ---------------- BARAZA ---------------- */
-  function barazaView(){
-    const w=el('div','grid');
-    w.appendChild(el('div','',`<div class="eyebrow">Baraza index</div><h1>What Kenyans said this week.</h1>
-      <div class="sub">A weekly public leaderboard of leaders by volume and sentiment.</div>`));
-    const out=el('div','card',`<div class="empty"><span class="spinner"></span></div>`);w.appendChild(out);
-    (async()=>{
-      let idx;
-      try{ if(!LIVE)throw 0; const r=await api('/api/baraza'); idx=r.index; }
-      catch(e){ idx=DEMO.baraza; }
-      renderBaraza(out,idx,!LIVE);
-    })();
-    return w;
-  }
-  function renderBaraza(out,idx,demo){
-    out.innerHTML='';const rows=(idx&&(idx.leaders||idx.entries||idx.ranking))||[];
-    if(!rows.length){out.innerHTML=`<div class="empty"><div class="em">📊</div><b>No index yet this week.</b><div style="margin-top:6px">Run a few reports and the leaderboard fills in.</div></div>`;return;}
-    out.innerHTML=(demo?'<div class="pill amber" style="margin-bottom:12px">Demo preview</div>':'')+(idx.week||idx.week_ending?`<div class="chip" style="margin-bottom:12px">Week ending ${esc(idx.week||idx.week_ending)}</div>`:'');
-    const t=el('table');t.innerHTML='<thead><tr><th>#</th><th>Leader</th><th>Mentions</th><th>Sentiment</th></tr></thead>';
-    const tb=el('tbody');rows.slice(0,15).forEach((r,i)=>{const s=(r.net_sentiment!=null?r.net_sentiment:r.sentiment);const sc=typeof s==='number'?(s>0?'var(--pos)':s<0?'var(--neg)':'var(--neu)'):'var(--mut)';
-      const mn=r.mentions_this_week!=null?r.mentions_this_week:(r.mentions||r.volume||r.count);
-      tb.appendChild(el('tr','',`<td class="tnum muted">${r.rank||i+1}</td><td><b>${esc(r.name||r.leader||r.label)}</b></td>
-        <td class="tnum">${fmt(mn)}</td>
-        <td style="color:${sc}">${typeof s==='number'?(s>0?'+':'')+(Math.round(s*100)/100):esc(s||'—')}</td>`));});
-    t.appendChild(tb);out.appendChild(t);
-  }
+  /* Network and the Baraza leaderboard were parked on 22 Oct 2026 — see
+     docs/FOUNDATION.md. Network returns when the fact store can say who is
+     connected to whom from evidence rather than from co-mentions. */
 
   /* ---------------- MISSION CONTROL ---------------- */
   function missionView(){
@@ -5972,7 +5878,7 @@
   const errCard=m=>el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>${esc(m)}</span></div>`);
   const noteCard=(t,m)=>el('div','card',`<div class="row" style="gap:10px"><span class="pill amber">${esc(t)}</span><span class="muted" style="font-size:14px">${esc(m)}</span></div>`);
 
-  const VIEWS={search:searchView,issue:issueView,network:networkView,baraza:barazaView,mission:missionView,settings:settingsView};
+  const VIEWS={search:searchView,issue:issueView,mission:missionView,settings:settingsView};
 
   /* ---------------- DEMO DATA (preview only) ---------------- */
   const DEMO={
@@ -6223,9 +6129,6 @@
         key_actors:[{name:'Ministry of Health',relation:'implementer'},{name:'SHA authority',relation:'operator'},{name:'Opposition',relation:'critic'}],
         timeline:[{when:'2024',event:'SHA replaces NHIF'},{when:'Q1 2026',event:'Registration backlog complaints peak'},{when:'Jul 2026',event:'President promises 90-day fixes'}],
         tension_or_risk:'If facility-level complaints persist, the reform Ruto personally owns becomes his single largest cost-of-living liability.'}},
-    net:normNet({nodes:[{id:'subject',label:'William Ruto',group:'core',value:20},{id:'moh',label:'Ministry of Health',group:'politician',value:12,role:'Implementer'},{id:'sha',label:'SHA Authority',group:'politician',value:10},{id:'opp',label:'Opposition',group:'rival',value:11},{id:'nation',label:'Nation',group:'influencer',value:9,role:'Outlet'},{id:'citizen',label:'Citizen TV',group:'influencer',value:9},{id:'reddit',label:'r/Kenya',group:'person',value:8},{id:'advoc',label:'Patient advocates',group:'rival',value:7}],
-      edges:[{from:'subject',to:'moh',weight:4},{from:'subject',to:'sha',weight:3},{from:'subject',to:'opp',weight:5},{from:'subject',to:'nation',weight:3},{from:'subject',to:'citizen',weight:2},{from:'moh',to:'sha',weight:4},{from:'opp',to:'advoc',weight:3},{from:'reddit',to:'subject',weight:2},{from:'advoc',to:'sha',weight:2}]}),
-    baraza:{week_ending:'2026-07-12',leaders:[{name:'William Ruto',mentions:612,sentiment:-0.12},{name:'Rigathi Gachagua',mentions:388,sentiment:0.05},{name:'Raila Odinga',mentions:274,sentiment:0.18},{name:'John Mbadi',mentions:141,sentiment:-0.04},{name:'Edwin Sifuna',mentions:120,sentiment:0.09}]},
     sc:{total_items:0,working_sources:['google_news','reddit','youtube','wikipedia'],sources:{google_news:{enabled:true,items:41,sample:'Ruto defends SHA rollout…'},reddit:{enabled:true,items:18,sample:'r/Kenya thread on SHA'},youtube:{enabled:true,items:12,sample:'Citizen TV address'},wikipedia:{enabled:true,items:9,sample:'William Ruto — background'},gdelt:{enabled:true,items:6},scweet_x:{enabled:false,error:'disabled'}}},
     metrics:{reports:{total:31,last_7d:14},corpus:{total_mentions:5230,last_24h:212},credits:{anthropic_7d:{usd:2.71},socialcrawl_balance:0},pipeline:{recent:[1,2,3,4,5]},system:{db_ok:true,scheduler_enabled:true,refresh_hours:6,uptime_seconds:5400,prewarm_names:['William Ruto','John Mbadi']}}
   };

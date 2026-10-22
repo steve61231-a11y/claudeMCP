@@ -162,6 +162,29 @@ the "more variables" you described, added to a base built to take them.
 
 ---
 
+## Progress
+
+**22 Oct 2026.** Founder's decisions: keep the Issue Map (rebuild later),
+park Network, test subjects Edwin Sifuna and Martha Karua.
+
+- **Phase 0 — done.** Every report carries a measured `quality` block
+  (`reports/quality.py`), stamped with the commit that wrote it; operators
+  see a Quality check card; `/api/admin/quality` lists reports over time.
+- **Phase 1 — started.** Google News links decoded to the publisher and the
+  article read (`ingestion/google_news_links.py`); a headline and its
+  article are one item, upgraded in place; a long period is collected month
+  by month and GDELT's three-month reach is declared, not mistaken for a
+  quiet past.
+- **Cuts — done in the served app.** Network tab and endpoints, the six
+  endpoints nothing called, the public leaderboard (it listed every subject
+  without a key), the stored reports served in place of failed runs, the
+  Neo4j projection. **Awaiting the founder's OK:** deleting the legacy
+  `frontend/` and NestJS `api/` apps, `engine/main.py` and its Dockerfile,
+  and the now-unused Neo4j modules — the permission system stops a bulk
+  deletion without it.
+
+---
+
 ## What only the founder can do
 
 1. **Replace the Railway deploy token** — every deploy since the morning of

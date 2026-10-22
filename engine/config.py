@@ -13,14 +13,19 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 
 class Settings(BaseSettings):
-    # "local-dev" enables convenience fallbacks (default DB creds, optional
-    # internal token). Anything else fails closed: explicit credentials and
-    # INTERNAL_API_TOKEN become mandatory (validated at engine startup).
+    # "local-dev" enables convenience fallbacks (the default local database).
+    # Anything else requires explicit credentials, and /api/health reports
+    # what is missing (`configuration_problems`).
     app_env: str = "local-dev"
     database_url: str = ""
+    # The legacy stack only — engine/main.py, the NestJS api/ and the Neo4j
+    # service in docker-compose. No deployment serves it and nothing in the
+    # served app reads these; they stay until that stack is deleted, and are
+    # not reported as problems, because they are not the served app's.
     neo4j_uri: str = "bolt://neo4j:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = ""
+    internal_api_token: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
     # Cheap/fast model for the high-volume mechanical stages (classification,
@@ -88,7 +93,6 @@ class Settings(BaseSettings):
     # investigation rather than a repeated sweep.
     enable_investigator: bool = True
     sentiment_confidence_threshold: float = 0.55
-    internal_api_token: str = ""
     newsapi_key: str = ""
     socialcrawl_api_key: str = ""
     # SocialCrawl is the SOCIAL-MEDIA backbone: whenever credits are available it
@@ -368,6 +372,10 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # A variable left behind by a removed feature (NEO4J_PASSWORD,
+        # INTERNAL_API_TOKEN, SERVE_PRECACHE_FIRST…) must not stop the engine
+        # starting. They are ignored, not errors.
+        extra = "ignore"
 
     @property
     def is_local_dev(self) -> bool:
@@ -410,18 +418,19 @@ class Settings(BaseSettings):
                 problems.append("LLM_API_KEY is required when LLM_PROVIDER=openai_compatible")
             if not self.llm_model:
                 problems.append("LLM_MODEL is required when LLM_PROVIDER=openai_compatible")
-        if not self.is_local_dev:
-            if not self.internal_api_token:
-                problems.append("INTERNAL_API_TOKEN is not set (required outside local-dev)")
-            if not self.database_url:
-                problems.append("DATABASE_URL is not set (required outside local-dev)")
-            if not self.neo4j_password:
-                problems.append("NEO4J_PASSWORD is not set (required outside local-dev)")
+        if not self.is_local_dev and not self.database_url:
+            problems.append("DATABASE_URL is not set (required outside local-dev)")
         return problems
 
     def validate_for_startup(self) -> None:
-        """Fail-closed startup checks: outside local-dev, refuse to run with
-        missing shared secrets or credential fallbacks."""
+        """The raising form of `configuration_problems`, for a script or a
+        test that wants to refuse.
+
+        Deliberately NOT called by the served app: a container that refuses
+        to start cannot say why, and Railway would restart it in a loop.
+        `/api/health` reports the same problems instead. It used to sit on
+        engine/main.py, which no deployment served, and read as a guard that
+        had never once run."""
         problems = self.configuration_problems()
         if problems:
             raise RuntimeError("Engine refusing to start: " + "; ".join(problems))

@@ -21,7 +21,7 @@ Three products, one engine:
 |---|---|
 | **Search report** | "What is the public record on this person, and what does it mean?" |
 | **Issue Map** | "How is this person connected to this institution or issue?" — e.g. `Odious Debt case × IMF` |
-| **Network** | Who is connected to whom, from the accumulated corpus |
+| **Network** | *Parked 22 Oct 2026.* Returns when the fact store can say who is connected to whom from evidence, not co-mentions |
 
 It is intended to be **sold**. That matters for several decisions below,
 particularly the test-grade banner.
@@ -169,7 +169,39 @@ against someone else's 401. `/api/health` now reports `llm` — the backend,
 whether the credential it needs is PRESENT (never any part of its value;
 the endpoint is public), and whether a report from this deployment would be
 production-grade. `configuration_problems()` is the non-raising half, because
-a startup check wants to refuse and a health endpoint wants to report.
+a startup check wants to refuse and a health endpoint wants to report. It
+used to list `NEO4J_PASSWORD` and `INTERNAL_API_TOKEN` as missing on every
+deployment — variables of the legacy `engine/main.py` stack, which nothing
+serves — so the one honest list of what is wrong opened with two false
+alarms. It lists only what the served app needs now.
+
+**Measured, not believed.** Every report carries `quality`
+(`reports/quality.py`): how much of the news was read in full rather than as
+headlines, how many analyst sentences carry a source or sit beside verified
+quotes, how many citations point at a ref the corpus does not hold (an
+invented source, so not counted as one), how many figures match no number
+the engine computed and none in the sources, and what the name and identity
+guards removed. It is stamped with the commit that wrote the report
+(`engine/build.py`, also what `/api/health` reads), shown to operators as a
+"Quality check" card, and listed at `/api/admin/quality`. A change is better
+when these numbers say so on the same subjects — not when one report looks
+better by eye, which is how every change was judged before.
+
+**A stored report is not a fallback.** The engine kept a July report for
+"Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
+containing either word it served the stored one as `ok: True` with a small
+"stale fallback" pill. A reader who asked for this month got another
+period's report as the answer — and it pre-empted `_partial_payload`, which
+hands over what the failed run did produce under a banner. Removed with the
+`SERVE_PRECACHE_FIRST` switch. A failed run is a failure or an honest partial.
+
+**Who is being researched is itself confidential.** `/api/baraza` served,
+without a key, a weekly leaderboard of every subject in the database with
+counts and sentiment. For this product the list of names is the client's
+secret. Removed with the Network tab, and
+`test_nothing_names_a_subject_without_the_key.py` now requires the key on
+every route but the page and `/api/health` — a rule over all routes, because
+the next public endpoint will have another name.
 
 **Explain a failure with what you know, not only with what a stranger said.**
 A run died on OpenRouter's "Missing Authentication header" and the page told
@@ -733,6 +765,8 @@ so without these it contributes nothing in production).
   sections could not be produced", with the actual exception.
 - **The run never finishes** → it now cannot exceed `REPORT_DEADLINE_SECONDS`.
   If it does, something new is unbounded.
+- **Is this change better?** → `/api/admin/quality?name=…` lists recent
+  reports' measured quality, newest first, with the commit that wrote each.
 - **Costs** → Mission Control shows real tokens and dollars, priced at the
   configured backend's rates.
 - **A stuck subject** → a dead run is reaped after 30 minutes of silence; press

@@ -25,10 +25,8 @@ def _stub_pipeline(monkeypatch):
     """Same hermetic setup as the main pipeline tests, but the LLM layer is NOT
     monkeypatched — calls go through the real stub backend."""
     from engine.config import settings as config_settings
-    from engine.intelligence import graph as graph_module
     from engine.intelligence import narratives as narratives_module
     from engine.processing import sentiment as sentiment_module
-    from engine.tests.test_pipeline import FakeDriver
 
     monkeypatch.setattr(config_settings, "llm_provider", "stub")
     monkeypatch.setattr(config_settings, "socialcrawl_api_key", "")
@@ -45,13 +43,6 @@ def _stub_pipeline(monkeypatch):
         raise AssertionError("stub mode reached the Anthropic API")
 
     monkeypatch.setattr(llm, "get_client", _no_network)
-
-    fake_driver = FakeDriver()
-    monkeypatch.setattr(graph_module, "get_driver", lambda: fake_driver)
-    monkeypatch.setattr(
-        graph_module, "get_network_snapshot",
-        lambda politician_id, limit=50: {"politician_id": politician_id, "top_users": []},
-    )
 
 
 def test_a_full_run_completes_on_the_stub_backend(db_session, monkeypatch):

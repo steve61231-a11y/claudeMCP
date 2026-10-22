@@ -22,7 +22,7 @@ from engine.db.models import (
     RawMention,
 )
 from engine.ingestion import orchestrator
-from engine.intelligence import graph, influence, narratives as narrative_module
+from engine.intelligence import influence, narratives as narrative_module
 # `sentiment` was imported here and never called — per-mention scoring lives in
 # engine.agents.score, which is batched. A dead import reads as a live stage.
 from engine.processing import cleaning, entities, sentiment
@@ -356,7 +356,6 @@ def run_analysis(
 
     _llm_cap = settings.low_memory_max_llm_mentions if settings.low_memory else settings.max_llm_mentions
 
-    people_counts: dict[str, dict] = {}
     unchecked = db.query(RawMention).filter(*window_filter, RawMention.link_checked == 0).all()
 
     # Sources that fetch BY the subject's name are on-topic by construction —
@@ -444,13 +443,6 @@ def run_analysis(
                     mention_id=mention.id, entity_id=person_entity.id, confidence=0.8, match_type="ner"
                 )
             )
-            record = people_counts.setdefault(
-                person_entity.canonical_key,
-                {"canonical_key": person_entity.canonical_key, "name": person_entity.name, "count": 0},
-            )
-            record["count"] += 1
-            record["role"] = person_entity.role
-            record["affiliation"] = person_entity.affiliation
     db.flush()
 
     stages.current().lap("linking")
@@ -611,24 +603,14 @@ def run_analysis(
 
     db.commit()
 
-    # Neo4j writes happen only after the Postgres commit succeeds, so the graph
-    # never records mentions/edges that don't actually exist in the source of
-    # truth. upsert_mentions uses MERGE throughout, so re-running after a crash
-    # here is safe and won't duplicate nodes/edges.
-    graph.upsert_mentions(politician.id, politician.name, stored_mentions)
-    graph.upsert_people(politician.id, list(people_counts.values()))
-    graph.upsert_influencers(politician.id, influencers)
-    # Postgres is the source of truth for the network view — Neo4j is not
-    # provisioned in the Render deployment (and is stubbed in tests/demo), so
-    # a Neo4j-only snapshot silently renders an empty map in production.
-    # Neo4j results, when present, only fill in anything Postgres lacks.
+    # Who is named alongside the subject, from Postgres. There was a Neo4j
+    # projection here too; it was never provisioned in any deployment, the
+    # served app replaced it with a stub at import, and this snapshot already
+    # supplied every key the report reads. Removed 22 Oct 2026.
     if out_of_time("network_snapshot"):
         network_snapshot = {}
     else:
-        network_snapshot = {
-            **graph.get_network_snapshot(politician.id),
-            **_network_snapshot_from_db(db, politician, politician_entity),
-        }
+        network_snapshot = _network_snapshot_from_db(db, politician, politician_entity)
 
     stages.current().lap("network")
     payload = generate_report_payload(
@@ -1277,9 +1259,9 @@ def _upsert_entity(
 
 
 def _network_snapshot_from_db(db: Session, politician: Politician, politician_entity: Entity) -> dict:
-    """People-first network snapshot computed from Postgres, matching
-    graph.get_network_snapshot's shape and adding person↔person co-mention
-    edges (two people named together in the same mention)."""
+    """People-first network snapshot computed from Postgres, with
+    person↔person co-mention edges (two people named together in the same
+    mention)."""
     from sqlalchemy import func
 
     from engine.db.models import AuthorProfile
