@@ -1,0 +1,31 @@
+name: article-probe
+
+# How much of the journalism does a run actually read?
+#
+# Every news item enters the corpus as a headline; article_text.py is meant
+# to turn it into the article. Google News stores a news.google.com redirect
+# rather than the publisher's address, and the development sandbox cannot
+# reach either, so whether that works had never been measured. This asks from
+# GitHub's network, for generic public queries, and annotates the run with
+# how many items gave an article body by each route. Run on demand.
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - scripts/article_probe.py
+      - .github/workflows/article-probe.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the extractor and both fetch tiers the engine uses
+        run: pip install requests trafilatura==2.1.0 curl_cffi==0.16.2 googlenewsdecoder
+      - name: Probe
+        run: python scripts/article_probe.py article_probe.json
