@@ -240,3 +240,22 @@ def test_the_admin_view_shows_the_facts_with_their_sources(db_session, monkeypat
     assert body["facts"][0]["publisher"] == "Daily Nation"
     grouped = client.get("/api/admin/facts", params={"name": "fact probe", "grouped": True}).json()
     assert grouped["findings"][0]["independent_sources"] == 1
+
+
+def test_the_same_wire_copy_under_two_mastheads_is_one_origin():
+    wire = ("NAIROBI, Oct 20 - The National Treasury on Monday released the delayed county "
+            "disbursements after a three-hour Senate hearing in which governors warned that "
+            "health workers in fourteen counties had gone unpaid for two months.")
+    rows = [
+        {**_row("The Treasury released county funds after the Senate hearing", "Daily Nation"),
+         "source_text": wire},
+        {**_row("Treasury released the county funds following a Senate hearing", "The Star"),
+         "source_text": wire.replace("NAIROBI, Oct 20 - ", "")},
+        {**_row("The Treasury released county funds after a Senate hearing", "The Standard"),
+         "source_text": "Our own reporting: senators grilled Treasury officials for hours before "
+                        "the money was finally sent to counties, our correspondent writes."},
+    ]
+    group = facts.corroborate(rows)[0]
+    assert group["publishers"] == 3
+    assert group["independent_sources"] == 2, "wire copy was counted as independent confirmation"
+    assert group["syndicated"] is True

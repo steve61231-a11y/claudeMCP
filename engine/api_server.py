@@ -1871,6 +1871,7 @@ def admin_facts(name: str, limit: int = 100, kind: str | None = None, grouped: b
                    "quote": f.quote, "actor": f.actor, "topic": f.topic,
                    "published_at": str(f.published_at) if f.published_at else None,
                    "publisher": _publisher(m) or f.source_key,
+                   "source_id": f.source_key, "source_text": m.text if (m and grouped) else None,
                    "url": ((m.raw_payload or {}).get("url") or m.source_url) if m else None}
                   for f, m in rows]
         out = {"ok": True, "subject": politician.name,
@@ -1880,7 +1881,12 @@ def admin_facts(name: str, limit: int = 100, kind: str | None = None, grouped: b
             from engine.evidence import facts as facts_store
 
             out["findings"] = facts_store.corroborate(listed)
+            for finding in out["findings"]:
+                for source in finding["sources"]:
+                    source.pop("source_text", None)
         else:
+            for row in listed:
+                row.pop("source_text", None)
             out["facts"] = listed
         return out
     finally:

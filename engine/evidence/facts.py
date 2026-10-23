@@ -227,13 +227,16 @@ def _content(statement: str) -> set[str]:
 def corroborate(rows: list[dict], threshold: float = SAME_STORY) -> list[dict]:
     """Group facts that say the same thing, and count who independently said it.
 
-    `rows` carry statement, quote, kind, status, publisher, url, published_at.
-    Same story = the statements share at least `threshold` of their content
-    words (Jaccard). An opinion is never grouped with a statement of fact.
-    Independence is distinct PUBLISHERS (`outlets.publisher`), so one outlet
-    repeating itself is one source. What this does not catch — two outlets
-    printing the same wire copy — is `independence.py`'s job over the source
-    texts, and is the next refinement."""
+    `rows` carry statement, quote, kind, status, publisher, url, published_at,
+    and optionally source_id and source_text. Same story = the statements
+    share at least `threshold` of their content words (Jaccard). An opinion is
+    never grouped with a statement of fact.
+
+    Independence counts ORIGINS: sources from one publisher are one origin,
+    and so are sources whose texts are near-duplicates (`independence.py`) —
+    the same wire story under two mastheads is one report carried twice, not
+    two newsrooms confirming it. Without source text, publishers alone
+    decide."""
     groups: list[dict] = []
     ordered = sorted(rows, key=lambda r: (r.get("published_at") is None, str(r.get("published_at") or "")))
     for row in ordered:
@@ -258,12 +261,14 @@ def corroborate(rows: list[dict], threshold: float = SAME_STORY) -> list[dict]:
         members = group["members"]
         weakest = min(members, key=lambda m: _STRENGTH.get(m.get("status"), 0))
         dates = [str(m["published_at"]) for m in members if m.get("published_at")]
-        publishers = {m.get("publisher") or "unknown" for m in members}
+        origins, syndicated = _origins(members)
         out.append({
             "statement": weakest.get("statement"),
             "kind": weakest.get("kind"),
             "status": weakest.get("status"),
-            "independent_sources": len(publishers),
+            "independent_sources": origins,
+            "publishers": len({m.get("publisher") or "unknown" for m in members}),
+            "syndicated": syndicated,
             "first_seen": min(dates) if dates else None,
             "last_seen": max(dates) if dates else None,
             "sources": [{k: m.get(k) for k in ("publisher", "url", "published_at", "quote", "status")}
@@ -273,3 +278,37 @@ def corroborate(rows: list[dict], threshold: float = SAME_STORY) -> list[dict]:
     out.sort(key=lambda g: g["last_seen"] or "", reverse=True)
     out.sort(key=lambda g: g["independent_sources"], reverse=True)
     return out
+
+
+def _origins(members: list[dict]) -> tuple[int, bool]:
+    """(distinct origins, whether any two publishers carried the same copy)."""
+    from engine.evidence.independence import group_duplicates
+
+    parent = list(range(len(members)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    by_publisher: dict[str, int] = {}
+    for i, m in enumerate(members):
+        key = m.get("publisher") or "unknown"
+        if key in by_publisher:
+            union(i, by_publisher[key])
+        else:
+            by_publisher[key] = i
+    texts = [{"id": i, "text": m.get("source_text"), "posted_at": None}
+             for i, m in enumerate(members) if m.get("source_text")]
+    syndicated = False
+    for group in group_duplicates(texts):
+        ids = group.mention_ids
+        if len({members[i].get("publisher") for i in ids}) > 1:
+            syndicated = True
+        for other in ids[1:]:
+            union(ids[0], other)
+    return len({find(i) for i in range(len(members))}), syndicated
