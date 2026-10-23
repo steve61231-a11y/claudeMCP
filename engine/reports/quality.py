@@ -348,6 +348,26 @@ def prose_support(payload: dict, corpus: list[dict]) -> dict:
     }
 
 
+def record(payload: dict) -> dict:
+    """The verified record behind this report, and what the brief's sentence
+    check did — the phase 2 and 3 numbers, kept beside the rest so a change
+    is judged on them too."""
+    store = payload.get("fact_store") or {}
+    rec = payload.get("established_record") or {}
+    brief = payload.get("brief_check") or {}
+    check = brief.get("check") or {}
+    return {
+        "facts_read_this_run": store.get("facts"),
+        "quotes_failing_verification": store.get("dropped_unverified"),
+        "verified_share": store.get("verified_share"),
+        "findings_on_record": rec.get("findings_total", len(rec.get("findings") or [])) if rec else None,
+        "brief_from_record": brief.get("used"),
+        "brief_sentences_written": check.get("written"),
+        "brief_sentences_removed": len(check.get("removed") or []) if check else None,
+        "brief_not_used_because": None if brief.get("used") else brief.get("reason"),
+    }
+
+
 def completeness(payload: dict) -> dict:
     status = payload.get("section_status") or {}
     return {
@@ -385,6 +405,7 @@ def assess(payload: dict, corpus: list[dict]) -> dict:
         depth = corpus_depth(corpus or [])
         support = prose_support(payload or {}, corpus or [])
         sections = completeness(payload or {})
+        on_record = record(payload or {})
     except Exception as exc:  # noqa: BLE001
         return {"version": VERSION, "measured": False,
                 "error": f"{type(exc).__name__}: {exc}"[:300]}
@@ -398,5 +419,6 @@ def assess(payload: dict, corpus: list[dict]) -> dict:
         "corpus": depth,
         "prose": support,
         "sections": sections,
+        "record": on_record,
         "headline": headline(depth, support, sections),
     }

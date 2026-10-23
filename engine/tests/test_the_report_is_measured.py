@@ -221,3 +221,15 @@ def test_the_quality_history_needs_the_key(monkeypatch):
 
     monkeypatch.setattr(api_server.settings, "pulse_api_key", "secret")
     assert TestClient(api_server.app).get("/api/admin/quality").status_code == 401
+
+
+def test_the_record_and_the_brief_check_are_measured():
+    payload = {"fact_store": {"facts": 12, "dropped_unverified": 3, "verified_share": 80.0},
+               "established_record": {"findings_total": 7, "findings": []},
+               "brief_check": {"used": True, "check": {"written": 6, "kept": 5,
+                                                       "removed": [{"sentence": "x", "reason": "y"}]}}}
+    measured = quality.assess(payload, CORPUS)["record"]
+    assert measured["verified_share"] == 80.0
+    assert measured["findings_on_record"] == 7
+    assert (measured["brief_sentences_written"], measured["brief_sentences_removed"]) == (6, 1)
+    assert measured["brief_not_used_because"] is None
