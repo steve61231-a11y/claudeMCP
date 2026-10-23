@@ -1,5 +1,6 @@
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -808,6 +809,26 @@ def run_analysis(
     # back to the pool rather than sitting idle until the server closes it.
     # Every query after this one then checks out a fresh, pre-pinged
     # connection. See `db.session.release_connection`.
+    #
+    # The fact store reads this period's unread sources ALONGSIDE the
+    # analysts: planned here (one query), read in a thread that touches no
+    # database, stored after the analysts return, on this thread. It adds no
+    # wall-clock to the report unless it is still reading when they finish.
+    fact_future = None
+    if settings.enable_fact_store and corpus:
+        try:
+            from engine.evidence import facts as facts_store
+            from engine.runctx import carry
+
+            fact_todo = facts_store.plan(db, corpus)
+            if fact_todo:
+                fact_pool = ThreadPoolExecutor(max_workers=1)
+                fact_future = fact_pool.submit(
+                    carry(lambda: facts_store.read_all(politician.name, fact_todo)))
+                fact_pool.shutdown(wait=False)
+        except Exception as exc:  # noqa: BLE001 — the store must never cost the report
+            _rollback_quietly(db)
+            stages.current().failed("fact_store", exc)
     release_connection(db)
 
     payload = enrich_report_payload(
@@ -821,6 +842,29 @@ def run_analysis(
         deadline_seconds=_time_left(minimum=120.0),
     )
     stages.current().lap("analysts")
+
+    # What this period's sources establish, from the verified store, with no
+    # model writing any of it. Sources the thread has not finished are left
+    # unread, not marked empty — the back office reads them after delivery.
+    if settings.enable_fact_store and corpus:
+        try:
+            from engine.evidence import facts as facts_store
+
+            if fact_future is not None:
+                try:
+                    results = fact_future.result(timeout=min(
+                        settings.fact_store_wait_seconds, _time_left(minimum=1.0)))
+                    payload["fact_store"] = facts_store.store(db, politician, results)
+                except FuturesTimeout:
+                    stages.current().failed("fact_store", TimeoutError(
+                        "still reading sources when the analysts finished; the rest are "
+                        "read after delivery"))
+            payload["established_record"] = facts_store.record_for(db, politician, corpus)
+            publish("established_record", payload["established_record"])
+        except Exception as exc:  # noqa: BLE001
+            _rollback_quietly(db)
+            stages.current().failed("established_record", exc)
+    stages.current().lap("facts")
 
     # Refined with what the analysts wrote — the executive summary, the deep
     # dives behind each issue, the public voice. Arithmetic again, so it is

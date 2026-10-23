@@ -26,6 +26,15 @@ def _scripted(prompt, max_tokens=None, model=None):
     p = prompt.lower()
     if "reply with only this json" in p:                      # preflight
         return {"ok": True, "n": 2}
+    if "atomic things" in p:                                  # the fact store
+        return {"records": [
+            {"i": i, "kind": "fact", "status": "reported", "topic": "cost of living",
+             "statement": "The subject spoke about the cost of living in Nairobi.",
+             "quote": "spoke about the cost of living in Nairobi", "actor": "", "sentiment": "neutral"}
+            for i in range(1, 9)] + [
+            {"i": 1, "kind": "fact", "status": "reported", "topic": "invented",
+             "statement": "The subject resigned from the Senate.",
+             "quote": "announced his resignation from the Senate", "actor": "", "sentiment": "negative"}]}
     if "narrative theme" in p or '"clusters"' in p:
         return {"clusters": [{"id": i, "label": f"Storyline {i}",
                               "description": "What this cluster is about."} for i in range(6)]}
@@ -278,6 +287,27 @@ def test_every_report_is_measured_and_the_measurement_reaches_the_page(db_sessio
     assert measured["corpus"]["articles"] > 0
     response = _api_shape(payload, db_session, subject.id)
     assert response["quality"]["measured"] is True
+
+
+def test_the_record_is_built_from_verified_facts_and_reaches_the_page(db_session, scripted_model):
+    """Phase 3's first section: what the sources state, with no model writing
+    it. The invented resignation has no quote in any source, so it is not on
+    the record — it is counted."""
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    assert payload["fact_store"]["facts"] > 0
+    assert payload["fact_store"]["dropped_unverified"] > 0
+    record = payload["established_record"]
+    statements = [f["statement"] for f in record["findings"]]
+    assert statements == ["The subject spoke about the cost of living in Nairobi."]
+    finding = record["findings"][0]
+    # The seeded items are one template with a number changed, so the wire
+    # copy check is right to call them one origin carried by many outlets.
+    assert finding["publishers"] >= 2 and finding["syndicated"] is True
+    assert finding["independent_sources"] == 1
+    assert all(s["quote"] for s in finding["sources"])
+    response = _api_shape(payload, db_session, subject.id)
+    assert response["establishedRecord"]["findings"][0]["statement"] == statements[0]
 
 
 def test_the_api_response_is_json_serialisable(db_session, scripted_model):

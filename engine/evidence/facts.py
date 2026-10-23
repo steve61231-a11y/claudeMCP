@@ -143,31 +143,41 @@ def verify(item: dict, entries: list[dict], max_chars: int) -> tuple[list[dict],
     return kept, dropped
 
 
-def extract_and_store(db, politician, corpus: list[dict], limit: int | None = None) -> dict:
-    """Read every source in `corpus` not yet read, keep what verifies, and say
-    what happened. Commits; idempotent across runs."""
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+def plan(db, corpus: list[dict], limit: int | None = None) -> list[dict]:
+    """The sources in `corpus` not yet read, text-bearing first, capped.
+    The only database read; what follows it touches no database."""
+    from engine.db.models import FactExtraction
 
-    from engine.db.models import Fact, FactExtraction
-
-    max_chars = max(500, int(settings.fact_item_chars))
     keyed = {source_key(item): item for item in corpus if source_key(item)}
     done = {key for (key,) in db.query(FactExtraction.source_key).filter(
         FactExtraction.source_key.in_(list(keyed)), FactExtraction.status == "read")} if keyed else set()
     # Text-bearing items first: a full article holds more than a reaction.
     todo = sorted((item for key, item in keyed.items() if key not in done),
                   key=lambda m: (not m.get("full_text"), -len(m.get("text") or "")))
-    todo = todo[: (limit if limit is not None else settings.fact_extraction_max_items)]
-    stats = {"sources_in_corpus": len(keyed), "already_read": len(done), "read": 0,
-             "failed": 0, "facts": 0, "dropped_unverified": 0, "by_kind": {}, "by_status": {}}
-    if not todo:
-        return stats
+    return todo[: (limit if limit is not None else settings.fact_extraction_max_items)]
 
+
+def read_all(subject: str, todo: list[dict]) -> list[tuple[dict, list[dict] | None, str | None]]:
+    """Model calls only — no database — so it can run while the report's own
+    session sits released, alongside the analysts."""
+    if not todo:
+        return []
+    max_chars = max(500, int(settings.fact_item_chars))
     batches = list(_batches(todo, max_chars))
     with ThreadPoolExecutor(max_workers=max(1, llm.concurrency(min(_WORKERS, len(batches))))) as pool:
-        results = [r for batch in pool.map(carry(lambda b: _read(politician.name, b, max_chars)), batches)
-                   for r in batch]
+        return [r for batch in pool.map(carry(lambda b: _read(subject, b, max_chars)), batches)
+                for r in batch]
 
+
+def store(db, politician, results) -> dict:
+    """Write what verified, and a read record for every source. Commits."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from engine.db.models import Fact, FactExtraction
+
+    max_chars = max(500, int(settings.fact_item_chars))
+    stats = {"read": 0, "failed": 0, "facts": 0, "dropped_unverified": 0,
+             "by_kind": {}, "by_status": {}}
     model = llm.bulk_model()
     now = datetime.utcnow()
     for item, entries, error in results:
@@ -205,6 +215,55 @@ def extract_and_store(db, politician, corpus: list[dict], limit: int | None = No
     proposed = stats["facts"] + stats["dropped_unverified"]
     stats["verified_share"] = round(100 * stats["facts"] / proposed, 1) if proposed else None
     return stats
+
+
+def extract_and_store(db, politician, corpus: list[dict], limit: int | None = None) -> dict:
+    """Read every source in `corpus` not yet read, keep what verifies, and say
+    what happened. Commits; idempotent across runs.
+
+    The connection is released between the read and the write: the model
+    calls take minutes, and an idle held connection is one the database
+    server closes (see `db.session.release_connection`)."""
+    from engine.db.session import release_connection
+
+    keyed = [item for item in corpus if source_key(item)]
+    todo = plan(db, corpus, limit)
+    stats = {"sources_in_corpus": len(keyed), "to_read": len(todo)}
+    release_connection(db)
+    stats.update(store(db, politician, read_all(politician.name, todo)) if todo else
+                 {"read": 0, "failed": 0, "facts": 0, "dropped_unverified": 0,
+                  "by_kind": {}, "by_status": {}, "verified_share": None})
+    return stats
+
+
+def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
+    """What this period's sources establish, from the store, with no model.
+
+    The facts held for exactly the sources this report read, grouped by
+    story, opinions left out, most independently corroborated first. Every
+    entry carries the source's own words and where they were printed."""
+    from engine.db.models import Fact
+    from engine.reports import outlets
+
+    by_key = {source_key(item): item for item in corpus if source_key(item)}
+    if not by_key:
+        return {"findings": [], "sources_with_facts": 0, "facts": 0}
+    rows = db.query(Fact).filter(Fact.politician_id == politician.id,
+                                 Fact.source_key.in_(list(by_key)),
+                                 Fact.kind != "opinion").all()
+    listed = []
+    for fact in rows:
+        item = by_key[fact.source_key]
+        listed.append({"statement": fact.statement, "quote": fact.quote, "kind": fact.kind,
+                       "status": fact.status, "publisher": outlets.publisher(item),
+                       "url": item.get("source_url"), "source_text": item.get("text"),
+                       "published_at": fact.published_at.date().isoformat() if fact.published_at else None})
+    findings = corroborate(listed)
+    for finding in findings:
+        for source in finding["sources"]:
+            source.pop("source_text", None)
+    return {"findings": findings[:most], "findings_total": len(findings),
+            "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows)}
 
 
 # ---------------------------------------------------------------------------

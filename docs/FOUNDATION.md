@@ -181,7 +181,14 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   sources not yet read; `/api/admin/facts` shows it. The same story from
   several outlets is one finding with a count of independent ORIGINS — one
   publisher repeating itself, or two printing the same wire copy, is one —
-  and takes its weakest member's status. Next: phase 3.
+  and takes its weakest member's status.
+- **Phase 3 — started.** The report's first section of the Case is now
+  "On the record": built from the store with no model writing it. Facts
+  are read alongside the analysts (no added wait unless still reading when
+  they finish, capped by `FACT_STORE_WAIT_SECONDS`), and each finding shows
+  its status ("Alleged — not established" where it is), its independent
+  origins and every source's own words. Next: confine the analysts' prose
+  to the store, and check each sentence against it.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;

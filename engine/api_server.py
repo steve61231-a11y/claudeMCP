@@ -624,6 +624,10 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # report from an inventive one, and a client reading an invented name
         # is the fastest way to lose them.
         "grounding": payload.get("grounding"),
+        # What this period's sources establish, from the verified fact store:
+        # statements anchored to quotes found in their sources, grouped by
+        # story, with independent origins. No model wrote any of it.
+        "establishedRecord": payload.get("established_record"),
         # How good this report is, measured: full text versus headlines,
         # sentences a source backs, figures that match nothing, citations
         # that point at nothing. Operator view only — see reports/quality.py.

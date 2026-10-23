@@ -3738,6 +3738,48 @@
     return c;
   }
 
+  /** On the record — what this period's sources establish, from the
+      verified fact store (evidence/facts.py). No model wrote any of it:
+      every entry is a statement whose quote was found in its source, grouped
+      by story, with the number of independent origins and each source's own
+      words. An allegation is labelled as one. */
+  const RECORD_STATUS={reported:['Reported','pos'],inferred:['The source’s own inference','sky'],
+    unresolved:['Disputed or open','amber'],alleged:['Alleged — not established','amber']};
+  function renderEstablishedRecord(rec){
+    const rows=((rec||{}).findings||[]).filter(f=>f&&f.statement);
+    if(!rows.length)return null;
+    const total=rec.findings_total||rows.length;
+    const c=deepCard('On the record',
+      `What the sources state, each line resting on words a source printed — ${total} finding${total===1?'':'s'}`,
+      {open:true});
+    const href=u=>/^https?:\/\//i.test(u||'')?u:'';
+    rows.forEach(f=>{
+      const [label,tone]=RECORD_STATUS[f.status]||['Reported','pos'];
+      const n=f.independent_sources||1;
+      const row=el('div','mentr record-row');
+      row.innerHTML=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+          <b style="font-size:15px;flex:1;min-width:0">${esc(f.statement)}</b>
+          <span class="pill ${tone}">${esc(label)}</span></div>
+        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+          <span class="chip">${n} independent source${n===1?'':'s'}</span>
+          ${f.syndicated?`<span class="chip">carried by ${f.publishers} outlets, partly shared copy</span>`:''}
+          ${f.first_seen?`<span class="chip">${esc(ukDate(f.first_seen))}${f.last_seen&&f.last_seen!==f.first_seen?' – '+esc(ukDate(f.last_seen)):''}</span>`:''}
+        </div>`;
+      const fold=foldBlock('The sources, in their own words', `${(f.sources||[]).length}`);
+      (f.sources||[]).forEach(s=>{
+        const u=href(s.url);
+        fold.appendChild(el('div','qt',`“${esc((s.quote||'').trim())}”<span class="qt-ref">${esc(s.publisher||'source')}`
+          +`${s.published_at?' · '+esc(ukDate(s.published_at)):''}`
+          +`${u?` · <a class="src-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer">open ↗</a>`:''}</span>`));
+      });
+      row.appendChild(fold);
+      c.appendChild(row);
+    });
+    if(total>rows.length)c.appendChild(el('div','muted chart-note',
+      `The ${rows.length} most independently sourced of ${total} findings.`));
+    return c;
+  }
+
   /** The analyst's own reading — what the numbers do not say on their own. */
   function renderInsights(di){
     const rows=((di||{}).insights||[]).filter(i=>i&&i.headline);
@@ -4321,6 +4363,7 @@
     // read into it, the stories it divides into, who is saying what, when it
     // happened, where, and who is driving it.
     const theCase=[
+      renderEstablishedRecord(r.establishedRecord),
       renderInsights(r.deepInsights),
       renderNarratives(r.narratives),
       renderPublicVoice(r.publicVoice),
@@ -5905,6 +5948,17 @@
       // each theme's periods sum to that narrative's own mention count;
       // every impact is (coverage + engagement) / 2. Anyone who checks
       // the arithmetic in a sales meeting finds that it holds.
+      // From the verified fact store: every line rests on a quote found in its
+      // source. Fictional, like the rest of this sample.
+      establishedRecord:{findings_total:2,sources_with_facts:4,facts:5,findings:[
+        {statement:'The Governor committed to fixes within 90 days.',kind:'fact',status:'reported',
+         independent_sources:2,publishers:3,syndicated:true,first_seen:'2026-07-09',last_seen:'2026-07-10',
+         sources:[{publisher:'Mfano Daily',published_at:'2026-07-09',url:'https://mfanodaily.example/afya-90-days',quote:'promises fixes within 90 days'},
+                  {publisher:'Mfano Tribune',published_at:'2026-07-09',url:'https://mfanotribune.example/afya-wards',quote:'the governor said the problems would be fixed within 90 days'},
+                  {publisher:'Mfano TV',published_at:'2026-07-10',url:'https://video.example/watch?v=afya',quote:'fixes within 90 days of today'}]},
+        {statement:'Patient advocates alleged that registered members were asked for cash at the point of care.',kind:'claim',status:'alleged',
+         independent_sources:1,publishers:1,syndicated:false,first_seen:'2026-06-02',last_seen:'2026-06-02',
+         sources:[{publisher:'r/MfanoCounty',published_at:'2026-06-02',url:'https://forum.example/r/MfanoCounty/afya',quote:'walked into the hospital and was told Afya Mfano is not working today'}]}]},
       sentimentScoring:{eligible:612,scored:612},
       sentiment_framework:{
         summary_of_subject:{

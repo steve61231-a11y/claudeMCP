@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # How much of one source is read — a whole article, not its first
     # paragraph. Each extra 1,000 characters is ~250 input tokens per source.
     fact_item_chars: int = 6000
+    # How long a report waits, after its analysts return, for the facts being
+    # read alongside them. Past this the report goes out with what is stored
+    # and the back office reads the rest.
+    fact_store_wait_seconds: float = 60.0
     # Investigator: after the report, name what is missing and turn those gaps
     # into queries the next run chases. This is what makes successive runs an
     # investigation rather than a repeated sweep.

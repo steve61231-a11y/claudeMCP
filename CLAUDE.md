@@ -202,9 +202,11 @@ fuzzy match, no word-run fallback, because a fact rests on it. A record that
 fails is not stored and is counted as `dropped_unverified`, so invention
 shows up as a rate. An allegation stays a claim. A source the model failed
 on is `status = failed` and retried; one read with nothing in it is `read`,
-and never sent again. It runs in the back office on sources not yet read
-and is inspected at `/api/admin/facts?name=…`. Phase 3's writers are to be
-confined to it.
+and never sent again. It reads this period's unread sources alongside the analysts (model calls in
+a thread that touches no database; planned and stored on the report's own
+thread), the back office reads whatever it did not finish, and it is
+inspected at `/api/admin/facts?name=…`. "On the record", the first section
+of the Case, is built from it with no model writing anything.
 
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
