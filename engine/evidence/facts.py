@@ -255,6 +255,9 @@ def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
     for fact in rows:
         item = by_key[fact.source_key]
         listed.append({"statement": fact.statement, "quote": fact.quote, "kind": fact.kind,
+                       # The source's citation ref — the same 8-character id
+                       # prefix `citations.build_ref_index` keys on.
+                       "ref": str(item.get("id", ""))[:8],
                        "status": fact.status, "publisher": outlets.publisher(item),
                        "url": item.get("source_url"), "source_text": item.get("text"),
                        "published_at": fact.published_at.date().isoformat() if fact.published_at else None})
@@ -330,7 +333,7 @@ def corroborate(rows: list[dict], threshold: float = SAME_STORY) -> list[dict]:
             "syndicated": syndicated,
             "first_seen": min(dates) if dates else None,
             "last_seen": max(dates) if dates else None,
-            "sources": [{k: m.get(k) for k in ("publisher", "url", "published_at", "quote", "status")}
+            "sources": [{k: m.get(k) for k in ("publisher", "url", "published_at", "quote", "status", "ref")}
                         for m in members],
         })
     # Most independently corroborated first; among equals, most recent first.

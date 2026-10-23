@@ -208,6 +208,18 @@ thread), the back office reads whatever it did not finish, and it is
 inspected at `/api/admin/facts?name=…`. "On the record", the first section
 of the Case, is built from it with no model writing anything.
 
+**A sentence names the fact it rests on, and the fact must say it.**
+`reports/from_facts.py` hands a writer a numbered ledger of findings from
+the record and requires each sentence to list the ones it uses; then
+`check_sentence` decides, with no model: the findings exist, the
+sentence's content words come from them (stems, ≥60%, and at least two),
+every figure and year is in them, every multi-word name is in them or is
+the subject, and anything ALLEGED or DISPUTED is attributed. The first two
+of those exist because a sentence with no content — "Wanjiru will win in
+2027." — passes every ratio by being empty. Removals are kept with their
+reasons (`brief_check`), and the brief falls back to the analysts' when
+the record is thin, saying why. The brief is the first writer on it.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

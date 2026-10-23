@@ -187,8 +187,15 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   are read alongside the analysts (no added wait unless still reading when
   they finish, capped by `FACT_STORE_WAIT_SECONDS`), and each finding shows
   its status ("Alleged — not established" where it is), its independent
-  origins and every source's own words. Next: confine the analysts' prose
-  to the store, and check each sentence against it.
+  origins and every source's own words.
+- **Phase 3 — the brief.** The executive brief is written from that record
+  (`reports/from_facts.py`): each sentence names the findings it rests on
+  and is checked mechanically — it must cite real findings, draw its
+  content words, figures, years and names from them, and attribute
+  anything only alleged. Failures are removed and listed for the operator.
+  With fewer than three findings, or fewer than two surviving sentences,
+  the analysts' brief stands and the reason is recorded. Next: the other
+  prose sections through the same ledger and check.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;

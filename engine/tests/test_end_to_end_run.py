@@ -308,6 +308,11 @@ def test_the_record_is_built_from_verified_facts_and_reaches_the_page(db_session
     assert all(s["quote"] for s in finding["sources"])
     response = _api_shape(payload, db_session, subject.id)
     assert response["establishedRecord"]["findings"][0]["statement"] == statements[0]
+    # One finding is too thin to write the brief from: the analysts' brief
+    # stands, and the operator is told why.
+    assert payload["brief_check"]["used"] is False
+    assert "finding" in payload["brief_check"]["reason"]
+    assert payload.get("brief_basis") is None
 
 
 def test_the_api_response_is_json_serialisable(db_session, scripted_model):

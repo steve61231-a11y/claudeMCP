@@ -4844,6 +4844,21 @@
       b.appendChild(prose(r.executiveBrief||r.summary,{
         cites:r.executiveBrief?r.executiveBriefCitations:r.summaryCitations,
         foldTitle:'The rest of the brief'}));
+      // Written only from the record, and checked against it sentence by
+      // sentence (reports/from_facts.py). Said to the reader, because it is
+      // the strongest claim the report can make about itself.
+      if(r.briefBasis==='verified_facts')b.appendChild(el('div','muted chart-note',
+        'Written only from the findings on the record below; every sentence names the sources it rests on.'));
+      const bc=r.briefCheck||{};
+      const cut=(bc.check||{}).removed||bc.removed||[];
+      if(cut.length||(bc.used===false&&bc.reason)){
+        const f=foldBlock('Sentence check (operator)',
+          bc.used===false?`brief from the record not used: ${bc.reason||''}`:`${cut.length} removed`);
+        f.classList.add('op-only');
+        cut.forEach(x=>f.appendChild(el('div','mentr',
+          `<div style="font-size:13px">${esc(x.sentence)}</div><div class="muted" style="font-size:12px;margin-top:3px">${esc(x.reason)}</div>`)));
+        b.appendChild(f);
+      }
       wrap.appendChild(b);
     }
     // KPI row

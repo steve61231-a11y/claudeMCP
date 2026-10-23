@@ -628,6 +628,10 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # statements anchored to quotes found in their sources, grouped by
         # story, with independent origins. No model wrote any of it.
         "establishedRecord": payload.get("established_record"),
+        # Whether the brief was written only from that record, and what the
+        # sentence check removed (operator view).
+        "briefBasis": payload.get("brief_basis"),
+        "briefCheck": payload.get("brief_check"),
         # How good this report is, measured: full text versus headlines,
         # sentences a source backs, figures that match nothing, citations
         # that point at nothing. Operator view only — see reports/quality.py.

@@ -866,6 +866,37 @@ def run_analysis(
             stages.current().failed("established_record", exc)
     stages.current().lap("facts")
 
+    # The brief, rewritten from the verified record and checked sentence by
+    # sentence against it (reports/from_facts.py). Where the record is thin
+    # or too little survives the check, the analysts' brief stands and the
+    # reason is recorded — the reader is never handed less than before.
+    if payload.get("established_record"):
+        def _brief_from_facts():
+            from engine.reports import from_facts, protected_terms
+
+            counts = {str((payload.get("volume_trends") or {}).get("total_mentions") or ""),
+                      str(len(corpus))} - {""}
+            result = from_facts.brief_from_record(
+                politician.name, payload["established_record"], numbers=counts)
+            if result.get("used"):
+                # The identity guard every prose field passes through.
+                probe = {"executive_brief": result["text"]}
+                result["protected_terms"] = protected_terms.redact(probe, corpus)
+                result["text"] = probe["executive_brief"]
+            return result
+
+        brief = _bounded("brief_from_facts", min(120.0, _time_left()), _brief_from_facts,
+                         fallback=None)
+        if brief:
+            if brief.get("used"):
+                payload["executive_brief"] = brief["text"]
+                payload["executive_brief_citations"] = brief["citations"]
+                payload["brief_basis"] = "verified_facts"
+                publish("executive_brief", payload["executive_brief"])
+            payload["brief_check"] = {k: v for k, v in brief.items()
+                                      if k not in ("text", "citations")}
+            publish("brief_check", payload["brief_check"])
+
     # Refined with what the analysts wrote — the executive summary, the deep
     # dives behind each issue, the public voice. Arithmetic again, so it is
     # NOT gated on the clock: a stage that costs milliseconds and is the

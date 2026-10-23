@@ -57,7 +57,7 @@ _NOT_ANALYST_PROSE = frozenset({
     "section_status", "run_health", "grounding", "protected_terms", "style_flags",
     "quality", "back_office", "data_provenance", "evidence_gate", "grade",
     "nothing_collected", "derived_sections", "ref_index", "corpus_preview",
-    "freshness", "origin",
+    "freshness", "origin", "brief_check", "established_record", "fact_store",
 })
 #: Where the numbers the ENGINE computed live. A figure in the prose that
 #: matches one of these was not invented. Numbers in the analysts' own
