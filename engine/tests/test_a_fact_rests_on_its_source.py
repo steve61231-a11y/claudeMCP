@@ -174,3 +174,69 @@ def test_the_back_office_fills_the_store_after_delivery(db_session, monkeypatch)
 @pytest.mark.parametrize("key", ["", None])
 def test_an_item_whose_table_is_not_stated_is_not_guessed(key):
     assert facts.source_key({"id": "x", "kind": key}) is None
+
+
+# --- one story, many outlets -------------------------------------------------
+
+def _row(statement, publisher, status="reported", kind="fact", day="2026-10-20"):
+    return {"statement": statement, "quote": statement.lower(), "kind": kind, "status": status,
+            "publisher": publisher, "url": f"https://{publisher}.example/x", "published_at": day}
+
+
+def test_two_outlets_saying_the_same_thing_are_one_finding_with_two_sources():
+    groups = facts.corroborate([
+        _row("The Treasury released county funds after the Senate hearing", "Daily Nation"),
+        _row("Treasury released the county funds following a Senate hearing", "The Standard"),
+        _row("The governor opened a new hospital wing in Nakuru", "The Star"),
+    ])
+    assert [g["independent_sources"] for g in groups] == [2, 1]
+    assert len(groups[0]["sources"]) == 2
+
+
+def test_one_outlet_repeating_itself_is_one_source():
+    groups = facts.corroborate([
+        _row("The Treasury released county funds after the Senate hearing", "Daily Nation"),
+        _row("Treasury released the county funds after the Senate hearing", "Daily Nation", day="2026-10-21"),
+    ])
+    assert len(groups) == 1 and groups[0]["independent_sources"] == 1
+
+
+def test_if_anyone_calls_it_an_allegation_it_is_alleged():
+    groups = facts.corroborate([
+        _row("The Treasury diverted county funds to a private account", "Outlet A"),
+        _row("Critics alleged the Treasury diverted county funds to a private account", "Outlet B",
+             status="alleged", kind="claim"),
+    ])
+    assert len(groups) == 1
+    assert groups[0]["status"] == "alleged"
+    assert groups[0]["statement"].startswith("Critics alleged")
+
+
+def test_an_opinion_is_never_merged_into_a_fact():
+    groups = facts.corroborate([
+        _row("The Treasury released county funds after the Senate hearing", "Outlet A"),
+        _row("The Treasury released county funds after the Senate hearing too late", "Outlet B",
+             status="opinion", kind="opinion"),
+    ])
+    assert len(groups) == 2
+
+
+def test_the_admin_view_shows_the_facts_with_their_sources(db_session, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import engine.api_server as api_server
+
+    subject, _, item = _subject_and_item(db_session)
+    _model(monkeypatch, [GOOD, INVENTED])
+    facts.extract_and_store(db_session, subject, [item])
+    monkeypatch.setattr(api_server, "SessionLocal", lambda: db_session)
+    monkeypatch.setattr(db_session, "close", lambda: None)
+    monkeypatch.setattr(api_server.settings, "pulse_api_key", "")
+    client = TestClient(api_server.app)
+
+    body = client.get("/api/admin/facts", params={"name": "fact probe"}).json()
+    assert (body["sources_read"], body["facts_kept"], body["dropped_unverified"]) == (1, 1, 1)
+    assert body["facts"][0]["quote"] == GOOD["quote"]
+    assert body["facts"][0]["publisher"] == "Daily Nation"
+    grouped = client.get("/api/admin/facts", params={"name": "fact probe", "grouped": True}).json()
+    assert grouped["findings"][0]["independent_sources"] == 1

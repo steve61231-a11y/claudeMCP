@@ -205,3 +205,71 @@ def extract_and_store(db, politician, corpus: list[dict], limit: int | None = No
     proposed = stats["facts"] + stats["dropped_unverified"]
     stats["verified_share"] = round(100 * stats["facts"] / proposed, 1) if proposed else None
     return stats
+
+
+# ---------------------------------------------------------------------------
+# One story, many outlets
+# ---------------------------------------------------------------------------
+
+#: How firmly a status establishes something. A group takes its WEAKEST
+#: member's: if one outlet reports as an allegation what another states as
+#: fact, the honest summary is that it is alleged.
+_STRENGTH = {"reported": 4, "inferred": 3, "unresolved": 2, "alleged": 1, "opinion": 0}
+_STOP = {"that", "this", "with", "from", "have", "were", "said", "says", "will",
+         "would", "their", "they", "about", "after", "over", "into", "been", "which"}
+SAME_STORY = 0.5
+
+
+def _content(statement: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", _fold(statement)) if len(w) > 3 and w not in _STOP}
+
+
+def corroborate(rows: list[dict], threshold: float = SAME_STORY) -> list[dict]:
+    """Group facts that say the same thing, and count who independently said it.
+
+    `rows` carry statement, quote, kind, status, publisher, url, published_at.
+    Same story = the statements share at least `threshold` of their content
+    words (Jaccard). An opinion is never grouped with a statement of fact.
+    Independence is distinct PUBLISHERS (`outlets.publisher`), so one outlet
+    repeating itself is one source. What this does not catch — two outlets
+    printing the same wire copy — is `independence.py`'s job over the source
+    texts, and is the next refinement."""
+    groups: list[dict] = []
+    ordered = sorted(rows, key=lambda r: (r.get("published_at") is None, str(r.get("published_at") or "")))
+    for row in ordered:
+        words = _content(row.get("statement") or "")
+        family = row.get("kind") == "opinion"
+        best, best_score = None, 0.0
+        for group in groups:
+            if group["_family"] != family:
+                continue
+            union = words | group["_words"]
+            score = len(words & group["_words"]) / len(union) if union else 0.0
+            if score > best_score:
+                best, best_score = group, score
+        if best is None or best_score < threshold:
+            best = {"_family": family, "_words": set(words), "members": []}
+            groups.append(best)
+        best["members"].append(row)
+        best["_words"] |= words
+
+    out = []
+    for group in groups:
+        members = group["members"]
+        weakest = min(members, key=lambda m: _STRENGTH.get(m.get("status"), 0))
+        dates = [str(m["published_at"]) for m in members if m.get("published_at")]
+        publishers = {m.get("publisher") or "unknown" for m in members}
+        out.append({
+            "statement": weakest.get("statement"),
+            "kind": weakest.get("kind"),
+            "status": weakest.get("status"),
+            "independent_sources": len(publishers),
+            "first_seen": min(dates) if dates else None,
+            "last_seen": max(dates) if dates else None,
+            "sources": [{k: m.get(k) for k in ("publisher", "url", "published_at", "quote", "status")}
+                        for m in members],
+        })
+    # Most independently corroborated first; among equals, most recent first.
+    out.sort(key=lambda g: g["last_seen"] or "", reverse=True)
+    out.sort(key=lambda g: g["independent_sources"], reverse=True)
+    return out

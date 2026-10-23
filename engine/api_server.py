@@ -1826,7 +1826,7 @@ def admin_quality(name: str | None = None, limit: int = 20,
 
 
 @app.get("/api/admin/facts")
-def admin_facts(name: str, limit: int = 100, kind: str | None = None,
+def admin_facts(name: str, limit: int = 100, kind: str | None = None, grouped: bool = False,
                 x_api_key: str | None = Header(default=None)):
     """The verified facts held on a subject, newest source first, each with
     the quote it rests on and where that quote was printed — and how much
@@ -1857,15 +1857,32 @@ def admin_facts(name: str, limit: int = 100, kind: str | None = None,
         totals = db.query(func.coalesce(func.sum(FactExtraction.facts), 0),
                           func.coalesce(func.sum(FactExtraction.dropped_unverified), 0)).filter(
             FactExtraction.politician_id == politician.id).one()
-        return {"ok": True, "subject": politician.name,
-                "sources_read": reads.get("read", 0), "sources_failed": reads.get("failed", 0),
-                "facts_kept": int(totals[0]), "dropped_unverified": int(totals[1]),
-                "facts": [{"kind": f.kind, "status": f.status, "statement": f.statement,
-                           "quote": f.quote, "actor": f.actor, "topic": f.topic,
-                           "published_at": str(f.published_at) if f.published_at else None,
-                           "source": (m.author_handle if m else f.source_key),
-                           "url": ((m.raw_payload or {}).get("url") or m.source_url) if m else None}
-                          for f, m in rows]}
+        from engine.reports import outlets
+
+        def _publisher(m):
+            if m is None:
+                return None
+            raw = m.raw_payload or {}
+            return outlets.publisher({"platform": m.platform, "source_type": m.source_type,
+                                      "author_handle": m.author_handle, "outlet": raw.get("outlet"),
+                                      "outlet_domain": raw.get("outlet_domain")})
+
+        listed = [{"kind": f.kind, "status": f.status, "statement": f.statement,
+                   "quote": f.quote, "actor": f.actor, "topic": f.topic,
+                   "published_at": str(f.published_at) if f.published_at else None,
+                   "publisher": _publisher(m) or f.source_key,
+                   "url": ((m.raw_payload or {}).get("url") or m.source_url) if m else None}
+                  for f, m in rows]
+        out = {"ok": True, "subject": politician.name,
+               "sources_read": reads.get("read", 0), "sources_failed": reads.get("failed", 0),
+               "facts_kept": int(totals[0]), "dropped_unverified": int(totals[1])}
+        if grouped:
+            from engine.evidence import facts as facts_store
+
+            out["findings"] = facts_store.corroborate(listed)
+        else:
+            out["facts"] = listed
+        return out
     finally:
         db.close()
 
