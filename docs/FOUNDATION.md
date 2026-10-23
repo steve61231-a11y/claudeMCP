@@ -175,6 +175,11 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   article are one item, upgraded in place; a long period is collected month
   by month and GDELT's three-month reach is declared, not mistaken for a
   quiet past.
+- **Phase 2 — the store exists.** `evidence/facts.py` reads each source once,
+  in full, and keeps a fact only if its quote is in the source verbatim;
+  invented quotes are counted, not stored. It runs after each report on
+  sources not yet read; `/api/admin/facts` shows it. Next: deduplicating
+  one story told by several outlets into one event, then phase 3.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;

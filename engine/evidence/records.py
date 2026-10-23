@@ -98,7 +98,10 @@ For every record give:
                 "2027 coalition talks", "county funds audit")
   "actor"    — who states or performs it, if the item names them; else ""
   "sentiment" — toward {subject}: positive | neutral | negative
-  "quote"    — the exact words from the item that carry it, verbatim, or ""
+  "quote"    — REQUIRED: the exact words from the item that carry it, copied
+                character for character — at least six consecutive words. It is
+                checked against the item, and a record whose quote is not in the
+                item is thrown away. Never paraphrase, translate or tidy it.
 
 Rules that matter more than completeness:
   - NEVER promote an allegation to a fact. If the item says people are saying
@@ -130,6 +133,40 @@ def _normalise(entry: dict) -> tuple[str, str]:
     return kind, status
 
 
+#: How much of one item the extractor reads. It was 1,800 characters — a
+#: tweet's worth — and the corpus now holds whole articles, whose substance
+#: sits well past the first paragraph.
+ITEM_CHARS = 1800
+
+
+def item_text(mention: dict, max_chars: int = ITEM_CHARS) -> str:
+    return (mention.get("text") or "").strip()[:max_chars]
+
+
+def extract_strict(subject: str, mentions: list[dict],
+                   max_chars: int = ITEM_CHARS) -> list[dict]:
+    """The raw records for one batch, or an exception. No splitting, no
+    swallowing: a caller that must tell "read, nothing in it" from "could not
+    read" needs the failure. Scraped text goes through `call_json_untrusted`."""
+    items = []
+    for position, mention in enumerate(mentions, start=1):
+        items.append(f"[{position}] platform={mention.get('platform')} "
+                     f"author={mention.get('author_handle')}\n{item_text(mention, max_chars)}")
+    body = "\n\n".join(items)
+    reply = llm.call_json_untrusted(
+        EXTRACT_PROMPT.format(subject=subject, items="(the items follow below)"),
+        body,
+        expected_keys={"records"},
+        max_tokens=llm.budget_for(700 * len(mentions) + 800),
+        max_untrusted_chars=len(body) + 1000,
+        model=llm.bulk_model(),
+    )
+    entries = reply.get("records")
+    if not isinstance(entries, list):
+        raise ValueError("records was not a list")
+    return [e for e in entries if isinstance(e, dict)]
+
+
 def extract_batch(subject: str, mentions: list[dict]) -> list[EvidenceRecord]:
     """Extract records for one batch of mentions. Never raises; a failed batch
     splits, and a failed single mention yields nothing rather than guesses."""
@@ -138,7 +175,7 @@ def extract_batch(subject: str, mentions: list[dict]) -> list[EvidenceRecord]:
 
     items = []
     for position, mention in enumerate(mentions, start=1):
-        text = (mention.get("text") or "").strip()[:1800]
+        text = item_text(mention)
         items.append(f"[{position}] platform={mention.get('platform')} "
                      f"author={mention.get('author_handle')}\n{text}")
 

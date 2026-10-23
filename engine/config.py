@@ -80,6 +80,15 @@ class Settings(BaseSettings):
     # rest carry over to the next incremental run.
     enable_resolution: bool = True
     resolution_max_items: int = 300
+    # The verified fact store (evidence/facts.py): each source read once, every
+    # fact anchored to a quote found verbatim in it. Runs after delivery, on
+    # sources not yet read. The cap bounds spend per run; the corpus compounds,
+    # so what one run leaves the next one reads.
+    enable_fact_store: bool = True
+    fact_extraction_max_items: int = 200
+    # How much of one source is read — a whole article, not its first
+    # paragraph. Each extra 1,000 characters is ~250 input tokens per source.
+    fact_item_chars: int = 6000
     # Investigator: after the report, name what is missing and turn those gaps
     # into queries the next run chases. This is what makes successive runs an
     # investigation rather than a repeated sweep.

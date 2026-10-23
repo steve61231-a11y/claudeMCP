@@ -1825,6 +1825,51 @@ def admin_quality(name: str | None = None, limit: int = 20,
         db.close()
 
 
+@app.get("/api/admin/facts")
+def admin_facts(name: str, limit: int = 100, kind: str | None = None,
+                x_api_key: str | None = Header(default=None)):
+    """The verified facts held on a subject, newest source first, each with
+    the quote it rests on and where that quote was printed — and how much
+    of the corpus has been read to get them. The way to check, before a
+    report is written from them, that the store holds what the sources say.
+    Behind the API key: it names a subject."""
+    _require_api_key(x_api_key)
+    from sqlalchemy import func
+
+    from engine.db.models import Fact, FactExtraction
+
+    db = SessionLocal()
+    try:
+        politician = db.query(Politician).filter(
+            func.lower(Politician.name) == name.strip().lower()).first()
+        if politician is None:
+            raise HTTPException(status_code=404, detail="no subject by that name")
+        query = (db.query(Fact, RawMention)
+                 .outerjoin(RawMention, RawMention.id == Fact.mention_id)
+                 .filter(Fact.politician_id == politician.id))
+        if kind:
+            query = query.filter(Fact.kind == kind)
+        rows = (query.order_by(Fact.published_at.desc().nullslast())
+                .limit(max(1, min(int(limit), 500))).all())
+        reads = dict(db.query(FactExtraction.status, func.count(FactExtraction.id))
+                     .filter(FactExtraction.politician_id == politician.id)
+                     .group_by(FactExtraction.status).all())
+        totals = db.query(func.coalesce(func.sum(FactExtraction.facts), 0),
+                          func.coalesce(func.sum(FactExtraction.dropped_unverified), 0)).filter(
+            FactExtraction.politician_id == politician.id).one()
+        return {"ok": True, "subject": politician.name,
+                "sources_read": reads.get("read", 0), "sources_failed": reads.get("failed", 0),
+                "facts_kept": int(totals[0]), "dropped_unverified": int(totals[1]),
+                "facts": [{"kind": f.kind, "status": f.status, "statement": f.statement,
+                           "quote": f.quote, "actor": f.actor, "topic": f.topic,
+                           "published_at": str(f.published_at) if f.published_at else None,
+                           "source": (m.author_handle if m else f.source_key),
+                           "url": ((m.raw_payload or {}).get("url") or m.source_url) if m else None}
+                          for f, m in rows]}
+    finally:
+        db.close()
+
+
 @app.get("/api/admin/source-check")
 def source_check(q: str = "William Ruto", x_api_key: str | None = Header(default=None)):
     """Live per-source probe: runs EVERY connector against a sample query RIGHT

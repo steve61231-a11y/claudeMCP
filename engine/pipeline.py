@@ -832,7 +832,8 @@ def run_analysis(
     stages.current().lap("framework")
 
     # The back office has not run yet, and the reader must not wait for it.
-    back_office_due = bool(settings.enable_resolution or settings.enable_verification)
+    back_office_due = bool(settings.enable_fact_store or settings.enable_resolution
+                           or settings.enable_verification)
     if back_office_due:
         payload["back_office"] = {
             "status": "pending",
@@ -967,6 +968,29 @@ def run_back_office(task: BackOfficeTask, session: Session | None = None,
 
     updates: dict = {}
     with run_context(task.ledger, task.tracker):
+        if settings.enable_fact_store:
+            def _run_fact_store():
+                # Read each source once and keep only what can be pinned to
+                # its own words — the material phase 3's writers will be
+                # confined to. See evidence/facts.py.
+                with scope() as db:
+                    politician = db.get(Politician, task.politician_id)
+                    try:
+                        from engine.evidence import facts as facts_store
+
+                        return {"facts": facts_store.extract_and_store(db, politician, task.corpus)}
+                    except Exception:
+                        _rollback_quietly(db)
+                        raise
+
+            started = _time.monotonic()
+            found = _bounded("fact_store", left(), _run_fact_store, fallback=None)
+            task.timings["fact_store"] = round(_time.monotonic() - started, 1)
+            if found:
+                updates.update(found)
+                for _key, _value in found.items():
+                    publish(_key, _value)
+
         if settings.enable_resolution:
             def _run_entity_event_resolution():
                 # Resolve the corpus into entities and events: many reports of

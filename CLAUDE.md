@@ -193,6 +193,19 @@ guards removed. It is stamped with the commit that wrote the report
 when these numbers say so on the same subjects — not when one report looks
 better by eye, which is how every change was judged before.
 
+**A fact rests on words its source printed.** The verified fact store
+(`evidence/facts.py`, tables `facts` and `fact_extractions`) reads each
+source once, in full (`FACT_ITEM_CHARS`, not the 1,800-character lede the
+extractor used to see), and keeps a record only if its quote is found in
+that source contiguously after folding case, spacing and quote marks — no
+fuzzy match, no word-run fallback, because a fact rests on it. A record that
+fails is not stored and is counted as `dropped_unverified`, so invention
+shows up as a rate. An allegation stays a claim. A source the model failed
+on is `status = failed` and retried; one read with nothing in it is `read`,
+and never sent again. It runs in the back office on sources not yet read
+and is inspected at `/api/admin/facts?name=…`. Phase 3's writers are to be
+confined to it.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

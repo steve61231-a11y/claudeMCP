@@ -455,6 +455,66 @@ class ClaimEvidence(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Fact(Base):
+    """One thing one source says, anchored to the words that say it.
+
+    The verified fact store (docs/FOUNDATION.md, phase 2). A row exists only
+    if its `quote` was found verbatim in the source's own text — a model's
+    paraphrase with no anchor is not stored, it is counted as dropped on the
+    source's `FactExtraction`. `kind`/`status` keep "X alleged Y" apart from
+    "Y happened": an allegation is never promoted to a fact.
+    """
+
+    __tablename__ = "facts"
+    __table_args__ = (
+        UniqueConstraint("source_key", "statement_hash", name="uq_fact_source_statement"),
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    politician_id = Column(UUID(as_uuid=False), ForeignKey("politicians.id"), nullable=False, index=True)
+    # "mention:<id>" or "document:<id>" — which table, stated, never inferred.
+    source_key = Column(String, nullable=False, index=True)
+    mention_id = Column(UUID(as_uuid=False), ForeignKey("raw_mentions.id", ondelete="CASCADE"),
+                        nullable=True, index=True)
+    document_id = Column(UUID(as_uuid=False), ForeignKey("documents.id", ondelete="CASCADE"),
+                         nullable=True)
+    kind = Column(String, nullable=False)       # fact|claim|opinion|event|question
+    status = Column(String, nullable=False)     # reported|alleged|opinion|inferred|unresolved
+    statement = Column(Text, nullable=False)
+    quote = Column(Text, nullable=False)
+    actor = Column(String, nullable=True)
+    topic = Column(String, nullable=True)
+    sentiment = Column(String, nullable=True)
+    # The source's publication date; NULL where that date was estimated.
+    published_at = Column(DateTime, nullable=True, index=True)
+    statement_hash = Column(String(64), nullable=False)
+    model = Column(String, nullable=True)
+    extracted_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FactExtraction(Base):
+    """That a source was read for facts, and what came of it.
+
+    Without this row "read, and it said nothing about the subject" and "never
+    read" (or "the model failed on it") look identical — the founding rule.
+    A failed read is retried on a later run; a completed one is not repeated.
+    """
+
+    __tablename__ = "fact_extractions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    politician_id = Column(UUID(as_uuid=False), ForeignKey("politicians.id"), nullable=False, index=True)
+    source_key = Column(String, nullable=False, unique=True)
+    status = Column(String, nullable=False)     # read|failed
+    facts = Column(Integer, default=0)
+    dropped_unverified = Column(Integer, default=0)
+    chars_read = Column(Integer, default=0)
+    chars_total = Column(Integer, default=0)
+    model = Column(String, nullable=True)
+    error = Column(Text, nullable=True)
+    extracted_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Snapshot(Base):
     """Per-run state capture powering temporal intelligence ("what changed").
 
