@@ -218,7 +218,12 @@ the subject, and anything ALLEGED or DISPUTED is attributed. The first two
 of those exist because a sentence with no content — "Wanjiru will win in
 2027." — passes every ratio by being empty. Removals are kept with their
 reasons (`brief_check`), and the brief falls back to the analysts' when
-the record is thin, saying why. The brief is the first writer on it.
+the record is thin, saying why. Risks and opportunities come from the same
+call: a checked finding plus an `assessment` the page labels as judgement —
+`check_assessment` lets it reason but not introduce a name, figure or date
+the cited findings lack. Items carry `issue`/`detail` (plain, for the
+framework and action list), `cited`/`citations` (linked, for the page) and
+`basis: verified_facts`; `quality` counts the cited sentence once.
 
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name

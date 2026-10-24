@@ -194,8 +194,13 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   content words, figures, years and names from them, and attribute
   anything only alleged. Failures are removed and listed for the operator.
   With fewer than three findings, or fewer than two surviving sentences,
-  the analysts' brief stands and the reason is recorded. Next: the other
-  prose sections through the same ledger and check.
+  the analysts' brief stands and the reason is recorded.
+- **Phase 3 — risks and opportunities.** Written in the same call from the
+  same record: each is a checked finding with citations plus an
+  assessment labelled as the analyst's judgement, which may reason but may
+  not introduce a name, figure or date the findings lack. This retires the
+  second-hand writers that produced them from counts. Next: the remaining
+  analyst prose (beneath the surface, deep dives) through the ledger.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;

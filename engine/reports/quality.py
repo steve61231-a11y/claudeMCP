@@ -127,6 +127,14 @@ def analyst_prose(payload: dict, refs: set[str]) -> list[tuple[str, bool, frozen
         elif isinstance(node, dict):
             if _is_quote(node):
                 return
+            if node.get("basis") == "verified_facts":
+                # A checked item from the record: its finding once, as cited,
+                # and its labelled assessment — not the plain copies kept for
+                # other readers.
+                node = {k: node[k] for k in ("cited", "citations", "cited_citations", "take")
+                        if k in node}
+                if "citations" in node:
+                    node["cited_citations"] = node.pop("citations")
             here = backed or _backed(node)
             for k, v in node.items():
                 cited = node.get(f"{k}{_CITATIONS_SUFFIX}") or []

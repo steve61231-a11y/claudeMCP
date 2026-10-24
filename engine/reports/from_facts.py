@@ -230,40 +230,117 @@ Rules:
 - Use names exactly as the findings write them. British spelling. Four to seven sentences.
 - If the findings are too thin to support a sentence, write fewer sentences rather than fill.
 
+From the same findings, also give what to watch:
+- "risks": up to four things on the record that could damage {subject}'s standing or position;
+- "opportunities": up to three things on the record {subject} could use.
+Each is {{"finding": one sentence of what the record says (the same rules as above), "facts": [...], "assessment": one sentence on why it matters}}. The assessment is your judgement and is labelled as such: it may reason, but it may not add names, figures or dates the findings do not contain. Leave a list empty rather than stretch the record to fill it.
+
 Respond with ONLY this JSON:
-{{"sentences": [{{"text": "One sentence.", "facts": ["F1", "F3"]}}]}}"""
+{{"sentences": [{{"text": "One sentence.", "facts": ["F1", "F3"]}}],
+  "risks": [{{"finding": "One sentence.", "facts": ["F2"], "assessment": "Why it matters."}}],
+  "opportunities": [{{"finding": "One sentence.", "facts": ["F1"], "assessment": "Why it matters."}}]}}"""
+
+#: Items per list that reach the page.
+MAX_RISKS, MAX_OPPORTUNITIES = 4, 3
 
 
-def write(subject: str, ledger: list[dict], prompt: str = BRIEF_PROMPT) -> list[dict]:
+def write(subject: str, ledger: list[dict], prompt: str = BRIEF_PROMPT) -> dict:
+    """The writer's reply: sentences, and the risks and opportunities lists
+    (empty when the writer gave none)."""
     reply = llm.call_json_untrusted(
         prompt.format(subject=subject),
         ledger_text(ledger),
         expected_keys={"sentences"},
-        max_tokens=llm.budget_for(1400),
+        max_tokens=llm.budget_for(2400),
         model=llm.strong_model(),
     )
-    sentences = reply.get("sentences")
-    if not isinstance(sentences, list):
-        raise ValueError("sentences was not a list")
-    return [s for s in sentences if isinstance(s, dict)]
+    out = {}
+    for key in ("sentences", "risks", "opportunities"):
+        value = reply.get(key)
+        if key == "sentences" and not isinstance(value, list):
+            raise ValueError("sentences was not a list")
+        out[key] = [v for v in (value or []) if isinstance(v, dict)] if isinstance(value, list) else []
+    return out
+
+
+def check_assessment(text: str, cited: list[str], ledger: list[dict], subject: str,
+                     numbers: set[str] | None = None) -> str | None:
+    """A judgement may reason; it may not smuggle in facts. Every name,
+    figure and year in it must be in the findings its item cites."""
+    by_id = {e["id"]: e for e in ledger}
+    support = " ".join(by_id[c]["text"] for c in cited if c in by_id)
+    allowed = {re.sub(r",", "", n) for n in (numbers or set())}
+    support_numbers = set(re.findall(r"\d+(?:\.\d+)?", support.replace(",", "")))
+    for token, _value, _pct in figures_in(text):
+        bare = re.sub(r"[^\d.]", "", token.split()[0])
+        if bare and bare not in support_numbers and bare not in allowed:
+            return f"introduces a figure ({token}) the findings do not"
+    for year in re.findall(r"\b(19\d\d|20\d\d)\b", text):
+        if year not in support:
+            return f"introduces a date ({year}) the findings do not"
+    for name in _names(text):
+        if name.lower() not in support.lower() and name.lower() not in subject.lower():
+            return f"introduces {name}, who is not in the findings"
+    return None
+
+
+def watch_items(items: list[dict], ledger: list[dict], subject: str, kind: str, most: int,
+                numbers: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+    """Checked risks or opportunities, in the shape the page, the framework
+    and the action list already read (`issue`, `take`, `detail`), plus
+    `cited`/`citations` for the linked version and `basis`."""
+    kept, removed = [], []
+    for item in items:
+        finding = str(item.get("finding") or "").strip()
+        cited = [str(c).strip().upper() for c in (item.get("facts") or []) if str(c).strip()]
+        if not finding:
+            continue
+        reason = check_sentence(finding, cited, ledger, subject, numbers)
+        if reason:
+            removed.append({"list": kind, "sentence": finding, "facts": cited, "reason": reason})
+            continue
+        take = str(item.get("assessment") or "").strip()
+        why_not = check_assessment(take, cited, ledger, subject, numbers) if take else None
+        if why_not:
+            removed.append({"list": kind, "sentence": take, "facts": cited,
+                            "reason": "assessment " + why_not, "kept_finding": True})
+            take = ""
+        text, citations = render([{"text": finding, "facts": cited}], ledger)
+        by_id = {e["id"]: e for e in ledger}
+        statuses = [by_id[c]["status"] for c in cited if c in by_id]
+        kept.append({"issue": finding, "detail": finding, "cited": text, "citations": citations,
+                     "take": take, "basis": "verified_facts",
+                     "status": "alleged" if any(st in _NEEDS_ATTRIBUTION for st in statuses) else "reported"})
+        if len(kept) >= most:
+            break
+    return kept, removed
 
 
 def brief_from_record(subject: str, record: dict, numbers: set[str] | None = None) -> dict:
-    """{"used": bool, "text", "citations", "check"} — `used` False with a
-    reason when the record is too thin or too little survived the check, so
-    the caller keeps the brief it had and the operator can see why."""
+    """{"used": bool, "text", "citations", "check", "risks", "opportunities"}
+    — `used` False with a reason when the record is too thin or too little of
+    the brief survived the check, so the caller keeps the brief it had and
+    the operator can see why. Risks and opportunities are returned whenever
+    any survived, independently of the brief."""
     findings = (record or {}).get("findings") or []
     if len(findings) < MIN_FINDINGS:
         return {"used": False, "reason": f"only {len(findings)} finding(s) on the record; "
                                          f"{MIN_FINDINGS} are needed to write the brief from it"}
     ledger = build_ledger(findings)
     written = write(subject, ledger)
-    kept, removed = check(written, ledger, subject, numbers)
-    result = {"check": {"written": len(written), "kept": len(kept), "removed": removed,
-                        "findings_available": len(ledger)}}
+    kept, removed = check(written["sentences"], ledger, subject, numbers)
+    risks, risks_removed = watch_items(written["risks"], ledger, subject, "risks", MAX_RISKS, numbers)
+    opps, opps_removed = watch_items(written["opportunities"], ledger, subject, "opportunities",
+                                     MAX_OPPORTUNITIES, numbers)
+    result = {"check": {"written": len(written["sentences"]), "kept": len(kept), "removed": removed,
+                        "findings_available": len(ledger)},
+              "risks": risks, "opportunities": opps,
+              "watch_check": {"written": len(written["risks"]) + len(written["opportunities"]),
+                              "kept": len(risks) + len(opps),
+                              "removed": risks_removed + opps_removed}}
     if len(kept) < MIN_SENTENCES:
         return {"used": False, **result,
-                "reason": f"{len(kept)} of {len(written)} sentence(s) survived the check"}
+                "reason": f"{len(kept)} of {len(written['sentences'])} sentence(s) survived the check"}
     text, citations = render(kept, ledger)
     return {"used": True, "text": text, "citations": citations, **result}
 

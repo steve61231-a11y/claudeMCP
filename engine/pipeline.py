@@ -893,8 +893,16 @@ def run_analysis(
                 payload["executive_brief_citations"] = brief["citations"]
                 payload["brief_basis"] = "verified_facts"
                 publish("executive_brief", payload["executive_brief"])
+            # Risks and opportunities from the same record, each a checked
+            # finding with a labelled assessment. Where none survived, the
+            # analysts' lists stand.
+            if brief.get("risks") or brief.get("opportunities"):
+                for key in ("risks", "opportunities"):
+                    payload[key] = brief.get(key) or []
+                    publish(key, payload[key])
+                payload["watch_basis"] = "verified_facts"
             payload["brief_check"] = {k: v for k, v in brief.items()
-                                      if k not in ("text", "citations")}
+                                      if k not in ("text", "citations", "risks", "opportunities")}
             publish("brief_check", payload["brief_check"])
 
     # Refined with what the analysts wrote — the executive summary, the deep

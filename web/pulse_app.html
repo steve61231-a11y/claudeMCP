@@ -4179,6 +4179,15 @@
     if(typeof item === 'string')
       return `<div style="font-size:14px">${esc(item)}</div>`;
     if(!item || typeof item !== 'object') return '';
+    // From the verified record (reports/from_facts.py): the finding is
+    // checked and cited; the assessment is the analyst's judgement and is
+    // labelled as one, so the two are never read as the same kind of claim.
+    if(item.basis === 'verified_facts'){
+      return `<div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="font-size:14px;flex:1;min-width:0">${linkifyRefs(esc(item.cited||item.issue||''),item.citations)}</div>
+          ${item.status==='alleged'?'<span class="pill amber" style="flex-shrink:0">Alleged</span>':''}</div>
+        ${item.take?`<div class="muted" style="font-size:13px;margin-top:5px"><span class="lbl" style="font-size:10.5px">Assessment</span> ${esc(item.take)}</div>`:''}`;
+    }
     if(item.issue || item.take){
       const tone = item.reaction === 'supportive' ? 'pos'
                  : item.reaction === 'critical'   ? 'neg'
@@ -4853,7 +4862,7 @@
       if(r.briefBasis==='verified_facts')b.appendChild(el('div','muted chart-note',
         'Written only from the findings on the record below; every sentence names the sources it rests on.'));
       const bc=r.briefCheck||{};
-      const cut=(bc.check||{}).removed||bc.removed||[];
+      const cut=((bc.check||{}).removed||bc.removed||[]).concat((bc.watch_check||{}).removed||[]);
       if(cut.length||(bc.used===false&&bc.reason)){
         const f=foldBlock('Sentence check (operator)',
           bc.used===false?`brief from the record not used: ${bc.reason||''}`:`${cut.length} removed`);

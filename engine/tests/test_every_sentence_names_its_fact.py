@@ -142,3 +142,44 @@ def test_a_year_the_findings_do_not_give_is_removed():
     reason = _check("In 2019 the Senate Finance Committee summoned the Treasury over delayed county disbursements.",
                     ["F1"])
     assert reason and "2019" in reason
+
+
+# --- risks and opportunities from the same record -----------------------------
+
+def test_risks_are_checked_findings_with_a_labelled_assessment(monkeypatch):
+    def answer(instructions, untrusted, expected_keys, **kw):
+        return {
+            "sentences": [
+                {"text": "The Senate Finance Committee summoned the Treasury over delayed county disbursements.",
+                 "facts": ["F1"]},
+                {"text": "Jane Wanjiru said fourteen counties could not pay health workers.", "facts": ["F2"]}],
+            "risks": [
+                {"finding": "Opposition senators alleged that the funds were diverted to a private account.",
+                 "facts": ["F3"], "assessment": "If it sticks, the allegation outlives any rebuttal."},
+                {"finding": "Wanjiru faces a no-confidence motion next week.", "facts": ["F2"],
+                 "assessment": "It would end her tenure."},
+                {"finding": "Fourteen counties could not pay health workers, Wanjiru said.", "facts": ["F2"],
+                 "assessment": "Governor Anne Waiguru will exploit it."}],
+            "opportunities": [],
+        }
+
+    monkeypatch.setattr(llm, "call_json_untrusted", answer)
+    result = from_facts.brief_from_record(SUBJECT, {"findings": FINDINGS})
+    risks = result["risks"]
+    assert [r["status"] for r in risks] == ["alleged", "reported"]
+    assert risks[0]["take"].startswith("If it sticks") and risks[0]["basis"] == "verified_facts"
+    assert risks[0]["cited"].endswith("[1].") and risks[0]["citations"][0]["ref"] == "dddd4444"
+    assert risks[1]["take"] == "", "an assessment naming someone not on the record was kept"
+    reasons = [r["reason"] for r in result["watch_check"]["removed"]]
+    assert any(r.startswith("says more than") or r.startswith("carries nothing") for r in reasons)
+    assert any("Anne Waiguru" in r for r in reasons)
+
+
+def test_the_framework_and_the_action_list_read_a_checked_risk():
+    from engine.reports.actions import _candidates
+    from engine.reports.sentiment_framework import _as_text_list
+
+    item = {"issue": "Opposition senators alleged diversion.", "detail": "Opposition senators alleged diversion.",
+            "cited": "Opposition senators alleged diversion [1].", "take": "x", "basis": "verified_facts"}
+    assert _as_text_list([item]) == ["Opposition senators alleged diversion."]
+    assert _candidates({"risks": [item]})[0]["why"] == "Opposition senators alleged diversion."
