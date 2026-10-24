@@ -490,6 +490,11 @@ def build_issue_map(
                 f"{len(mentions) - core_count} give the background around them…")
     else:
         publish("stage", f"Reading {len(mentions)} intersection sources…")
+    # The connection on the record, and what the public searched, both asked
+    # now and read beside the analysts: network and model calls only, no
+    # database held across them.
+    connection_job = _start_connection_reading(acquisition, principal, mentions)
+    search_job = _start_search_demand(principal, issue, ws, we)
     digest = build_corpus_digest(label, mentions)
     publish("coverage", digest["coverage"])
     # Four analysts run at once; each publishes the map as it stands the moment
@@ -580,6 +585,17 @@ def build_issue_map(
         # to be distinguishable from a collection failure.
         payload["acquisition"] = acquisition
 
+    # The map's first answer, counted from the verified record: every
+    # statement that names both the principal and the issue.
+    payload["connection_record"] = _finish_connection(connection_job, principal, issue,
+                                                      issue_aliases, mentions)
+    publish("connection_record", payload["connection_record"])
+    search = _finish_search_demand(search_job, principal, ws, we, mentions,
+                                   (payload["connection_record"] or {}).get("findings") or [])
+    if search is not None:
+        payload["search_demand"] = search
+        publish("search_demand", search)
+
     # Draw the graph as soon as the intersection lands, before the framework —
     # which is the slowest call in the run. It costs nothing but local work, and
     # it means the reader gets the map minutes earlier instead of watching a
@@ -598,6 +614,116 @@ def build_issue_map(
     _publish_graph(principal, issue, analysis, payload["issue_framework"],
                    mentions, payload, publish)
     return payload
+
+
+def _start_connection_reading(acquisition: dict, principal: str, corpus: list[dict]) -> dict:
+    """Plan the fact reading (one query) and start it in a thread. Returns
+    the job, or {"reason"} saying why the record cannot be read for this map
+    — which the page reports as not measured, never as "no connection"."""
+    if not settings.enable_fact_store:
+        return {"reason": "the fact store is switched off (ENABLE_FACT_STORE)"}
+    subject_id = (acquisition or {}).get("subject_id")
+    if not subject_id:
+        return {"reason": "this map's sources were not stored, so they could not be read for the record"}
+    from concurrent.futures import ThreadPoolExecutor
+
+    from engine.db.session import SessionLocal
+    from engine.evidence import facts
+    from engine.runctx import carry
+
+    db = SessionLocal()
+    try:
+        todo = facts.plan(db, corpus, limit=settings.fact_extraction_max_items)
+    except Exception as exc:  # noqa: BLE001
+        return {"reason": f"planning the reading failed: {type(exc).__name__}: {exc}"[:200]}
+    finally:
+        db.close()
+    future = None
+    if todo:
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(carry(lambda: facts.read_all(principal, todo)))
+        pool.shutdown(wait=False)
+    return {"subject_id": subject_id, "future": future, "to_read": len(todo)}
+
+
+def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str] | None,
+                       corpus: list[dict]) -> dict:
+    from concurrent.futures import TimeoutError as FuturesTimeout
+
+    from engine.db.models import Politician
+    from engine.db.session import SessionLocal
+    from engine.evidence import connection, facts
+
+    if "reason" in job:
+        return connection.not_measured(job["reason"])
+    db = SessionLocal()
+    note = None
+    try:
+        subject = db.get(Politician, job["subject_id"])
+        if job.get("future") is not None:
+            try:
+                results = job["future"].result(timeout=settings.fact_store_wait_seconds)
+                facts.store(db, subject, results)
+            except FuturesTimeout:
+                note = ("some sources were still being read when the map finished; "
+                        "the next map on this pair reads them")
+        record = facts.record_for(db, subject, corpus, most=50, keep_all=True)
+        out = connection.build(record.get("all_findings") or [], principal, issue, aliases)
+        out["sources_read_this_run"] = job.get("to_read", 0)
+        if note:
+            out["note"] = note
+        return out
+    except Exception as exc:  # noqa: BLE001 — never the map's cost
+        traceback.print_exc()
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return connection.not_measured(f"{type(exc).__name__}: {exc}"[:200])
+    finally:
+        db.close()
+
+
+def _start_search_demand(principal: str, issue: str, ws: datetime, we: datetime):
+    """What people searched for, the person and the issue normalised
+    together in one request — which of the two the public looks up."""
+    if not settings.enable_search_demand:
+        return None
+    from concurrent.futures import ThreadPoolExecutor
+
+    from engine.evidence import search_demand
+    from engine.runctx import carry
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(carry(lambda: search_demand.gather(
+        principal, [], ws, we, settings.socialcrawl_api_key, keywords=[principal, issue])))
+    pool.shutdown(wait=False)
+    return future
+
+
+def _finish_search_demand(future, principal: str, ws: datetime, we: datetime,
+                          corpus: list[dict], findings: list[dict]) -> dict | None:
+    if future is None:
+        return None
+    from concurrent.futures import TimeoutError as FuturesTimeout
+
+    from engine.evidence import search_demand
+
+    try:
+        gathered = future.result(timeout=settings.search_demand_deadline_seconds)
+    except FuturesTimeout:
+        return {"state": "not_measured",
+                "reason": f"search demand did not answer within {int(settings.search_demand_deadline_seconds)}s"}
+    except Exception as exc:  # noqa: BLE001
+        return {"state": "not_measured", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    by_day: dict[str, int] = {}
+    for m in corpus or []:
+        at = m.get("posted_at")
+        if isinstance(at, datetime) and not m.get("date_estimated"):
+            by_day[at.date().isoformat()] = by_day.get(at.date().isoformat(), 0) + 1
+    return search_demand.assemble(gathered, ws, we, principal, coverage_by_day=by_day,
+                                  findings=findings,
+                                  corpus_texts=[str(m.get("text") or "") for m in corpus or []])
 
 
 #: How much of each pool an analyst reads. The intersection is the answer, so

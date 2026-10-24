@@ -5998,6 +5998,47 @@
     return null;
   }
 
+  /** The Issue Map's first answer: every verified statement naming both
+      the principal and the issue (evidence/connection.py). A connection the
+      record does not establish is said in words; a record that could not
+      be read is the operator's, and never reads as "no connection". */
+  function renderConnection(cr,m){
+    if(!cr)return null;
+    if(cr.state!=='measured'){
+      const c=deepCard('The connection, on the record','Not read this time');
+      c.classList.add('op-only');
+      c.appendChild(el('div','muted',esc(cr.reason||'no reason was recorded')));
+      return c;
+    }
+    const rows=(cr.findings||[]).filter(f=>f&&f.statement);
+    const c=deepCard('The connection, on the record',
+      `What the sources state that names both ${m.principal||''} and ${m.issue||''} — each line resting on words a source printed`,
+      {open:true});
+    const lead=el('div','');
+    lead.innerHTML=`<div style="font-size:15.5px;line-height:1.5">${esc(cr.lead||'')}</div>`;
+    if(!rows.length)lead.firstChild.style.color='var(--amber)';
+    c.appendChild(lead);
+    const pats=(cr.patterns||[]).filter(p=>p&&p.sentence);
+    if(pats.length){
+      const box=el('div','mentr');box.style.cssText='border-left:3px solid var(--sky2)';
+      box.innerHTML='<div class="lbl" style="margin-bottom:6px">What the record shows</div>'+
+        pats.map(p=>`<div style="font-size:14px;margin-top:6px">${esc(p.sentence)}</div>`).join('');
+      c.appendChild(box);
+    }
+    rows.forEach(f=>c.appendChild(recordRow(f)));
+    if((cr.findings_total||0)>rows.length)c.appendChild(el('div','muted chart-note',
+      `The ${rows.length} most independently sourced of ${cr.findings_total}.`));
+    const tl=(cr.timeline||[]).filter(t=>t&&t.date);
+    if(tl.length>1){
+      const f=foldBlock('When it was first reported',`${tl.length} days, oldest first`);
+      tl.forEach(t=>f.appendChild(el('div','mentr',`<b style="font-size:14px;color:var(--sky2)">${esc(ukDate(t.date))}</b>
+        <div style="font-size:14px;margin-top:4px">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>`)));
+      c.appendChild(f);
+    }
+    if(cr.note)c.appendChild(el('div','muted chart-note op-only',esc(cr.note)));
+    return c;
+  }
+
   function renderIssue(out,m){
     useRefIndex(m);
     // The same holding-still as the search report: each analyst that lands
@@ -6043,6 +6084,16 @@
     const head=el('div','card glow');
     head.innerHTML=`<div class="eyebrow">${esc(m.principal)} × ${esc(m.issue)}</div>
       <div class="hero-one" style="margin-top:10px">${esc((m.intersection||{}).verdict||'')}</div>
+      ${(()=>{
+        // The verdict is the analyst's reading. Beside it, what the record
+        // counts — so a verdict the record does not support never stands
+        // alone at the top of a client's file.
+        const cr=m.connection_record||{};
+        if(cr.state!=='measured')return '';
+        const n=(cr.counts||{}).findings||0;
+        return n?`<div class="row" style="margin-top:10px"><span class="pill pos">On the record: ${fmt(n)} verified statement${n===1?'':'s'} name both</span></div>`
+          :`<div class="row" style="margin-top:10px"><span class="pill amber">Not established on the record — see below</span></div>`;
+      })()}
       <div class="row" style="margin-top:12px">${(()=>{
         const cv=m.coverage||{};
         // "Analysed 0 of 23" was true and useless: it said the compression
@@ -6057,6 +6108,13 @@
         <span class="muted" id="dlIssueMsg" style="font-size:12.5px"></span>
       </div>`;
     out.appendChild(head);
+    // The connection, on the record — counted, no model writing it — and
+    // what the public searched for the pair. Above the tabs, because it is
+    // the map's first answer and it does not depend on which tab is open.
+    const conn=renderConnection(m.connection_record,m);
+    if(conn)out.appendChild(conn);
+    const sd=renderSearchDemand(m.search_demand);
+    if(sd)out.appendChild(sd);
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
         +'&issue='+encodeURIComponent(m.issue||''),
@@ -6467,6 +6525,17 @@
             {statement:'Patient advocates alleged that registered members were asked for cash at county hospitals.',status:'alleged',independent_sources:1,first_seen:'2026-07-09',
               sources:[{publisher:'Mfano Daily',url:'https://mfano-daily.example/afya-cash',published_at:'2026-07-09',quote:'registered members were being asked for cash at county hospitals'}]}]}]},
     issue:{principal:'Amani Mfano (fictional)',issue:'Afya Mfano',thin:false,coverage:{mentions_analyzed:143,mentions_total:143},
+      // Fictional, like everything in this sample; every link is .example.
+      connection_record:{state:'measured',findings_total:2,principal_findings:5,
+        counts:{findings:2,established:1,corroborated:1,alleged:1,primary:0,publishers:2},
+        lead:'2 verified statements on the record name both Amani Mfano (fictional) and Afya Mfano, printed by 2 outlets: 1 independently corroborated; 1 alleged, not established.',
+        patterns:[],
+        findings:[
+          {statement:'Governor Amani Mfano launched the Afya Mfano scheme at the county referral hospital.',status:'reported',independent_sources:2,first_seen:'2026-05-18',
+            sources:[{publisher:'Mfano Daily',url:'https://mfano-daily.example/afya-launch',published_at:'2026-05-18',quote:'launched the Afya Mfano scheme at the county referral hospital'}]},
+          {statement:'Patient advocates alleged that Amani Mfano knew Afya Mfano facilities were charging registered members.',status:'alleged',independent_sources:1,first_seen:'2026-07-09',
+            sources:[{publisher:'Mfano Voice',url:'https://mfano-voice.example/advocates',published_at:'2026-07-09',quote:'knew the facilities were charging registered members'}]}],
+        timeline:[]},
       // The map runs the same name check the report does. It did not, for
       // three rounds of this codebase fixing things where they were seen.
       grounding:{checked:18,ungrounded:[],rate:0,method:'capitalised-names'},

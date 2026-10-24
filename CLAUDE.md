@@ -332,6 +332,26 @@ requests `monkeypatch` is torn down AFTER `db_session`, and a test that
 stubs `db_session.close` then held its transaction through teardown and hung
 the whole suite on the next DROP INDEX.
 
+**The Issue Map's connection is a claim, so it stands on the record.**
+The map answers "how is this person connected to this issue?" with a
+verdict a model wrote over a digest — in a client's file, "X is tied to
+the IMF loan" is an allegation unless something on the record says it.
+`evidence/connection.py` builds the map's first section from the fact
+store: every finding about the principal whose statement ALSO names the
+issue (`about_issue`: the phrase, an alias, or every distinctive word of
+a multi-word issue; a short name like "IMF" only as a whole word; generic
+words like "case" never alone), with its sources' words, origins counted,
+allegations kept, dated by first publication, and a lead line that is
+arithmetic. None says "not established on the record" in words; a record
+that could not be read (`state: not_measured`, e.g. sources the map never
+stored) is the operator's and never reads as "no connection". The map
+reads its stored sources beside the analysts (`_start_connection_reading`
+/ `_finish_connection`), asks search demand for the PAIR in one request
+(`keywords=[principal, issue]` — the alias rule drops anything under four
+letters, which would have lost "IMF"), and the page puts the record's
+count beside the model's verdict so an unsupported verdict never stands
+alone at the top of the file.
+
 **Read the contract, not the memory of it.** The SocialCrawl account was
 unfunded, so nothing exercised the paid path, and reading every endpoint
 in SocialCrawl's own catalogue (`socialcrawl_endpoint`, free) found what

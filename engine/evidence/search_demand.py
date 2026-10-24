@@ -169,7 +169,7 @@ def keywords_for(name: str, aliases: list[str] | None) -> list[str]:
 
 def fetch(name: str, aliases: list[str] | None, window_start: datetime, window_end: datetime,
           api_key: str, location: str = "KE", now: datetime | None = None,
-          asker=ask) -> dict:
+          asker=ask, keywords: list[str] | None = None) -> dict:
     """Ask Trends what it knows: interest over time for the name (and one
     alias, normalised together so they compare), then the top and rising
     searches around whichever was searched more. Two requests; touches no
@@ -180,7 +180,9 @@ def fetch(name: str, aliases: list[str] | None, window_start: datetime, window_e
     if why_not:
         return {**base, "explore": {"state": "not_measured", "reason": why_not, "data": None},
                 "rising": {"state": "not_measured", "reason": why_not, "data": None}, "keywords": []}
-    keywords = keywords_for(name, aliases)
+    # The Issue Map names its own pair (principal and issue, normalised
+    # together); a report asks the name and its likeliest alias.
+    keywords = [k for k in (keywords or keywords_for(name, aliases)) if 2 <= len(k) <= 100][:5]
     where = {"location": location} if location else {}
     explore = asker(api_key, "explore", {"keywords": ",".join(keywords), "timeframe": preset, **where})
     chosen = keywords[0]
@@ -570,7 +572,8 @@ def signals(section: dict, subject: str) -> list[dict]:
 
 def gather(name: str, aliases: list[str] | None, window_start: datetime, window_end: datetime,
            api_key: str, now: datetime | None = None, asker=None,
-           locations: tuple[str, ...] = LOCATIONS, suggest=None, readers=None) -> dict:
+           locations: tuple[str, ...] = LOCATIONS, suggest=None, readers=None,
+           keywords: list[str] | None = None) -> dict:
     """Everything asked at once: Trends for each place (through the ladder —
     SocialCrawl, then Google directly), Google's suggestions for each place,
     and Wikipedia's readers. {location: trends answer, "suggestions":
@@ -583,7 +586,8 @@ def gather(name: str, aliases: list[str] | None, window_start: datetime, window_
     suggest = suggest or search_sources.suggestions
     readers = readers or search_sources.pageviews
     jobs = {loc: (lambda loc=loc: fetch(name, aliases, window_start, window_end, api_key,
-                                        location=loc, now=now, asker=asker)) for loc in locations}
+                                        location=loc, now=now, asker=asker, keywords=keywords))
+            for loc in locations}
     for loc in locations:
         jobs[f"suggest:{loc}"] = lambda loc=loc: suggest(name, loc)
     jobs["wikipedia"] = lambda: readers(name, aliases, window_start, window_end)
