@@ -658,6 +658,11 @@ def _execute_socialcrawl_task(session: Session, run: IngestionRun, task: Ingesti
 
     source_type = (task.params or {}).get("source_type", "post")
     discovered_posts: list[IngestedMention] = []
+    # The next page's cursor, for endpoints that page by one; and one `seen`
+    # id per run, so this run's overlapping queries stop paying twice for
+    # the same posts.
+    cursor = None
+    seen = f"run-{run.id}"[:64]
     while task.page_cursor <= MAX_PAGES_PER_TASK and not collection_stopped(run.id):
         current = session.query(IngestionRun.credits_spent).filter_by(id=run.id).scalar() or 0.0
         if _budget_exhausted(run, current + sc.credit_cost(task.endpoint)):
@@ -673,7 +678,10 @@ def _execute_socialcrawl_task(session: Session, run: IngestionRun, task: Ingesti
             run.window_end,
             default_source_type=source_type,
             idempotency_key=idem,
+            cursor=cursor,
+            seen=seen,
         )
+        cursor = getattr(connector, "next_cursor", None)
         _spend_credits(session, run.id, sc.credit_cost(task.endpoint))
         task.credits_spent += sc.credit_cost(task.endpoint)
         in_window = [m for m in mentions if run.window_start <= m["posted_at"] <= run.window_end]

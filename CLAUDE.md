@@ -332,6 +332,24 @@ requests `monkeypatch` is torn down AFTER `db_session`, and a test that
 stubs `db_session.close` then held its transaction through teardown and hung
 the whole suite on the next DROP INDEX.
 
+**Read the contract, not the memory of it.** The SocialCrawl account was
+unfunded, so nothing exercised the paid path, and reading every endpoint
+in SocialCrawl's own catalogue (`socialcrawl_endpoint`, free) found what
+the first paid run would have hit: X was searched through
+`twitter/ai-search`, which answers with xAI Grok's written summary under
+keys the connector never read — 5 credits, nothing stored, "no chatter on
+X", and a model's answer is not a source anyway (now `twitter/search/tweets`,
+the period as `since:`/`until:` inside the query); Facebook keyword search
+existed and was unused; cursor-paged endpoints (`CURSOR_PATHS`) were asked
+for `page=2` and served page 1 again, so no run read past one page; the
+period went everywhere as `date_from`/`date_to`, which most endpoints do
+not read (`_search_params` now gives each its own form — Google News exact
+`from`/`to` and Kenya's `location_code` 2404); the brand-mentions composite
+costs 50 credits, not the 20 the budget table said; and a 402 was
+rediscovered by every remaining task (`refusal_for` remembers it for the
+host for an hour). One `seen` id per run makes repeats across query
+variants free. When a paid source is added, read its contract first.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

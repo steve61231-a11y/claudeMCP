@@ -18,7 +18,15 @@ SEARCH_ENDPOINTS: list[tuple[str, str, str, str]] = [
     ("instagram", "/v1/instagram/search/hashtag", "post", "hashtag"),
     ("instagram", "/v1/instagram/search/reels", "video", "text"),
     ("linkedin", "/v1/linkedin/search/posts", "post", "text"),
-    ("twitter", "/v1/twitter/ai-search", "post", "text"),
+    # Raw tweets. `twitter/ai-search` was here: it answers with xAI Grok's
+    # written summary plus the posts it cited, under keys this connector
+    # never read — so every X search cost 5 credits, stored nothing, and
+    # read as "no chatter on X". A model's answer must never be collected
+    # as a source anyway; this endpoint returns what people posted.
+    ("twitter", "/v1/twitter/search/tweets", "post", "text"),
+    # Keyword search of public Facebook posts — the platform most Kenyans
+    # are on, and until now reachable here only through known page handles.
+    ("facebook", "/v1/facebook/search/posts", "post", "text"),
     ("threads", "/v1/threads/search", "post", "text"),
     ("reddit", "/v1/reddit/search", "post", "text"),
     ("google_news", "/v1/google_news/search", "article", "text"),
@@ -33,11 +41,68 @@ TRANSCRIPT_ENDPOINTS = {
 # Client-side per-request credit estimates for budget guardrails (matches the
 # published pricing tiers: searches/comments 1cr, transcripts 10cr,
 # brand-mentions composite 20cr).
+#
+# Read from SocialCrawl's catalogue on 24 October 2026, not guessed: the
+# brand-mentions composite is 50 credits flat (this table said 20, so the
+# run's budget guard let two and a half times the spend through), LinkedIn
+# search is 5 a page, the Trends endpoints 5. A budget the table
+# underestimates is no budget.
 ENDPOINT_CREDIT_COST = {
-    SOCIALCRAWL_BRAND_MENTIONS_PATH: 20.0,
+    SOCIALCRAWL_BRAND_MENTIONS_PATH: 50.0,
     "/v1/tiktok/post/transcript": 10.0,
     "/v1/youtube/video/transcript": 10.0,
+    "/v1/linkedin/search/posts": 5.0,
+    "/v1/google_trends/explore": 5.0,
+    "/v1/google_trends/rising": 5.0,
 }
+
+#: Endpoints that page by an opaque cursor (`pagination.next_cursor`) and
+#: ignore `page=`. Asked for "page 2" they served page 1 again — free from
+#: SocialCrawl's two-minute cache, so it cost nothing and found nothing, and
+#: no run ever read past the first page of any of them.
+CURSOR_PATHS = {
+    "/v1/twitter/search/tweets", "/v1/tiktok/search", "/v1/tiktok/search/hashtag",
+    "/v1/threads/search", "/v1/facebook/search/posts",
+}
+#: Endpoints that accept `seen`: rows this account already received under
+#: the same id are dropped and the page price falls with them, so the
+#: overlapping query variants of one run stop paying for the same posts.
+SEEN_PATHS = {"/v1/twitter/search/tweets", "/v1/tiktok/search", "/v1/threads/search",
+              "/v1/facebook/search/posts", "/v1/linkedin/search/posts"}
+#: Kenya in Google's location codes (2000 + ISO 3166 numeric 404).
+KENYA_LOCATION_CODE = "2404"
+
+
+def refusal_for(response) -> str | None:
+    """A 402 is the ACCOUNT's verdict, not this request's: every other
+    SocialCrawl call this run would get the same answer. Remembered for the
+    host (`http.remember_refusal`), so the rest of the run is told once
+    rather than asking dozens of times — and search demand drops straight to
+    its keyless rungs. An hour, because a top-up should be picked up soon."""
+    body = getattr(response, "text", "") or ""
+    if not isinstance(body, str):
+        body = ""
+    if getattr(response, "status_code", None) == 402 or "INSUFFICIENT_CREDITS" in body[:400]:
+        reason = ("HTTP 402: the SocialCrawl account behind SOCIALCRAWL_API_KEY has no credits "
+                  "left. Top it up, or remove the variable to turn SocialCrawl off cleanly.")
+        http.remember_refusal(SOCIALCRAWL_BASE_URL, reason, hours=1.0)
+        return reason
+    return None
+
+
+def _tiktok_window(days: int) -> str:
+    for limit, name in ((1, "yesterday"), (7, "this-week"), (31, "this-month"),
+                        (92, "last-3-months"), (184, "last-6-months")):
+        if days <= limit:
+            return name
+    return "all-time"
+
+
+def _linkedin_window(days: int) -> str | None:
+    for limit, name in ((1, "past_24h"), (7, "past_week"), (31, "past_month")):
+        if days <= limit:
+            return name
+    return None
 DEFAULT_CREDIT_COST = 1.0
 
 
@@ -77,6 +142,9 @@ class SocialCrawlConnector(IngestionConnector):
     #: meaningful before any request has been made — the same contract
     #: `last_error` has, and for the same reason.
     credits_exhausted: bool = False
+    #: The cursor the last `search_page` answer gave for its next page, or
+    #: None. Read by the orchestrator between pages.
+    next_cursor: str | None = None
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or settings.socialcrawl_api_key
@@ -123,26 +191,48 @@ class SocialCrawlConnector(IngestionConnector):
         return None
 
     @staticmethod
-    def _search_params(path: str, query: str, page: int, window_start: datetime, window_end: datetime) -> dict:
-        """Endpoint-specific query params — verified against SocialCrawl docs.
-
-        Hashtag endpoints require `hashtag` (400 on `query`); google_news
-        requires `keyword` with a depth/time_range model and no pagination.
-        Everything else takes `query` + best-effort date/page params (ignored
-        where unsupported; window filtering also happens client-side).
+    def _search_params(path: str, query: str, page: int, window_start: datetime, window_end: datetime,
+                       cursor: str | None = None, seen: str | None = None) -> dict:
+        """Endpoint-specific query params, each taken from SocialCrawl's own
+        contract for that endpoint — the period in the form THAT endpoint
+        reads, because an endpoint handed a parameter it does not know
+        ignores it and answers with its all-time best, which is how an old
+        post walks into a report about this month.
         """
+        from datetime import timedelta
+
+        start, end = window_start.date().isoformat(), window_end.date().isoformat()
+        days = max(1, (window_end - window_start).days)
         if path.endswith("/search/hashtag"):
-            return {"hashtag": query.lstrip("#").replace(" ", "")}
-        if path == "/v1/google_news/search":
-            days = (window_end - window_start).days
-            time_range = "year" if days > 31 else "month" if days > 7 else "week"
-            return {"keyword": query, "depth": "100", "time_range": time_range}
-        return {
-            "query": query,
-            "page": str(page),
-            "date_from": window_start.date().isoformat(),
-            "date_to": window_end.date().isoformat(),
-        }
+            params = {"hashtag": query.lstrip("#").replace(" ", "")}
+        elif path == "/v1/google_news/search":
+            # Exact publication dates, Kenya's edition.
+            params = {"keyword": query, "depth": "100", "from": start, "to": end,
+                      "location_code": KENYA_LOCATION_CODE, "language_code": "en"}
+        elif path == "/v1/twitter/search/tweets":
+            # No date parameters on this endpoint: the window is an X
+            # operator inside the query. `until` is exclusive, hence +1 day.
+            phrase = f'"{query}"' if " " in query and not query.startswith('"') else query
+            until = (window_end + timedelta(days=1)).date().isoformat()
+            params = {"query": f"{phrase} since:{start} until:{until}", "sort": "top"}
+        elif path in ("/v1/threads/search", "/v1/facebook/search/posts"):
+            params = {"query": query, "start_date": start, "end_date": end}
+        elif path == "/v1/linkedin/search/posts":
+            params = {"query": query}
+            window = _linkedin_window(days)
+            if window:
+                params["date_posted"] = window
+            if page > 1:
+                params["page"] = str(page)
+        elif path == "/v1/tiktok/search":
+            params = {"query": query, "date_posted": _tiktok_window(days)}
+        else:
+            params = {"query": query, "page": str(page), "date_from": start, "date_to": end}
+        if cursor and path in CURSOR_PATHS:
+            params["cursor"] = cursor
+        if seen and path in SEEN_PATHS:
+            params["seen"] = seen
+        return params
 
     def search_page(
         self,
@@ -154,6 +244,8 @@ class SocialCrawlConnector(IngestionConnector):
         window_end: datetime,
         default_source_type: str = "post",
         idempotency_key: str | None = None,
+        cursor: str | None = None,
+        seen: str | None = None,
     ) -> tuple[list[IngestedMention], bool]:
         """One page of a keyword/hashtag search. Returns (mentions, has_more).
 
@@ -162,11 +254,14 @@ class SocialCrawlConnector(IngestionConnector):
         social search endpoints don't honor date ranges. has_more is a
         server-driven signal where available, else "the page was non-empty".
         """
-        params = self._search_params(path, query, page, window_start, window_end)
+        params = self._search_params(path, query, page, window_start, window_end, cursor, seen)
         headers = {"x-api-key": self.api_key}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
+        self.next_cursor = None
         response = http.get(f"{SOCIALCRAWL_BASE_URL}{path}", params=params, headers=headers, timeout=30)
+        if refusal_for(response):
+            self.credits_exhausted = True
         response.raise_for_status()
         body = response.json()
         if not body.get("success", True):
@@ -181,8 +276,16 @@ class SocialCrawlConnector(IngestionConnector):
             if isinstance(item, dict)
         ]
         has_more = bool(items) and bool(data.get("has_more", True)) and not data.get("is_last_page", False)
+        # The cursor for the next page, wherever this endpoint puts it. On a
+        # cursor endpoint it IS has_more: no cursor, no next page.
+        pagination = (body.get("pagination") if isinstance(body.get("pagination"), dict) else None) \
+            or (data.get("pagination") if isinstance(data.get("pagination"), dict) else {})
+        next_cursor = pagination.get("next_cursor") or data.get("next_cursor")
+        self.next_cursor = str(next_cursor) if next_cursor not in (None, "") else None
+        if path in CURSOR_PATHS:
+            has_more = bool(items) and self.next_cursor is not None
         # Endpoints without a page param would just re-serve page 1 forever.
-        if path.endswith("/search/hashtag") or path == "/v1/google_news/search":
+        elif path.endswith("/search/hashtag") or path == "/v1/google_news/search":
             has_more = False
         return mentions, has_more
 
@@ -455,11 +558,13 @@ class SocialCrawlConnector(IngestionConnector):
             ("youtube", "/v1/youtube/search", "video"),
             ("youtube", "/v1/youtube/search/hashtag", "video"),
             ("linkedin", "/v1/linkedin/search/posts", "post"),
-            ("twitter", "/v1/twitter/ai-search", "post"),
+            ("twitter", "/v1/twitter/search/tweets", "post"),
+            ("facebook", "/v1/facebook/search/posts", "post"),
         ]
         for platform, path, default_source_type in discovery_calls:
             try:
-                posts = self._call_search_endpoint(platform, path, default_source_type, politician_name)
+                posts = self._call_search_endpoint(platform, path, default_source_type, politician_name,
+                                                   window_start, window_end)
             except Exception as exc:  # noqa: BLE001
                 # A paid endpoint refusing us must be visible: this is money
                 # spent for nothing, reported as a platform with no chatter.
@@ -478,14 +583,24 @@ class SocialCrawlConnector(IngestionConnector):
         return mentions
 
     def _call_search_endpoint(
-        self, platform: str, path: str, default_source_type: str, query: str
+        self, platform: str, path: str, default_source_type: str, query: str,
+        window_start: datetime | None = None, window_end: datetime | None = None,
     ) -> list[IngestedMention]:
+        # The same per-endpoint params the orchestrator's path uses. This
+        # sent `query=` to every endpoint, and the hashtag endpoints answer
+        # that with a 400 — paid for nothing on every Issue Map.
+        if window_start and window_end:
+            params = self._search_params(path, query, 1, window_start, window_end)
+        else:
+            params = {"query": query}
         response = http.get(
             f"{SOCIALCRAWL_BASE_URL}{path}",
-            params={"query": query},
+            params=params,
             headers={"x-api-key": self.api_key},
             timeout=30,
         )
+        if refusal_for(response):
+            self.credits_exhausted = True
         response.raise_for_status()
         body = response.json()
         if not body.get("success", True):

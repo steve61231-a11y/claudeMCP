@@ -17,6 +17,7 @@ prints names a subject anyone is researching.
 
 from __future__ import annotations
 
+import os
 import sys
 
 import requests
@@ -87,6 +88,13 @@ def main() -> int:
         chrome = _chrome(url)
         line = f"plain requests → {plain}  |  Chrome fingerprint → {chrome}"
         print(f"::notice title={label}::{line}")
+        # GitHub keeps ten notice annotations per step and drops the rest
+        # without a word — the eleventh probe vanished. The job summary keeps
+        # every line.
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(f"- **{label}**: {line}\n")
         print(f"{label}: {line}", file=sys.stderr)
     return 0
 

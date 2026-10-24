@@ -94,7 +94,7 @@ def test_run_is_partial_not_failed_when_some_sources_fail(db_session, monkeypatc
     run = orchestrator.plan_run(db_session, politician, *WINDOW)
 
     # One task stores a mention; every other task raises (credits exhausted).
-    def one_good_search(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None):
+    def one_good_search(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None, cursor=None, seen=None):
         if path.endswith("/tiktok/search"):
             return [fake_mention("Mbadi post", platform="tiktok", post_id=f"{query}-1")], False
         raise RuntimeError("out of credits")
@@ -117,7 +117,7 @@ def test_execute_run_paginates_and_stores_with_provenance(db_session, monkeypatc
 
     pages_requested = []
 
-    def fake_search_page(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None):
+    def fake_search_page(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None, cursor=None, seen=None):
         pages_requested.append((path, query, page))
         if page >= 2:
             return [fake_mention(f"Mbadi update {platform} {query} p{page}", platform=platform, post_id=f"{query}-{page}")], False
@@ -153,7 +153,7 @@ def test_execute_run_respects_credit_budget(db_session, monkeypatch):
     monkeypatch.setattr(
         SocialCrawlConnector,
         "search_page",
-        lambda self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None: (
+        lambda self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None, cursor=None, seen=None: (
             [fake_mention(f"Mbadi {platform} {query} {page}", platform=platform, post_id=f"{query}{page}")],
             True,
         ),
@@ -190,7 +190,7 @@ def test_execute_task_resumes_from_stored_cursor(db_session, monkeypatch):
 
     pages_requested = []
 
-    def fake_search_page(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None):
+    def fake_search_page(self, platform, path, query, page, ws, we, default_source_type="post", idempotency_key=None, cursor=None, seen=None):
         pages_requested.append(page)
         return [fake_mention(f"Mbadi {query} {page}", post_id=f"{query}{page}")], True
 
