@@ -91,6 +91,7 @@
   #zenith canvas{display:block;width:100%;border-radius:12px;touch-action:none;cursor:grab}
   #zenith canvas:active{cursor:grabbing}
   #zenith .mentr{padding:12px 0;border-top:1px solid var(--line2)}
+  #zenith .search-q{gap:8px;align-items:center;flex-wrap:wrap;font-size:14px;padding:5px 0;border-top:1px dashed var(--line2)}
   /* The state's own document, told apart from someone's report of it.
      Deliberately a quiet, authoritative treatment rather than a loud one:
      this is the part of the page that should read as a record, not as a
@@ -3850,6 +3851,153 @@
     return c;
   }
 
+  /* What the public went looking for — evidence/search_demand.py.
+     ---------------------------------------------------------------------
+     The third public signal beside what was published and what was said.
+     Three rules on this page, all the founding rule: a place that could
+     not be measured says so (to the operator) and never draws as a flat
+     line; Google's 0-100 index is called an index, with what 100 is; and
+     every search is shown as something people typed, never as something
+     that happened. */
+  const SEARCH_ANSWER={on_record:['On the record','pos'],in_coverage:['In the coverage','sky'],
+    unanswered:['Nothing collected addresses it','amber']};
+  function searchQueryRows(rows,kind){
+    const box=el('div','');
+    rows.forEach(q=>{
+      const a=(q.answer||{}).state, nav=a==='navigational';
+      const [label,tone]=SEARCH_ANSWER[a]||['',''];
+      const size=kind==='rising'?(q.breakout?'Breakout':(q.growth!=null?'+'+fmt(Math.round(q.growth))+'%':''))
+        :kind==='top'&&q.value!=null?String(Math.round(q.value)):'';
+      box.appendChild(el('div','row search-q'+(nav?' muted':''),
+        `<span style="flex:1;min-width:0">“${esc(q.query)}”</span>`
+        +(size?`<span class="chip">${esc(size)}</span>`:'')
+        +(label?`<span class="pill ${tone}">${esc(label)}</span>`:'')));
+    });
+    return box;
+  }
+  /** Search interest (line, 0-100) over the coverage it was compared with
+      (columns, items a day), on one time axis. */
+  function searchVsCoverage(series,byDay){
+    const days=Object.keys(byDay||{}).sort();
+    const pts=(series||[]).filter(p=>p&&p.at);
+    if(!pts.length)return null;
+    const t=x=>Date.parse(String(x).length===10?x+'T00:00:00Z':x);
+    const first=days.length?t(days[0]):t(pts[0].at), last=days.length?t(days[days.length-1])+DAY:t(pts[pts.length-1].at);
+    const W=640,H=130,span=Math.max(1,last-first),xOf=v=>W*(v-first)/span;
+    const maxC=Math.max(1,...days.map(d=>byDay[d]||0));
+    const s=svg('svg',{viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:'none',class:'chart-svg'});
+    days.forEach(d=>{
+      const x0=xOf(t(d)),bw=Math.max(2,W*DAY/span*0.7),h=(H-10)*((byDay[d]||0)/maxC);
+      const r=svg('rect',{x:x0+(W*DAY/span-bw)/2,y:H-h,width:bw,height:h,rx:1.5,fill:'var(--line2)'});
+      r.addEventListener('mousemove',e=>showTip(e,`<b>${esc(ukDate(d))}</b><br>${fmt(byDay[d]||0)} item(s) of coverage`));
+      r.addEventListener('mouseleave',hideTip);
+      s.appendChild(r);
+    });
+    // A daily point is stamped at midnight; drawn there it sits half a day
+    // left of its own day's column, and every peak reads a day early.
+    const daily=pts.length>1&&pts.every((p,i)=>i===0||t(p.at)-t(pts[i-1].at)>=DAY);
+    const line=pts.map(p=>[xOf(t(p.at)+(daily?DAY/2:0)),H-4-(H-14)*(Math.min(100,p.value)/100)]);
+    s.appendChild(svg('path',{fill:'none',stroke:'var(--sky2)','stroke-width':2.2,'stroke-linejoin':'round',
+      d:'M'+line.map(p=>p.map(v=>v.toFixed(1)).join(',')).join(' L')}));
+    const box=el('div','');
+    box.appendChild(s);
+    box.appendChild(el('div','day-cols-axis',`<span>${esc(ukDate(new Date(first).toISOString()))}</span>`
+      +`<span><span style="color:var(--sky2)">━</span> searches (0-100) · <span style="color:var(--mut)">▮</span> coverage (items a day)</span>`
+      +`<span>${esc(ukDate(new Date(last-1).toISOString()))}</span>`));
+    return box;
+  }
+  function searchReadings(k){
+    const out=[],ll=k.lead_lag||{},tr=k.traction||{};
+    const lag=Math.abs(ll.lag_days||0);
+    const LL={search_led:`Searches tended to rise ${lag} day${lag===1?'':'s'} before the coverage did — the public went looking before the press wrote.`,
+      coverage_led:`Searches tended to rise ${lag} day${lag===1?'':'s'} after the coverage — the coverage drove the curiosity.`,
+      together:'Searches rose and fell on the same days as the coverage.',
+      apart:'Searches and coverage did not move together this period.'};
+    if(LL[ll.reading])out.push(LL[ll.reading]+(ll.days?` (${ll.days} days compared)`:''));
+    const peaks=tr.coverage_peaks||[];
+    if(peaks.length){
+      const moved=peaks.filter(p=>p.moved).length;
+      out.push(`${moved} of the ${peaks.length} busiest days of coverage ${moved===1?'was':'were'} followed by a rise in searches.`);
+      peaks.forEach(p=>out.push(`${ukDate(p.date)}: ${fmt(p.items)} item(s) of coverage — `
+        +(p.moved?`searches reached ${Math.round(p.search_high)}, against a typical ${Math.round(p.search_typical)}.`
+                 :'no rise in searches: coverage nobody went looking for.')));
+    }
+    (tr.search_without_coverage||[]).forEach(q=>out.push(`${ukDate(q.date)}: searches reached ${Math.round(q.search)} while coverage stayed at ${fmt(q.items)} item(s) — the public went looking without the press.`));
+    return out;
+  }
+  function searchPlace(c,sec,title){
+    if(!sec)return;
+    const sug=sec.suggested||{};
+    const measured=sec.state==='measured', suggested=sug.state==='measured';
+    if(!measured&&!suggested){
+      if(sec.state==='too_little_search')c.appendChild(el('div','mentr',`<div class="lbl">${esc(title)}</div><div class="muted" style="font-size:13.5px">${esc(sec.reason||'Too few searches for Google to publish a figure.')}</div>`));
+      return;
+    }
+    const box=el('div','mentr');
+    box.appendChild(el('div','lbl',esc(title)));
+    if(measured){
+      const chart=searchVsCoverage(sec.series,sec.coverage_by_day||{});
+      if(chart)box.appendChild(chart);
+      const reads=searchReadings(sec);
+      if(reads.length)box.appendChild(el('div','',reads.map(t=>`<div style="font-size:14px;margin-top:6px">${esc(t)}</div>`).join('')));
+      const rising=(sec.rising_queries||[]),top=(sec.top_queries||[]);
+      if(rising.length){box.appendChild(el('div','fw-sub','Rising searches'));box.appendChild(searchQueryRows(rising.slice(0,8),'rising'));}
+      if(top.length){
+        const f=foldBlock('Top searches',`${top.length} — Google's 0-100 popularity among them`);
+        f.appendChild(searchQueryRows(top,'top'));box.appendChild(f);
+      }
+      if((sec.new_since_last||[]).length)box.appendChild(el('div','',`<div class="muted" style="font-size:13px;margin-top:8px">New since your last report: ${sec.new_since_last.map(q=>'“'+esc(q)+'”').join(' · ')}</div>`));
+      const notes=[sec.scale_note,sec.providers?('Source: '+Object.values(sec.providers).filter((v,i,a)=>a.indexOf(v)===i).join(', ')):'']
+        .filter(Boolean);
+      box.appendChild(el('div','muted chart-note',esc(notes.join(' '))
+        +(sec.trends_url?` <a class="src-link" href="${esc(sec.trends_url)}" target="_blank" rel="noopener noreferrer">open on Google Trends ↗</a>`:'')));
+    }
+    if(suggested&&(sug.rows||[]).length){
+      const f=foldBlock('What Google suggests as people type the name',`${sug.rows.length} — suggestions, not volumes`);
+      f.appendChild(searchQueryRows(sug.rows,'suggested'));box.appendChild(f);
+    }
+    c.appendChild(box);
+  }
+  function renderSearchDemand(sd){
+    if(!sd)return null;
+    const k=sd.kenya||{},w=sd.world||{},wiki=sd.wikipedia||{},cx=sd.contrast||{};
+    const anyMeasured=[k,w].some(x=>x.state==='measured'||(x.suggested||{}).state==='measured')||wiki.state==='measured';
+    const anyThin=[k,w].some(x=>x.state==='too_little_search');
+    if(!anyMeasured&&!anyThin){
+      // Nothing could be asked. The reader is not shown an empty section;
+      // the operator is told why, place by place.
+      const c=deepCard('What people searched for','Not measured this time');
+      c.classList.add('op-only');
+      [['Kenya',k],['Worldwide',w]].forEach(([n,x])=>c.appendChild(el('div','muted',`${esc(n)}: ${esc(x.reason||'no answer')}`
+        +(x.fallback_from?` (SocialCrawl first: ${esc(x.fallback_from.reason||'')})`:''))));
+      return c;
+    }
+    const c=deepCard('What people searched for',
+      'Google searches in Kenya and worldwide, Google’s suggestions and Wikipedia’s readers — what the public went looking for, not what happened');
+    searchPlace(c,k,'In Kenya');
+    searchPlace(c,w,'Worldwide');
+    if((cx.world_only||[]).length||(cx.kenya_only||[]).length){
+      const box=el('div','mentr');
+      box.innerHTML=`<div class="lbl">Kenya and the world, compared</div>`
+        +((cx.world_only||[]).length?`<div style="font-size:14px;margin-top:6px"><b>Searched worldwide, not in Kenya:</b> ${cx.world_only.map(q=>'“'+esc(q)+'”').join(' · ')}</div>`:'')
+        +((cx.kenya_only||[]).length?`<div style="font-size:14px;margin-top:6px"><b>Searched only in Kenya:</b> ${cx.kenya_only.map(q=>'“'+esc(q)+'”').join(' · ')}</div>`:'')
+        +`<div class="muted chart-note">Compared as lists of searches. Each place’s 0-100 index is scaled to its own busiest moment, so the two are never compared as amounts.</div>`;
+      c.appendChild(box);
+    }
+    if(wiki.state==='measured'&&(wiki.series||[]).length){
+      const box=el('div','mentr');
+      box.appendChild(el('div','lbl','Wikipedia readers'));
+      const byDay={};wiki.series.forEach(p=>byDay[p.date]=p.views);
+      box.appendChild(dayColumns(byDay,{noun:'reads',height:70}));
+      box.appendChild(el('div','muted chart-note',`${fmt(wiki.total||0)} reads of the English Wikipedia article “${esc(wiki.title||'')}” over the period — real counts, worldwide, of one page.`
+        +(wiki.url?` <a class="src-link" href="${esc(wiki.url)}" target="_blank" rel="noopener noreferrer">open ↗</a>`:'')));
+      c.appendChild(box);
+    }
+    const fb=[k,w].map(x=>x.fallback_from).filter(Boolean)[0];
+    if(fb)c.appendChild(el('div','muted chart-note op-only',`SocialCrawl did not answer (${esc(fb.reason||'')}); Google was asked directly instead.`));
+    return c;
+  }
+
   /** The stories the corpus is actually telling, by weight. */
   function renderNarratives(rows){
     rows=(rows||[]).filter(n=>n&&n.label);
@@ -4092,8 +4240,10 @@
 
   /** One card per storyline: how it unfolded, both framings, and — from
       timestamps alone, no model involved — where it started and how it spread. */
-  function renderNarrativeDeepDives(dives,check){
+  function renderNarrativeDeepDives(dives,check,sd){
     const cut=((check||{}).check||{}).removed||[];
+    // Which storylines people in Kenya were searching about, and how.
+    const searched=(((sd||{}).kenya||{}).storyline_searches)||{};
     return (dives||[]).filter(d=>d&&d.label).map(d=>{
       const origin=d.origin||{}, fs=origin.first_seen||{};
       // A storyline is a section like any other. Built as a plain card it was
@@ -4115,6 +4265,9 @@
         +(fromRecord?`<div class="muted chart-note">Traced only from this storyline’s findings on the record; every sentence names the sources it rests on.</div>`:'')
         +(d.record_summary&&d.record_summary.findings?`<div class="row" style="margin-top:8px"><span class="chip">${esc(recordSummaryLine(d.record_summary))}</span></div>`:'')
         +`${(d.who_is_driving_it||[]).length?`<div class="muted" style="font-size:12.5px;margin-top:10px">Driven by: ${(d.who_is_driving_it||[]).map(handle).join(' · ')}</div>`:''}`));
+      const sq=searched[d.label]||[];
+      if(sq.length)c.appendChild(el('div','row',`<span class="muted" style="font-size:12.5px">Searched in Kenya:</span>`
+        +sq.map(q=>`<span class="chip">“${esc(q.query)}”${q.breakout?' · breakout':q.growth!=null?' · +'+fmt(Math.round(q.growth))+'%':''}</span>`).join('')));
       // The storyline's own record: the findings its items yielded, oldest
       // first, each with the words its sources printed.
       const rec=(d.on_record||[]).filter(f=>f&&f.statement);
@@ -4467,12 +4620,13 @@
     const theCase=[
       renderEstablishedRecord(r.establishedRecord),
       renderInsights(r.deepInsights,r.insightsCheck),
+      renderSearchDemand(r.searchDemand),
       renderNarratives(r.narratives),
       renderPublicVoice(r.publicVoice),
       renderDeepTimeline(r.timeline),
       renderPlatformPulse(r.platformPulse),
       renderInfluencerStances(r.influencerStances)]
-      .concat(renderNarrativeDeepDives(r.narrativeDeepDives,r.storylinesCheck))
+      .concat(renderNarrativeDeepDives(r.narrativeDeepDives,r.storylinesCheck,r.searchDemand))
       .concat([renderSinceLastReport(r.sinceLastReport),
                renderSentimentHistory(r.sentimentHistory)])
       .filter(Boolean);
@@ -4510,6 +4664,7 @@
     ['narrative_breakdown','Narratives'],
     ['executive_summary','Executive summary'],
     ['deep_insights','Beneath the surface'],
+    ['search_demand','What people searched for'],
     ['public_voice','Public voice'],
     ['timeline','What happened, and when'],
     ['platform_pulse','Platform pulse'],
@@ -6294,6 +6449,9 @@
         {section:'executive_brief',status:'verified',confidence:0.91,independent_sources:1,
          text:'The Governor committed to fixes within 90 days.',
          citations:[{source:'Mfano Daily',url:'https://mfanodaily.example/afya-90-days',quote:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]}],
+      // Fictional search demand: the subject, the scheme and every query are
+      // invented, and no link leaves the .example domain.
+      searchDemand:{"state":"measured","kenya":{"state":"measured","place":"Kenya","timeframe_label":"the past 30 days","keyword":"Amani Mfano","series":[{"at":"2026-07-01T00:00:00Z","date":"2026-07-01","value":14,"partial":false},{"at":"2026-07-02T00:00:00Z","date":"2026-07-02","value":14,"partial":false},{"at":"2026-07-03T00:00:00Z","date":"2026-07-03","value":14,"partial":false},{"at":"2026-07-04T00:00:00Z","date":"2026-07-04","value":14,"partial":false},{"at":"2026-07-05T00:00:00Z","date":"2026-07-05","value":14,"partial":false},{"at":"2026-07-06T00:00:00Z","date":"2026-07-06","value":14,"partial":false},{"at":"2026-07-07T00:00:00Z","date":"2026-07-07","value":14,"partial":false},{"at":"2026-07-08T00:00:00Z","date":"2026-07-08","value":72,"partial":false},{"at":"2026-07-09T00:00:00Z","date":"2026-07-09","value":100,"partial":false},{"at":"2026-07-10T00:00:00Z","date":"2026-07-10","value":61,"partial":false},{"at":"2026-07-11T00:00:00Z","date":"2026-07-11","value":14,"partial":false},{"at":"2026-07-12T00:00:00Z","date":"2026-07-12","value":14,"partial":false},{"at":"2026-07-13T00:00:00Z","date":"2026-07-13","value":14,"partial":false},{"at":"2026-07-14T00:00:00Z","date":"2026-07-14","value":14,"partial":false},{"at":"2026-07-15T00:00:00Z","date":"2026-07-15","value":14,"partial":false},{"at":"2026-07-16T00:00:00Z","date":"2026-07-16","value":14,"partial":false},{"at":"2026-07-17T00:00:00Z","date":"2026-07-17","value":88,"partial":false},{"at":"2026-07-18T00:00:00Z","date":"2026-07-18","value":14,"partial":false},{"at":"2026-07-19T00:00:00Z","date":"2026-07-19","value":14,"partial":false},{"at":"2026-07-20T00:00:00Z","date":"2026-07-20","value":14,"partial":false},{"at":"2026-07-21T00:00:00Z","date":"2026-07-21","value":14,"partial":false},{"at":"2026-07-22T00:00:00Z","date":"2026-07-22","value":14,"partial":false},{"at":"2026-07-23T00:00:00Z","date":"2026-07-23","value":14,"partial":false},{"at":"2026-07-24T00:00:00Z","date":"2026-07-24","value":14,"partial":false},{"at":"2026-07-25T00:00:00Z","date":"2026-07-25","value":14,"partial":false},{"at":"2026-07-26T00:00:00Z","date":"2026-07-26","value":14,"partial":false},{"at":"2026-07-27T00:00:00Z","date":"2026-07-27","value":14,"partial":false},{"at":"2026-07-28T00:00:00Z","date":"2026-07-28","value":14,"partial":false},{"at":"2026-07-29T00:00:00Z","date":"2026-07-29","value":14,"partial":false},{"at":"2026-07-30T00:00:00Z","date":"2026-07-30","value":14,"partial":false},{"at":"2026-07-31T00:00:00Z","date":"2026-07-31","value":14,"partial":false}],"coverage_by_day":{"2026-07-01":12,"2026-07-02":12,"2026-07-03":12,"2026-07-04":12,"2026-07-05":12,"2026-07-06":12,"2026-07-07":12,"2026-07-08":12,"2026-07-09":118,"2026-07-10":64,"2026-07-11":12,"2026-07-12":12,"2026-07-13":12,"2026-07-14":12,"2026-07-15":12,"2026-07-16":12,"2026-07-17":12,"2026-07-18":12,"2026-07-19":12,"2026-07-20":12,"2026-07-21":12,"2026-07-22":40,"2026-07-23":12,"2026-07-24":12,"2026-07-25":12,"2026-07-26":12,"2026-07-27":12,"2026-07-28":12,"2026-07-29":12,"2026-07-30":12,"2026-07-31":12},"lead_lag":{"reading":"search_led","lag_days":1,"fit":0.81,"days":31},"traction":{"coverage_peaks":[{"date":"2026-07-09","items":118,"search_high":100,"search_typical":14,"moved":true},{"date":"2026-07-22","items":40,"search_high":14,"search_typical":14,"moved":false}],"search_without_coverage":[{"date":"2026-07-17","search":88,"items":12,"coverage_typical":12}]},"rising_queries":[{"query":"afya mfano refund","growth":null,"breakout":true,"answer":{"state":"unanswered"}},{"query":"afya mfano registration","growth":250,"breakout":false,"answer":{"state":"on_record"}},{"query":"mfano 90 days","growth":180,"breakout":false,"answer":{"state":"in_coverage"}}],"top_queries":[{"query":"amani mfano news","value":100,"answer":{"state":"navigational"}},{"query":"afya mfano","value":64,"answer":{"state":"on_record"}}],"unanswered":["afya mfano refund"],"scale_note":"Google's 0-100 index for searches in Kenya: 100 is the busiest moment of the past 30 days there, not a number of searches.","providers":{"interest":"SocialCrawl (Google Trends)","searches":"SocialCrawl (Google Trends)"},"storyline_searches":{"Afya Mfano rollout pain":[{"query":"afya mfano registration","kind":"rising","growth":250,"breakout":false}]},"suggested":{"state":"measured","rows":[{"query":"amani mfano afya mfano","answer":{"state":"on_record"}},{"query":"amani mfano age","answer":{"state":"unanswered"}}],"unanswered":["amani mfano age"]}},"world":{"state":"measured","place":"the world","timeframe_label":"the past 30 days","keyword":"Amani Mfano","series":[],"rising_queries":[{"query":"mfano county health levy","growth":120,"breakout":false,"answer":{"state":"on_record"}}],"top_queries":[],"scale_note":"Google's 0-100 index for searches worldwide: 100 is the busiest moment of the past 30 days there, not a number of searches.","suggested":{"state":"not_measured","rows":[]}},"contrast":{"world_only":["mfano county health levy"],"kenya_only":["afya mfano refund","mfano 90 days"]},"wikipedia":{"state":"measured","title":"Amani Mfano (fictional)","url":"https://wiki.example/Amani_Mfano","total":5120,"series":[{"date":"2026-07-01","views":140},{"date":"2026-07-02","views":140},{"date":"2026-07-03","views":140},{"date":"2026-07-04","views":140},{"date":"2026-07-05","views":140},{"date":"2026-07-06","views":140},{"date":"2026-07-07","views":140},{"date":"2026-07-08","views":140},{"date":"2026-07-09","views":900},{"date":"2026-07-10","views":140},{"date":"2026-07-11","views":140},{"date":"2026-07-12","views":140},{"date":"2026-07-13","views":140},{"date":"2026-07-14","views":140},{"date":"2026-07-15","views":140},{"date":"2026-07-16","views":140},{"date":"2026-07-17","views":140},{"date":"2026-07-18","views":140},{"date":"2026-07-19","views":140},{"date":"2026-07-20","views":140},{"date":"2026-07-21","views":140},{"date":"2026-07-22","views":140},{"date":"2026-07-23","views":140},{"date":"2026-07-24","views":140},{"date":"2026-07-25","views":140},{"date":"2026-07-26","views":140},{"date":"2026-07-27","views":140},{"date":"2026-07-28","views":140},{"date":"2026-07-29","views":140},{"date":"2026-07-30","views":140},{"date":"2026-07-31","views":140}],"peak":{"date":"2026-07-09","views":900}}},
       narrativeDeepDives:[
         {label:'Afya Mfano rollout pain',mention_count:214,
           how_it_unfolded:'The storyline begins as scattered individual complaints about registration, then consolidates around a single reproducible claim \u2014 that registered members are still being asked for cash at the point of care. Once advocacy groups began collecting cases, the framing shifted from administrative teething to systemic failure, and mainstream outlets picked it up.',

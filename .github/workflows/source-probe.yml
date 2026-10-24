@@ -16,6 +16,7 @@ on:
       - main
     paths:
       - "engine/ingestion/**"
+      - "engine/evidence/search_sources.py"
       - "scripts/source_probe.py"
       - ".github/workflows/source-probe.yml"
   workflow_dispatch: {}

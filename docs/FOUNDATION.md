@@ -221,6 +221,15 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   identity rule against their own source. What remains written without the
   record: the supporter/critic framings (opinion, beside verified quotes),
   public voice, platform pulse and influencer stances.
+- **Search demand — added.** What the public went looking for, Kenya and
+  worldwide, against the coverage and the record: who led, which coverage
+  nobody searched for, which searches nothing collected answers, which
+  storylines were searched, what only the world asked. Counted with no
+  model; offered to the writers as S entries a sentence must call searching.
+  SocialCrawl first, Google directly second, suggestions and Wikipedia
+  beside — no single provider holds it up. Next: the same for the Issue Map
+  (principal and issue in one request), and rising searches fed to the
+  learning loop as next run's questions.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;

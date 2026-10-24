@@ -814,9 +814,28 @@ def run_analysis(
     # analysts: planned here (one query), read in a thread that touches no
     # database, stored after the analysts return, on this thread. It adds no
     # wall-clock to the report unless it is still reading when they finish.
+    # What the public went looking for — Google Trends for Kenya and the
+    # world, Google's suggestions, Wikipedia's readers (evidence/
+    # search_demand.py). Network only, so it runs from here beside the
+    # analysts and is read before the writers, who may cite it.
+    search_future = None
+    search_started = _time.monotonic()
+    if settings.enable_search_demand:
+        try:
+            from engine.evidence import search_demand
+            from engine.runctx import carry
+
+            search_pool = ThreadPoolExecutor(max_workers=1)
+            search_future = search_pool.submit(carry(lambda: search_demand.gather(
+                politician.name, list(politician.aliases or []), window_start, window_end,
+                settings.socialcrawl_api_key)))
+            search_pool.shutdown(wait=False)
+        except Exception as exc:  # noqa: BLE001 — never the report's cost
+            stages.current().failed("search_demand", exc)
     fact_future = None
     storyline_findings: dict = {}
     record_days: dict = {}
+    all_findings: list = []
     if settings.enable_fact_store and corpus:
         try:
             from engine.evidence import facts as facts_store
@@ -888,6 +907,34 @@ def run_analysis(
             stages.current().failed("timeline_from_record", exc)
     stages.current().lap("facts")
 
+    # Search demand, read against what the report now holds: the coverage by
+    # day, the record, the storylines, the collected text.
+    search_signals: list = []
+    if search_future is not None:
+        try:
+            from engine.evidence import search_demand
+
+            left = max(5.0, settings.search_demand_deadline_seconds
+                       - (_time.monotonic() - search_started))
+            gathered = search_future.result(timeout=left)
+            payload["search_demand"] = search_demand.assemble(
+                gathered, window_start, window_end, politician.name,
+                coverage_by_day=(payload.get("volume_trends") or {}).get("by_day") or {},
+                findings=all_findings,
+                storylines=[{"label": n.get("label"), "description": n.get("description")}
+                            for n in built_narratives],
+                corpus_texts=[str(m.get("text") or "") for m in corpus],
+                previous=(prior_payload or {}).get("search_demand"))
+            publish("search_demand", payload["search_demand"])
+            search_signals = search_demand.all_signals(payload["search_demand"], politician.name)
+        except FuturesTimeout:
+            stages.current().failed("search_demand", TimeoutError(
+                f"search demand did not answer within {int(settings.search_demand_deadline_seconds)}s "
+                "and was left behind so the report could be delivered"))
+        except Exception as exc:  # noqa: BLE001
+            stages.current().failed("search_demand", exc)
+    stages.current().lap("search_demand")
+
     # The brief, rewritten from the verified record and checked sentence by
     # sentence against it (reports/from_facts.py). Where the record is thin
     # or too little survives the check, the analysts' brief stands and the
@@ -899,7 +946,8 @@ def run_analysis(
             counts = {str((payload.get("volume_trends") or {}).get("total_mentions") or ""),
                       str(len(corpus))} - {""}
             result = from_facts.brief_from_record(
-                politician.name, payload["established_record"], numbers=counts)
+                politician.name, payload["established_record"], numbers=counts,
+                search=search_signals)
             if result.get("used"):
                 # The identity guard every prose field passes through.
                 probe = {"executive_brief": result["text"]}
@@ -915,7 +963,8 @@ def run_analysis(
             counts = {str((payload.get("volume_trends") or {}).get("total_mentions") or ""),
                       str(len(corpus))} - {""}
             result = from_facts.insights_from_record(
-                politician.name, payload["established_record"], numbers=counts)
+                politician.name, payload["established_record"], numbers=counts,
+                search=search_signals)
             if result.get("used"):
                 probe = {"deep_insights": {"insights": result["insights"],
                                            "the_one_thing": result["the_one_thing"]}}

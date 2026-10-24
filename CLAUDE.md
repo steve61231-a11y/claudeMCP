@@ -302,6 +302,36 @@ community its own source never named (counted with `dropped_unverified`),
 and `record_for` withholds facts stored before that rule
 (`withheld_for_identity`).
 
+**What people searched for is the third public signal, and no one provider
+may hold it up.** The report read what was PUBLISHED and what was SAID; both
+are performances and both can be bought. Search is what people want to
+know. `evidence/search_demand.py` reads Google Trends for Kenya AND
+worldwide (the international angle — IMF, ICC, diaspora — often shows abroad
+first) and holds it against the report: who led (search vs coverage at
+offsets of ±3 days, stated only over ≥10 days with a fit ≥0.5, otherwise
+"did not move together"), which coverage peaks moved search and which
+nobody went looking for, the days the public searched while the press was
+quiet, which searches nothing collected addresses (`answered`:
+navigational / on_record / in_coverage / unanswered — never "nobody has
+written about it", because it may be a gap in collection), which storylines
+were searched, and what the world searched that Kenya did not. Rules: three
+states, never two (`too_little_search` is a finding; `not_measured` carries
+its reason); a 0-100 index is never a count, never summed across requests,
+and Kenya's and the world's are compared as LISTS, never as levels; and a
+search is not a fact — `check_sentence` removes a sentence citing an S
+entry that does not say it is about searching ("Searches for 'X arrested'
+rose", never "X was arrested"). The founder's other rule: SocialCrawl must
+not be a single point of failure, so `search_sources.laddered` tries
+SocialCrawl then Google Trends directly (keyless; a 429 is remembered for
+the host), and Google's suggestions (Kenya + world) and Wikipedia page views
+(real counts, a different measure, labelled as itself) run beside it. Every
+answer names its provider. The keyless hosts are in the source probe.
+Tests never touch the network: `conftest._no_search_demand_network` turns it
+off — by hand, not through `monkeypatch`, because an autouse fixture that
+requests `monkeypatch` is torn down AFTER `db_session`, and a test that
+stubs `db_session.close` then held its transaction through teardown and hung
+the whole suite on the next DROP INDEX.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small
@@ -844,6 +874,7 @@ Worth setting on anything larger than a 512MB instance:
 | `LLM_MAX_CONCURRENCY` | A hard ceiling on model calls in flight across the whole process. Unset means none, which is what the paid Anthropic path wants; set it on a metered or rate-limited backend. |
 | `INGESTION_DEADLINE_SECONDS` | Ceiling on collection. Default 240. Unstarted queries are recorded as not asked; the corpus compounds, so the next run finds what this one left. |
 | `BACK_OFFICE_DEADLINE_SECONDS` | Ceiling on the work that runs after delivery (resolution, knowledge graph, claim audit). Default 900. Nobody waits on it. |
+| `ENABLE_SEARCH_DEMAND` / `SEARCH_DEMAND_DEADLINE_SECONDS` | What people searched for, Kenya and worldwide. On by default; uses SocialCrawl when it has credits and Google/Wikipedia keylessly when it does not. Default deadline 90s, its own. |
 
 Model backend — either Anthropic directly, or anything OpenAI-compatible:
 

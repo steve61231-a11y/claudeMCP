@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # read alongside them. Past this the report goes out with what is stored
     # and the back office reads the rest.
     fact_store_wait_seconds: float = 60.0
+    # What the public went looking for (evidence/search_demand.py): Google
+    # Trends for Kenya and the world, through SocialCrawl when it is paid for
+    # and Google directly when it is not, plus Google's suggestions and
+    # Wikipedia's readers — keyless. Asked beside the analysts; touches no
+    # database. The deadline is its own, so a refused host costs this section
+    # and never the report.
+    enable_search_demand: bool = True
+    search_demand_deadline_seconds: float = 90.0
     # Investigator: after the report, name what is missing and turn those gaps
     # into queries the next run chases. This is what makes successive runs an
     # investigation rather than a repeated sweep.

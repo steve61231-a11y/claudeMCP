@@ -634,6 +634,10 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "briefCheck": payload.get("brief_check"),
         "insightsCheck": payload.get("insights_check"),
         "storylinesCheck": payload.get("storylines_check"),
+        # What the public went looking for — Google searches in Kenya and the
+        # world, Google's suggestions, Wikipedia's readers — and what the
+        # report holds against it (evidence/search_demand.py).
+        "searchDemand": payload.get("search_demand"),
         # How good this report is, measured: full text versus headlines,
         # sentences a source backs, figures that match nothing, citations
         # that point at nothing. Operator view only — see reports/quality.py.

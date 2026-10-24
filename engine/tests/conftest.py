@@ -85,6 +85,27 @@ def _no_remembered_refusals():
         http._REFUSED.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_search_demand_network():
+    """Search demand asks Google, SocialCrawl and Wikipedia over the network,
+    with retries and backoff — left on, every end-to-end run would wait on
+    hosts the test environment cannot reach. Off unless a test turns it on
+    and supplies the answers (`search_demand.gather` is the seam).
+
+    Set and restored by hand, NOT through `monkeypatch`: an autouse fixture
+    that requests `monkeypatch` creates it before every other fixture, so it
+    is torn down after `db_session` — and a test that stubs
+    `db_session.close` then left its connection idle in a transaction
+    through teardown, and the next migration's DROP INDEX waited on it for
+    ever. The whole suite hung at test 67 with nothing on screen."""
+    from engine.config import settings
+
+    before = settings.enable_search_demand
+    settings.enable_search_demand = False
+    yield
+    settings.enable_search_demand = before
+
+
 #: Settings flags that turn a SOURCE on, as opposed to an analysis stage.
 #:
 #: Discovered rather than listed. Six test files each kept their own copy of

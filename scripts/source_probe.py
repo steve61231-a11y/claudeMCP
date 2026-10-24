@@ -34,6 +34,16 @@ PROBES = [
     ("Reddit OAuth host (401 = reachable, needs a token)", "https://oauth.reddit.com/r/Kenya/search?q=Ruto&limit=5", REDDIT_UA),
     ("GDELT", "https://api.gdeltproject.org/api/v2/doc/doc?query=Ruto&mode=ArtList&format=json&maxrecords=5", ENGINE_UA),
     ("Google News RSS", "https://news.google.com/rss/search?q=Ruto&hl=en-KE&gl=KE&ceid=KE:en", ENGINE_UA),
+    # Search demand's keyless rungs (engine/evidence/search_sources.py), asked
+    # about a public topic, never a subject: does Google answer a cloud
+    # address, and does the suggestion box?
+    ("Google Trends explore (direct)",
+     "https://trends.google.com/trends/api/explore?hl=en-US&tz=0&req=%7B%22comparisonItem%22%3A%20%5B%7B%22keyword%22%3A%20%22finance%20bill%22%2C%20%22time%22%3A%20%22today%201-m%22%2C%20%22geo%22%3A%20%22KE%22%7D%5D%2C%20%22category%22%3A%200%2C%20%22property%22%3A%20%22%22%7D", ENGINE_UA),
+    ("Google search suggestions (Kenya)",
+     "https://suggestqueries.google.com/complete/search?client=firefox&hl=en&gl=ke&q=finance%20bill", ENGINE_UA),
+    ("Wikipedia page views",
+     "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/user/Kenya/daily/20261001/20261020",
+     ENGINE_UA),
 ]
 
 WALL_MARKERS = ("just a moment", "cf-browser-verification", "cf_chl_opt",

@@ -60,6 +60,8 @@ _NOT_ANALYST_PROSE = frozenset({
     "freshness", "origin", "brief_check", "insights_check", "storylines_check",
     # the record itself, listed with no model writing it
     "on_record", "record_summary", "established_record", "fact_store",
+    # what the public looked up: counted, with the engine's own notes
+    "search_demand",
 })
 #: Where the numbers the ENGINE computed live. A figure in the prose that
 #: matches one of these was not invented. Numbers in the analysts' own
