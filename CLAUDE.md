@@ -244,6 +244,21 @@ citing one to EVERY number it states — not only the large ones `quality`
 counts as figures, because "7 of the 3 findings" is a small number and a
 false one.
 
+**A confidence the writer gives itself is not evidence.** "Beneath the
+surface" was the digest analyst's: asked for contradictions, coordinated
+amplification and "the detail that reframes everything", and left to rate
+itself high, medium or low — so a pattern could be imagined and "high"
+meant the model was sure, not that the sources agreed.
+`from_facts.insights_from_record` writes it from the findings and patterns
+(in parallel with the brief, same ceiling): headline and reasoning pass
+`check_sentence`, the implication is a labelled assessment held by
+`check_assessment`, and the pill is `strength()` — computed from what the
+insight cites (any allegation → "Includes allegations"; only patterns →
+counted; otherwise the WEAKEST finding decides, because a sentence is only
+as strong as its thinnest support). A reasoning or implication that fails
+is dropped and the headline kept; nothing surviving, or a thin record,
+leaves the analysts' reading in place with the reason in `insights_check`.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

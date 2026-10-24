@@ -1301,6 +1301,10 @@ def build_strategic_implications(payload: dict, current_issues: dict,
         # The report's single most important read — about the whole period,
         # not necessarily this issue, and labelled so on the page.
         "the_one_thing": ((payload.get("deep_insights") or {}).get("the_one_thing") or None),
+        # Its citations travel with it: written from the record it carries
+        # [n] markers, and without the list they render as bare brackets.
+        "the_one_thing_citations": ((payload.get("deep_insights") or {})
+                                    .get("the_one_thing_citations") or []),
     }
 
 

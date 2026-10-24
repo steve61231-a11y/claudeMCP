@@ -313,6 +313,11 @@ def test_the_record_is_built_from_verified_facts_and_reaches_the_page(db_session
     assert payload["brief_check"]["used"] is False
     assert "finding" in payload["brief_check"]["reason"]
     assert payload.get("brief_basis") is None
+    # "Beneath the surface" likewise: the analysts' reading stands, and why.
+    assert payload["insights_check"]["used"] is False
+    assert "finding" in payload["insights_check"]["reason"]
+    assert payload["deep_insights"]["insights"][0]["headline"] == "H"
+    assert payload.get("insights_basis") is None
 
 
 def test_the_api_response_is_json_serialisable(db_session, scripted_model):

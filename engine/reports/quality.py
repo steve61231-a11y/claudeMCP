@@ -57,7 +57,7 @@ _NOT_ANALYST_PROSE = frozenset({
     "section_status", "run_health", "grounding", "protected_terms", "style_flags",
     "quality", "back_office", "data_provenance", "evidence_gate", "grade",
     "nothing_collected", "derived_sections", "ref_index", "corpus_preview",
-    "freshness", "origin", "brief_check", "established_record", "fact_store",
+    "freshness", "origin", "brief_check", "insights_check", "established_record", "fact_store",
 })
 #: Where the numbers the ENGINE computed live. A figure in the prose that
 #: matches one of these was not invented. Numbers in the analysts' own
@@ -364,6 +364,8 @@ def record(payload: dict) -> dict:
     rec = payload.get("established_record") or {}
     brief = payload.get("brief_check") or {}
     check = brief.get("check") or {}
+    insights = payload.get("insights_check") or {}
+    icheck = insights.get("check") or {}
     return {
         "facts_read_this_run": store.get("facts"),
         "quotes_failing_verification": store.get("dropped_unverified"),
@@ -373,6 +375,9 @@ def record(payload: dict) -> dict:
         "brief_sentences_written": check.get("written"),
         "brief_sentences_removed": len(check.get("removed") or []) if check else None,
         "brief_not_used_because": None if brief.get("used") else brief.get("reason"),
+        "insights_from_record": insights.get("used"),
+        "insights_written": icheck.get("written"),
+        "insights_removed": len(icheck.get("removed") or []) if icheck else None,
     }
 
 

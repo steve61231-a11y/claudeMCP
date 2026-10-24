@@ -885,6 +885,31 @@ def run_analysis(
                 result["text"] = probe["executive_brief"]
             return result
 
+        # "Beneath the surface" from the same record, in parallel: two calls
+        # of the same size, and neither needs the other.
+        def _insights_from_facts():
+            from engine.reports import from_facts, protected_terms
+
+            counts = {str((payload.get("volume_trends") or {}).get("total_mentions") or ""),
+                      str(len(corpus))} - {""}
+            result = from_facts.insights_from_record(
+                politician.name, payload["established_record"], numbers=counts)
+            if result.get("used"):
+                probe = {"deep_insights": {"insights": result["insights"],
+                                           "the_one_thing": result["the_one_thing"]}}
+                result["protected_terms"] = protected_terms.redact(probe, corpus)
+                result["insights"] = probe["deep_insights"]["insights"]
+                result["the_one_thing"] = probe["deep_insights"]["the_one_thing"]
+            return result
+
+        from engine.runctx import carry
+
+        insight_deadline = min(120.0, _time_left())
+        insight_pool = ThreadPoolExecutor(max_workers=1)
+        insight_future = insight_pool.submit(carry(lambda: _bounded(
+            "insights_from_facts", insight_deadline, _insights_from_facts, fallback=None)))
+        insight_pool.shutdown(wait=False)
+
         brief = _bounded("brief_from_facts", min(120.0, _time_left()), _brief_from_facts,
                          fallback=None)
         if brief:
@@ -904,6 +929,27 @@ def run_analysis(
             payload["brief_check"] = {k: v for k, v in brief.items()
                                       if k not in ("text", "citations", "risks", "opportunities")}
             publish("brief_check", payload["brief_check"])
+
+        try:
+            insights = insight_future.result(timeout=insight_deadline + 5)
+        except Exception:  # noqa: BLE001 — _bounded has already recorded why
+            insights = None
+        if insights:
+            if insights.get("used"):
+                payload["deep_insights"] = {
+                    "insights": insights["insights"],
+                    "the_one_thing": insights["the_one_thing"]
+                    or (payload.get("deep_insights") or {}).get("the_one_thing", ""),
+                    "the_one_thing_citations": insights.get("the_one_thing_citations")
+                    if insights["the_one_thing"] else
+                    (payload.get("deep_insights") or {}).get("the_one_thing_citations", []),
+                }
+                payload["insights_basis"] = "verified_facts"
+                publish("deep_insights", payload["deep_insights"])
+            payload["insights_check"] = {k: v for k, v in insights.items()
+                                         if k not in ("insights", "the_one_thing",
+                                                      "the_one_thing_citations")}
+            publish("insights_check", payload["insights_check"])
 
     # Refined with what the analysts wrote — the executive summary, the deep
     # dives behind each issue, the public voice. Arithmetic again, so it is

@@ -3791,18 +3791,38 @@
   }
 
   /** The analyst's own reading — what the numbers do not say on their own. */
-  function renderInsights(di){
+  function renderInsights(di,check){
     const rows=((di||{}).insights||[]).filter(i=>i&&i.headline);
     if(!rows.length)return null;
-    const c=deepCard('Beneath the surface','What the volume and sentiment do not say on their own');
+    // Read from the verified record, the pill is the evidence's strength,
+    // COMPUTED from what each insight cites (from_facts.strength) — not the
+    // writer's own confidence, which said how sure the model was rather
+    // than whether the sources agreed. The implication is its judgement and
+    // is labelled so, as the risks' assessments are.
+    const fromRecord=rows.some(i=>i.basis==='verified_facts');
+    const c=deepCard('Beneath the surface',fromRecord
+      ?'What the record shows when read as a whole — each line rests on the findings it cites'
+      :'What the volume and sentiment do not say on their own');
+    const STRENGTH_PILL={corroborated:'pos',counted:'sky',single:'',alleged:'neg'};
     rows.forEach(ins=>{
       const conf=(ins.confidence||'').toLowerCase();
+      const pill=ins.strength?(STRENGTH_PILL[ins.strength]||''):(conf==='high'?'pos':conf==='low'?'':'sky');
       c.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;align-items:flex-start">
         <b style="font-size:15px;max-width:80%">${linkifyRefs(esc(ins.headline),ins.headline_citations)}</b>
-        <span class="pill ${conf==='high'?'pos':conf==='low'?'':'sky'}">${esc(ins.confidence||'')}</span></div>
+        <span class="pill ${pill}">${esc(ins.confidence||'')}</span></div>
         <div class="muted" style="font-size:14px;margin-top:5px">${linkifyRefs(esc(ins.reasoning||''),ins.reasoning_citations)}</div>
-        ${ins.implication?`<div style="font-size:13px;margin-top:6px;color:var(--sky2)">→ ${linkifyRefs(esc(ins.implication),ins.implication_citations)}</div>`:''}`));
+        ${ins.implication?`<div style="font-size:13px;margin-top:6px;color:var(--sky2)">${ins.basis==='verified_facts'?'<span class="eyebrow" style="margin-right:6px">Assessment</span>':'→ '}${linkifyRefs(esc(ins.implication),ins.implication_citations)}</div>`:''}`));
     });
+    // What the check removed, or why the record was not used — operator view.
+    const ck=check||{},cut=(ck.check||{}).removed||[];
+    if(cut.length||(ck.used===false&&ck.reason)){
+      const f=foldBlock('Sentence check (operator)',
+        ck.used===false?`reading from the record not used: ${ck.reason||''}`:`${cut.length} removed`);
+      f.classList.add('op-only');
+      cut.forEach(x=>f.appendChild(el('div','mentr',
+        `<div style="font-size:13px">${esc(x.sentence)}</div><div class="muted" style="font-size:12px;margin-top:3px">${esc(x.field||'')} — ${esc(x.reason)}</div>`)));
+      c.appendChild(f);
+    }
     return c;
   }
 
@@ -4383,7 +4403,7 @@
     // happened, where, and who is driving it.
     const theCase=[
       renderEstablishedRecord(r.establishedRecord),
-      renderInsights(r.deepInsights),
+      renderInsights(r.deepInsights,r.insightsCheck),
       renderNarratives(r.narratives),
       renderPublicVoice(r.publicVoice),
       renderDeepTimeline(r.timeline),
