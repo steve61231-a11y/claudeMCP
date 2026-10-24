@@ -259,6 +259,24 @@ as strong as its thinnest support). A reasoning or implication that fails
 is dropped and the headline kept; nothing surviving, or a thin record,
 leaves the analysts' reading in place with the reason in `insights_check`.
 
+**A storyline's record is joined on its items, never on its wording.** The
+deep-dive analyst wrote 250-500 words of "how it unfolded" that nothing
+checked, and the framework printed it as the evidence under its most
+important issue — through `esc()` alone, so the `[n]` markers linkify had
+put in it reached the reader as bare brackets (fixed by carrying every
+`*_citations` list with its prose into `_evidence_for`; the rule: prose
+that travels carries its citations). Now `facts.by_storyline` gives each
+storyline the findings at least one of whose sources is an item IN it
+(the 8-character ref), so a finding that merely sounds like a storyline is
+not evidence its sources said it. `record_for(keep_all=True)` hands the
+full list to the join and the pipeline drops it before storing. Every
+storyline with a record shows it (`on_record`, `record_summary`, no model);
+`from_facts.storylines_from_record` writes a chronology in one call across
+all of them, each sentence checked AND allowed to cite only its own
+storyline's findings, and replaces the analyst's only where at least two
+sentences survive — two accounts of one storyline, one checked and one not,
+would read as corroboration.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

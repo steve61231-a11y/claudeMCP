@@ -599,6 +599,15 @@ def _evidence_for(label: str | None, payload: dict) -> dict:
             "driven_by": dive.get("who_is_driving_it") or [],
             "supporter_framing": dive.get("supporter_framing"),
             "critic_framing": dive.get("critic_framing"),
+            # The [n] markers in that prose resolve through these. Carried
+            # without them, the issue box printed bare brackets — the
+            # analysts' prose is linkified before it reaches here, and the
+            # chronology written from the record carries markers too.
+            "how_it_unfolded_citations": dive.get("how_it_unfolded_citations") or [],
+            "supporter_framing_citations": dive.get("supporter_framing_citations") or [],
+            "critic_framing_citations": dive.get("critic_framing_citations") or [],
+            "unfolded_basis": dive.get("unfolded_basis"),
+            "record_summary": dive.get("record_summary"),
             "quotes": (dive.get("quotes") or [])[:4],
             "origin": dive.get("origin") or {},
         })

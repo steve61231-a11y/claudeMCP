@@ -633,6 +633,7 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         "briefBasis": payload.get("brief_basis"),
         "briefCheck": payload.get("brief_check"),
         "insightsCheck": payload.get("insights_check"),
+        "storylinesCheck": payload.get("storylines_check"),
         # How good this report is, measured: full text versus headlines,
         # sentences a source backs, figures that match nothing, citations
         # that point at nothing. Operator view only — see reports/quality.py.

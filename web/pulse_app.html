@@ -1840,16 +1840,20 @@
   function fwEvidence(ev){
     if(!ev||!Object.keys(ev).length)return null;
     const box=el('div','');
+    // Linked, not escaped bare: this prose carries [n] markers, and printed
+    // through esc() alone they reached the reader as brackets with nothing
+    // behind them.
     if(ev.how_it_unfolded)box.appendChild(el('div','',
-      `<div style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">${esc(ev.how_it_unfolded)}</div>`));
+      `<div style="font-size:13.5px;margin-top:10px;white-space:pre-wrap">${linkifyRefs(esc(ev.how_it_unfolded),ev.how_it_unfolded_citations)}</div>`
+      +(ev.unfolded_basis==='verified_facts'?`<div class="muted chart-note">${esc(recordSummaryLine(ev.record_summary))}</div>`:'')));
     if((ev.driven_by||[]).length)box.appendChild(el('div','',
       `<div class="muted" style="font-size:12.5px;margin-top:8px">Driven by: ${ev.driven_by.map(handle).join(' · ')}</div>`));
     if(ev.supporter_framing||ev.critic_framing){
       const fr=el('div','stance');fr.style.marginTop='10px';
       if(ev.supporter_framing)fr.appendChild(el('div','stance-col',
-        `<h4 style="color:var(--pos)">Supporters frame it as</h4><div style="font-size:13px;margin-top:6px">${esc(ev.supporter_framing)}</div>`));
+        `<h4 style="color:var(--pos)">Supporters frame it as</h4><div style="font-size:13px;margin-top:6px">${linkifyRefs(esc(ev.supporter_framing),ev.supporter_framing_citations)}</div>`));
       if(ev.critic_framing)fr.appendChild(el('div','stance-col',
-        `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13px;margin-top:6px">${esc(ev.critic_framing)}</div>`));
+        `<h4 style="color:var(--neg)">Critics frame it as</h4><div style="font-size:13px;margin-top:6px">${linkifyRefs(esc(ev.critic_framing),ev.critic_framing_citations)}</div>`));
       box.appendChild(fr);
     }
     const quotes=[...(ev.quotes||[]),...(ev.public_voice||[])].filter(q=>q&&q.text);
@@ -3743,6 +3747,43 @@
       every entry is a statement whose quote was found in its source, grouped
       by story, with the number of independent origins and each source's own
       words. An allegation is labelled as one. */
+  /** One finding as the record lists it: what, how firmly, how many
+      independent origins, when, and the sources' own words in a fold.
+      Shared by "On the record" and each storyline's own record, so a
+      reader sees one finding the same way wherever it appears. */
+  function recordRow(f){
+    const href=u=>/^https?:\/\//i.test(u||'')?u:'';
+    const [label,tone]=RECORD_STATUS[f.status]||['Reported','pos'];
+    const n=f.independent_sources||1;
+    const row=el('div','mentr record-row');
+    row.innerHTML=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+        <b style="font-size:15px;flex:1;min-width:0">${esc(f.statement)}</b>
+        <span class="pill ${tone}">${esc(label)}</span></div>
+      <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
+        <span class="chip">${n} independent source${n===1?'':'s'}</span>
+        ${f.syndicated?`<span class="chip">carried by ${f.publishers} outlets, partly shared copy</span>`:''}
+        ${f.first_seen?`<span class="chip">${esc(ukDate(f.first_seen))}${f.last_seen&&f.last_seen!==f.first_seen?' – '+esc(ukDate(f.last_seen)):''}</span>`:''}
+      </div>`;
+    const fold=foldBlock('The sources, in their own words', `${(f.sources||[]).length}`);
+    (f.sources||[]).forEach(s=>{
+      const u=href(s.url);
+      fold.appendChild(el('div','qt',`“${esc((s.quote||'').trim())}”<span class="qt-ref">${esc(s.publisher||'source')}`
+        +`${s.published_at?' · '+esc(ukDate(s.published_at)):''}`
+        +`${u?` · <a class="src-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer">open ↗</a>`:''}</span>`));
+    });
+    row.appendChild(fold);
+    return row;
+  }
+  /** A storyline's record, counted: "4 findings · 2 independently
+      corroborated · 1 alleged · 3 Oct – 19 Oct". */
+  function recordSummaryLine(sum){
+    if(!sum||!sum.findings)return '';
+    const parts=[`${sum.findings} finding${sum.findings===1?'':'s'} on the record`];
+    if(sum.corroborated)parts.push(`${sum.corroborated} independently corroborated`);
+    if(sum.alleged)parts.push(`${sum.alleged} alleged, not established`);
+    if(sum.first_seen)parts.push(ukDate(sum.first_seen)+(sum.last_seen&&sum.last_seen!==sum.first_seen?' – '+ukDate(sum.last_seen):''));
+    return parts.join(' · ');
+  }
   const RECORD_STATUS={reported:['Reported','pos'],inferred:['The source’s own inference','sky'],
     unresolved:['Disputed or open','amber'],alleged:['Alleged — not established','amber']};
   function renderEstablishedRecord(rec){
@@ -3752,7 +3793,6 @@
     const c=deepCard('On the record',
       `What the sources state, each line resting on words a source printed — ${total} finding${total===1?'':'s'}`,
       {open:true});
-    const href=u=>/^https?:\/\//i.test(u||'')?u:'';
     // Read across every finding: what an analyst would only see after
     // reading everything. Counted, not written (evidence/patterns.py).
     const pats=(rec.patterns||[]).filter(p=>p&&p.sentence);
@@ -3763,28 +3803,7 @@
         pats.map(p=>`<div style="font-size:14px;margin-top:6px">${esc(p.sentence)}</div>`).join('');
       c.appendChild(box);
     }
-    rows.forEach(f=>{
-      const [label,tone]=RECORD_STATUS[f.status]||['Reported','pos'];
-      const n=f.independent_sources||1;
-      const row=el('div','mentr record-row');
-      row.innerHTML=`<div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
-          <b style="font-size:15px;flex:1;min-width:0">${esc(f.statement)}</b>
-          <span class="pill ${tone}">${esc(label)}</span></div>
-        <div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">
-          <span class="chip">${n} independent source${n===1?'':'s'}</span>
-          ${f.syndicated?`<span class="chip">carried by ${f.publishers} outlets, partly shared copy</span>`:''}
-          ${f.first_seen?`<span class="chip">${esc(ukDate(f.first_seen))}${f.last_seen&&f.last_seen!==f.first_seen?' – '+esc(ukDate(f.last_seen)):''}</span>`:''}
-        </div>`;
-      const fold=foldBlock('The sources, in their own words', `${(f.sources||[]).length}`);
-      (f.sources||[]).forEach(s=>{
-        const u=href(s.url);
-        fold.appendChild(el('div','qt',`“${esc((s.quote||'').trim())}”<span class="qt-ref">${esc(s.publisher||'source')}`
-          +`${s.published_at?' · '+esc(ukDate(s.published_at)):''}`
-          +`${u?` · <a class="src-link" href="${esc(u)}" target="_blank" rel="noopener noreferrer">open ↗</a>`:''}</span>`));
-      });
-      row.appendChild(fold);
-      c.appendChild(row);
-    });
+    rows.forEach(f=>c.appendChild(recordRow(f)));
     if(total>rows.length)c.appendChild(el('div','muted chart-note',
       `The ${rows.length} most independently sourced of ${total} findings.`));
     return c;
@@ -4053,7 +4072,8 @@
 
   /** One card per storyline: how it unfolded, both framings, and — from
       timestamps alone, no model involved — where it started and how it spread. */
-  function renderNarrativeDeepDives(dives){
+  function renderNarrativeDeepDives(dives,check){
+    const cut=((check||{}).check||{}).removed||[];
     return (dives||[]).filter(d=>d&&d.label).map(d=>{
       const origin=d.origin||{}, fs=origin.first_seen||{};
       // A storyline is a section like any other. Built as a plain card it was
@@ -4065,9 +4085,32 @@
       const c=deepCard(`Storyline — ${d.label}`,
         (d.mention_count?`${sharePlain(d.mention_count,CORPUS_TOTAL)} · `:'')
         +(opening.length>150?opening.slice(0,150)+'…':opening));
+      // Written from the storyline's own findings and checked sentence by
+      // sentence, it says so, with the record counted beneath it; the
+      // analyst's chronology, where the record was too thin, says nothing
+      // it cannot stand behind.
+      const fromRecord=d.unfolded_basis==='verified_facts';
       c.appendChild(el('div','',
         `<p style="font-size:14.5px;margin:0">${linkifyRefs(esc(d.how_it_unfolded||''),d.how_it_unfolded_citations)}</p>`
+        +(fromRecord?`<div class="muted chart-note">Traced only from this storyline’s findings on the record; every sentence names the sources it rests on.</div>`:'')
+        +(d.record_summary&&d.record_summary.findings?`<div class="row" style="margin-top:8px"><span class="chip">${esc(recordSummaryLine(d.record_summary))}</span></div>`:'')
         +`${(d.who_is_driving_it||[]).length?`<div class="muted" style="font-size:12.5px;margin-top:10px">Driven by: ${(d.who_is_driving_it||[]).map(handle).join(' · ')}</div>`:''}`));
+      // The storyline's own record: the findings its items yielded, oldest
+      // first, each with the words its sources printed.
+      const rec=(d.on_record||[]).filter(f=>f&&f.statement);
+      if(rec.length){
+        const f=foldBlock('This storyline on the record',`${rec.length} finding${rec.length===1?'':'s'}, oldest first`);
+        rec.forEach(x=>f.appendChild(recordRow(x)));
+        c.appendChild(f);
+      }
+      const mine=cut.filter(x=>x.storyline===d.label);
+      if(mine.length){
+        const f=foldBlock('Sentence check (operator)',`${mine.length} removed`);
+        f.classList.add('op-only');
+        mine.forEach(x=>f.appendChild(el('div','mentr',
+          `<div style="font-size:13px">${esc(x.sentence)}</div><div class="muted" style="font-size:12px;margin-top:3px">${esc(x.reason)}</div>`)));
+        c.appendChild(f);
+      }
       const fr=el('div','stance');
       if(d.supporter_framing)fr.appendChild(el('div','stance-col',
         `<h4 style="color:var(--pos)">Supporters frame it as</h4><div style="font-size:13.5px;margin-top:6px">${linkifyRefs(esc(d.supporter_framing),d.supporter_framing_citations)}</div>`));
@@ -4409,7 +4452,7 @@
       renderDeepTimeline(r.timeline),
       renderPlatformPulse(r.platformPulse),
       renderInfluencerStances(r.influencerStances)]
-      .concat(renderNarrativeDeepDives(r.narrativeDeepDives))
+      .concat(renderNarrativeDeepDives(r.narrativeDeepDives,r.storylinesCheck))
       .concat([renderSinceLastReport(r.sinceLastReport),
                renderSentimentHistory(r.sentimentHistory)])
       .filter(Boolean);
@@ -6230,7 +6273,13 @@
           supporter_framing:'Transitional friction in a scheme that covers more people than the one it replaced; fixable, and worth fixing.',
           critic_framing:'A levy that is collected reliably and delivers unreliably \u2014 with the sickest patients absorbing the gap.',
           quotes:[{ref:'c9d0e1f2',text:'Registered, paid, walked into the hospital and was told Afya Mfano is not working today. Cash or go home.'},{ref:'e7f8a9b0',text:'2.75% every month and I still pay cash at the chemist. What exactly am I buying?'}],
-          origin:{first_seen:{date:'2026-05-18',author:'r/MfanoCounty',platform:'reddit'},spread_path:[{platform:'reddit',date:'2026-05-18'},{platform:'youtube',date:'2026-06-01'},{platform:'news',date:'2026-06-02'}],peak:{date:'2026-07-09',mentions:118},platforms_reached:3}}]},
+          origin:{first_seen:{date:'2026-05-18',author:'r/MfanoCounty',platform:'reddit'},spread_path:[{platform:'reddit',date:'2026-05-18'},{platform:'youtube',date:'2026-06-01'},{platform:'news',date:'2026-06-02'}],peak:{date:'2026-07-09',mentions:118},platforms_reached:3},
+          record_summary:{findings:2,corroborated:1,alleged:1,first_seen:'2026-06-02',last_seen:'2026-07-09'},
+          on_record:[
+            {statement:'The Mfano County health department said registration under Afya Mfano had reached 410,000 residents.',status:'reported',independent_sources:2,first_seen:'2026-06-02',
+              sources:[{publisher:'Mfano Daily',url:'https://mfano-daily.example/afya-registration',published_at:'2026-06-02',quote:'registration under Afya Mfano had reached 410,000 residents'}]},
+            {statement:'Patient advocates alleged that registered members were asked for cash at county hospitals.',status:'alleged',independent_sources:1,first_seen:'2026-07-09',
+              sources:[{publisher:'Mfano Daily',url:'https://mfano-daily.example/afya-cash',published_at:'2026-07-09',quote:'registered members were being asked for cash at county hospitals'}]}]}]},
     issue:{principal:'Amani Mfano (fictional)',issue:'Afya Mfano',thin:false,coverage:{mentions_analyzed:143,mentions_total:143},
       // The map runs the same name check the report does. It did not, for
       // three rounds of this codebase fixing things where they were seen.

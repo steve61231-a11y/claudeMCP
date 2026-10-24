@@ -57,7 +57,9 @@ _NOT_ANALYST_PROSE = frozenset({
     "section_status", "run_health", "grounding", "protected_terms", "style_flags",
     "quality", "back_office", "data_provenance", "evidence_gate", "grade",
     "nothing_collected", "derived_sections", "ref_index", "corpus_preview",
-    "freshness", "origin", "brief_check", "insights_check", "established_record", "fact_store",
+    "freshness", "origin", "brief_check", "insights_check", "storylines_check",
+    # the record itself, listed with no model writing it
+    "on_record", "record_summary", "established_record", "fact_store",
 })
 #: Where the numbers the ENGINE computed live. A figure in the prose that
 #: matches one of these was not invented. Numbers in the analysts' own
@@ -366,6 +368,7 @@ def record(payload: dict) -> dict:
     check = brief.get("check") or {}
     insights = payload.get("insights_check") or {}
     icheck = insights.get("check") or {}
+    scheck = (payload.get("storylines_check") or {}).get("check") or {}
     return {
         "facts_read_this_run": store.get("facts"),
         "quotes_failing_verification": store.get("dropped_unverified"),
@@ -378,6 +381,9 @@ def record(payload: dict) -> dict:
         "insights_from_record": insights.get("used"),
         "insights_written": icheck.get("written"),
         "insights_removed": len(icheck.get("removed") or []) if icheck else None,
+        "storylines_from_record": scheck.get("storylines_written") if scheck else None,
+        "storyline_sentences_written": scheck.get("written") if scheck else None,
+        "storyline_sentences_removed": len(scheck.get("removed") or []) if scheck else None,
     }
 
 

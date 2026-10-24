@@ -815,6 +815,7 @@ def run_analysis(
     # database, stored after the analysts return, on this thread. It adds no
     # wall-clock to the report unless it is still reading when they finish.
     fact_future = None
+    storyline_findings: dict = {}
     if settings.enable_fact_store and corpus:
         try:
             from engine.evidence import facts as facts_store
@@ -859,7 +860,13 @@ def run_analysis(
                     stages.current().failed("fact_store", TimeoutError(
                         "still reading sources when the analysts finished; the rest are "
                         "read after delivery"))
-            payload["established_record"] = facts_store.record_for(db, politician, corpus)
+            record = facts_store.record_for(db, politician, corpus, keep_all=True)
+            # Each storyline's own record, joined on the items it holds. The
+            # full list is used here and not stored: the page shows the top
+            # of the record, and each storyline shows its own part of it.
+            storyline_findings = facts_store.by_storyline(
+                record.pop("all_findings", []), built_narratives)
+            payload["established_record"] = record
             publish("established_record", payload["established_record"])
         except Exception as exc:  # noqa: BLE001
             _rollback_quietly(db)
@@ -910,6 +917,42 @@ def run_analysis(
             "insights_from_facts", insight_deadline, _insights_from_facts, fallback=None)))
         insight_pool.shutdown(wait=False)
 
+        # Each storyline's chronology from its own findings, in parallel too.
+        # Only the storylines that have a deep dive: the rest have no card
+        # to put it on. One finding is a fact, not a chronology, so the
+        # writer is handed only storylines with two or more.
+        dive_labels = {d.get("label") for d in (payload.get("narrative_deep_dives") or [])
+                       if isinstance(d, dict)}
+        story_findings = {label: found for label, found in storyline_findings.items()
+                          if label in dive_labels}
+
+        def _storylines_from_facts():
+            from engine.reports import from_facts, protected_terms
+
+            counts = {str((payload.get("volume_trends") or {}).get("total_mentions") or ""),
+                      str(len(corpus))} - {""}
+            writable = {label: found for label, found in story_findings.items() if len(found) >= 2}
+            result = from_facts.storylines_from_record(politician.name, writable, numbers=counts)
+            # The record of a one-finding storyline is still its record.
+            for label, found in story_findings.items():
+                result["storylines"].setdefault(label, from_facts.storylines_from_record(
+                    politician.name, {label: found}, write_model=False)["storylines"][label])
+            probe = {"storylines": {label: {"unfolded": story.get("unfolded", "")}
+                                    for label, story in result["storylines"].items()}}
+            result["protected_terms"] = protected_terms.redact(probe, corpus)
+            for label, story in result["storylines"].items():
+                if story.get("unfolded"):
+                    story["unfolded"] = probe["storylines"][label]["unfolded"]
+            return result
+
+        story_deadline = min(120.0, _time_left())
+        story_future = None
+        if story_findings:
+            story_pool = ThreadPoolExecutor(max_workers=1)
+            story_future = story_pool.submit(carry(lambda: _bounded(
+                "storylines_from_facts", story_deadline, _storylines_from_facts, fallback=None)))
+            story_pool.shutdown(wait=False)
+
         brief = _bounded("brief_from_facts", min(120.0, _time_left()), _brief_from_facts,
                          fallback=None)
         if brief:
@@ -950,6 +993,30 @@ def run_analysis(
                                          if k not in ("insights", "the_one_thing",
                                                       "the_one_thing_citations")}
             publish("insights_check", payload["insights_check"])
+
+        stories = None
+        if story_future is not None:
+            try:
+                stories = story_future.result(timeout=story_deadline + 5)
+            except Exception:  # noqa: BLE001 — _bounded has already recorded why
+                stories = None
+        if stories:
+            for dive in payload.get("narrative_deep_dives") or []:
+                story = (stories.get("storylines") or {}).get(dive.get("label")) if isinstance(dive, dict) else None
+                if not story:
+                    continue
+                dive["on_record"] = story["record"]
+                dive["record_summary"] = story["summary"]
+                if story.get("unfolded"):
+                    # The analyst's unchecked chronology is replaced, not kept
+                    # beside it: two accounts of one storyline, one checked and
+                    # one not, read as corroboration.
+                    dive["how_it_unfolded"] = story["unfolded"]
+                    dive["how_it_unfolded_citations"] = story["unfolded_citations"]
+                    dive["unfolded_basis"] = "verified_facts"
+            publish("narrative_deep_dives", payload.get("narrative_deep_dives") or [])
+            payload["storylines_check"] = {k: v for k, v in stories.items() if k != "storylines"}
+            publish("storylines_check", payload["storylines_check"])
 
     # Refined with what the analysts wrote — the executive summary, the deep
     # dives behind each issue, the public voice. Arithmetic again, so it is

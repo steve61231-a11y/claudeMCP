@@ -59,6 +59,12 @@ def _scripted(prompt, max_tokens=None, model=None):
         return {"public_voice": {"supportive": [], "critical": [], "neutral": []}}
     if '"summary"' in p:
         return {"summary": "A written executive summary of the period."}
+    if "tracing how storylines" in p:                         # storylines from the record
+        return {"storylines": []}
+    if '"deep_dive"' in p:
+        return {"deep_dive": {"how_it_unfolded": "The analyst's own chronology.",
+                              "who_is_driving_it": [], "supporter_framing": "",
+                              "critic_framing": "", "quotes": []}}
     if '"insights"' in p:
         return {"insights": [{"headline": "H", "reasoning": "R", "confidence": "medium"}],
                 "the_one_thing": "The single most important thing."}
@@ -445,3 +451,31 @@ def test_percentages_are_absent_rather_than_zero_when_nothing_scored(db_session,
         score = _framework(payload).get("sentiment_score") or {}
         assert score.get("score") is None
         assert score.get("scoring_gap"), "say that nothing was scored"
+
+
+def test_each_storyline_carries_its_own_record(db_session, scripted_model, monkeypatch):
+    """The join between a storyline and the record, through the real run.
+    The seeded corpus is too uniform to cluster, so one storyline is made of
+    every item; the one finding on the record came from those items, so it
+    is that storyline's record. One finding is a fact, not a chronology, so
+    the analyst's chronology stands — and the record is still shown."""
+    import engine.pipeline as pipeline_module
+
+    def one_storyline(mentions, subject_terms=None, window=None):
+        times = sorted(m["posted_at"] for m in mentions)
+        return [{"label": "Cost of living", "description": "Prices in Nairobi.",
+                 "mention_ids": [m["id"] for m in mentions], "evidence": [],
+                 "strength_score": float(len(mentions)), "strength_basis": "mentions_only",
+                 "growth_rate": None, "growth_basis": None, "growth_halves": None,
+                 "window_start": times[0], "window_end": times[-1]}] if mentions else []
+
+    monkeypatch.setattr(pipeline_module.narrative_module, "build_narratives", one_storyline)
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    dive = next(d for d in payload["narrative_deep_dives"] if d["label"] == "Cost of living")
+    assert [f["statement"] for f in dive["on_record"]] == [
+        "Edwin Sifuna spoke about the cost of living in Nairobi."]
+    assert dive["record_summary"]["findings"] == 1
+    assert dive["how_it_unfolded"] == "The analyst's own chronology."
+    assert dive.get("unfolded_basis") is None
+    assert "all_findings" not in payload["established_record"], "the full list is for the join, not the page"

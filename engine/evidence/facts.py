@@ -266,7 +266,7 @@ def about(statement: str, terms: set[str]) -> bool:
     return any((t in words) if " " not in t else (t in folded) for t in terms)
 
 
-def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
+def record_for(db, politician, corpus: list[dict], most: int = 20, keep_all: bool = False) -> dict:
     """What this period's sources establish, from the store, with no model.
 
     The facts held for exactly the sources this report read, grouped by
@@ -305,11 +305,40 @@ def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
             source.pop("source_text", None)
     from engine.evidence import patterns
 
-    return {"findings": findings[:most], "findings_total": len(findings),
-            "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows),
-            "facts_about_others": len(about_others),
-            # Read across every finding, not only the ones shown.
-            "patterns": patterns.detect(findings, politician.name)}
+    out = {"findings": findings[:most], "findings_total": len(findings),
+           "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows),
+           "facts_about_others": len(about_others),
+           # Read across every finding, not only the ones shown.
+           "patterns": patterns.detect(findings, politician.name)}
+    if keep_all:
+        # For the caller to join against storylines and then drop: the page
+        # shows `most`, but a storyline's record is every finding its own
+        # items yielded, not only those that made the top of the whole list.
+        out["all_findings"] = findings
+    return out
+
+
+def by_storyline(findings: list[dict], storylines: list[dict], most: int = 8) -> dict[str, list[dict]]:
+    """Each storyline's own record: the findings at least one of whose
+    sources is an item IN that storyline, oldest first, so a chronology can
+    be read straight off it.
+
+    Joined on the citation ref (the 8-character id prefix every source
+    carries), never on wording: a finding that merely sounds like a
+    storyline is not evidence that the storyline's sources said it."""
+    out: dict[str, list[dict]] = {}
+    for story in storylines or []:
+        label = story.get("label")
+        refs = {str(m)[:8] for m in story.get("mention_ids") or []}
+        if not label or not refs:
+            continue
+        mine = [f for f in findings or []
+                if any(src.get("ref") in refs for src in f.get("sources") or [])]
+        # The most corroborated `most`, then put in the order they happened.
+        mine = sorted(mine[:most], key=lambda f: (f.get("first_seen") is None, str(f.get("first_seen") or "")))
+        if mine:
+            out[label] = mine
+    return out
 
 
 # ---------------------------------------------------------------------------

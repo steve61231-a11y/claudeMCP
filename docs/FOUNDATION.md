@@ -210,7 +210,13 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
 - **Phase 3 — beneath the surface.** The analyst's non-obvious reading is
   now written from the record and checked like the brief, with each
   insight's strength computed from its sources rather than the model's
-  own high/medium/low. Next: the narrative deep dives.
+  own high/medium/low.
+- **Phase 3 — storylines.** Each storyline carries its own record, joined on
+  the items it holds, and a chronology written from it and checked, each
+  sentence confined to its own storyline's findings. The framework's issue
+  box now links the markers in the prose it borrows. What remains written
+  without the record: the supporter/critic framings (opinion, beside
+  verified quotes) and the specialist analysts' sections.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;
