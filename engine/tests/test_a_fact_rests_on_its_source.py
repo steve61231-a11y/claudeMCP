@@ -259,3 +259,10 @@ def test_the_same_wire_copy_under_two_mastheads_is_one_origin():
     assert group["publishers"] == 3
     assert group["independent_sources"] == 2, "wire copy was counted as independent confirmation"
     assert group["syndicated"] is True
+
+
+def test_the_reading_pool_is_as_wide_as_the_other_model_stages(monkeypatch):
+    monkeypatch.setattr(settings, "llm_fanout_workers", 16)
+    monkeypatch.setattr(llm, "concurrency", lambda n: n)
+    assert facts._workers(75) == 16
+    assert facts._workers(3) == 3

@@ -34,7 +34,13 @@ from engine.config import settings
 from engine.evidence import records as records_mod
 from engine.runctx import carry
 
-_WORKERS = 4
+#: Width of the reading pool. Each worker waits on the model, so width is
+#: latency, not memory, and spend is bounded process-wide by
+#: LLM_MAX_CONCURRENCY. Four workers on ~75 batches was nineteen waves —
+#: the narrowest pool on one of the busiest stages, which CLAUDE.md records
+#: costing a stage its deadline before.
+def _workers(batches: int) -> int:
+    return max(1, llm.concurrency(min(max(4, settings.llm_fanout_workers), batches)))
 #: A quote shorter than this proves nothing — "the government said" is in
 #: every article ever written.
 MIN_QUOTE_WORDS = 4
@@ -164,7 +170,7 @@ def read_all(subject: str, todo: list[dict]) -> list[tuple[dict, list[dict] | No
         return []
     max_chars = max(500, int(settings.fact_item_chars))
     batches = list(_batches(todo, max_chars))
-    with ThreadPoolExecutor(max_workers=max(1, llm.concurrency(min(_WORKERS, len(batches))))) as pool:
+    with ThreadPoolExecutor(max_workers=_workers(len(batches))) as pool:
         return [r for batch in pool.map(carry(lambda b: _read(subject, b, max_chars)), batches)
                 for r in batch]
 
