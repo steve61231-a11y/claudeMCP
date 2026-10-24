@@ -3753,6 +3753,16 @@
       `What the sources state, each line resting on words a source printed — ${total} finding${total===1?'':'s'}`,
       {open:true});
     const href=u=>/^https?:\/\//i.test(u||'')?u:'';
+    // Read across every finding: what an analyst would only see after
+    // reading everything. Counted, not written (evidence/patterns.py).
+    const pats=(rec.patterns||[]).filter(p=>p&&p.sentence);
+    if(pats.length){
+      const box=el('div','mentr');
+      box.style.cssText='border-left:3px solid var(--sky2)';
+      box.innerHTML=`<div class="lbl" style="margin-bottom:6px">What the record shows</div>`+
+        pats.map(p=>`<div style="font-size:14px;margin-top:6px">${esc(p.sentence)}</div>`).join('');
+      c.appendChild(box);
+    }
     rows.forEach(f=>{
       const [label,tone]=RECORD_STATUS[f.status]||['Reported','pos'];
       const n=f.independent_sources||1;

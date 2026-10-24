@@ -296,15 +296,20 @@ def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
                        # prefix `citations.build_ref_index` keys on.
                        "ref": str(item.get("id", ""))[:8],
                        "status": fact.status, "publisher": outlets.publisher(item),
+                       "source_type": item.get("source_type"),
                        "url": item.get("source_url"), "source_text": item.get("text"),
                        "published_at": fact.published_at.date().isoformat() if fact.published_at else None})
     findings = corroborate(listed)
     for finding in findings:
         for source in finding["sources"]:
             source.pop("source_text", None)
+    from engine.evidence import patterns
+
     return {"findings": findings[:most], "findings_total": len(findings),
             "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows),
-            "facts_about_others": len(about_others)}
+            "facts_about_others": len(about_others),
+            # Read across every finding, not only the ones shown.
+            "patterns": patterns.detect(findings, politician.name)}
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +376,8 @@ def corroborate(rows: list[dict], threshold: float = SAME_STORY) -> list[dict]:
             "syndicated": syndicated,
             "first_seen": min(dates) if dates else None,
             "last_seen": max(dates) if dates else None,
-            "sources": [{k: m.get(k) for k in ("publisher", "url", "published_at", "quote", "status", "ref")}
+            "sources": [{k: m.get(k) for k in ("publisher", "url", "published_at", "quote", "status", "ref",
+                                                        "source_type")}
                         for m in members],
         })
     # Most independently corroborated first; among equals, most recent first.

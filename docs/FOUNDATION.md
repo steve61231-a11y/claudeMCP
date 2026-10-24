@@ -201,6 +201,12 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   not introduce a name, figure or date the findings lack. This retires the
   second-hand writers that produced them from counts. Next: the remaining
   analyst prose (beneath the surface, deep dives) through the ledger.
+- **Phase 3 — the record's shape.** `evidence/patterns.py` counts what
+  cross-reading finds — echo (many outlets, one origin), contested (outlets
+  disagree whether it is established), agenda (who was first), balance
+  (share that is allegation), primary (what rests on an official record).
+  Shown on the page as "What the record shows" and offered to the writer
+  as counted ledger entries, every number checked.
 - **Cuts — done.** Network tab and endpoints, the six endpoints nothing
   called, the public leaderboard (it listed every subject without a key),
   the stored reports served in place of failed runs, the Neo4j projection;

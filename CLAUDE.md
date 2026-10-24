@@ -230,6 +230,20 @@ the cited findings lack. Items carry `issue`/`detail` (plain, for the
 framework and action list), `cited`/`citations` (linked, for the page) and
 `basis: verified_facts`; `quality` counts the cited sentence once.
 
+**The insight is in the shape of the record, so the shape is counted.**
+What an analyst earns by cross-reading — the story in every outlet that
+traces to one original report, the claim outlets cannot agree is
+established, who broke what others carried, how much of the record is
+accusation, what rests on a gazette notice or a judgment — is arithmetic
+over the verified findings, and `evidence/patterns.py` does it with no
+model. Each pattern carries the numbers it counted and fires only on the
+shape it names (a share needs at least three findings). They reach the
+writer as `P` entries in the same ledger, labelled as counted, with the
+sources of the findings beneath them, and `check_sentence` holds a sentence
+citing one to EVERY number it states — not only the large ones `quality`
+counts as figures, because "7 of the 3 findings" is a small number and a
+false one.
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

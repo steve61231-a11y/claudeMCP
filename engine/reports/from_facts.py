@@ -34,7 +34,6 @@ import json
 import re
 
 from engine import llm
-from engine.reports.quality import figures_in
 
 #: Fewer findings than this and a brief written only from them would be
 #: thinner than the analysts' — the caller keeps theirs and says so.
@@ -98,9 +97,32 @@ def build_ledger(findings: list[dict], size: int = LEDGER_SIZE) -> list[dict]:
     return ledger
 
 
+def pattern_entries(patterns: list[dict], ledger: list[dict]) -> list[dict]:
+    """Patterns counted across the record (`evidence/patterns.py`) as ledger
+    entries P1…Pn. A pattern's sentence is its own support — every number in
+    it was counted — and it carries the sources of the findings it was
+    counted from, so a sentence citing it still links to what was printed."""
+    by_statement = {e["statement"]: e for e in ledger}
+    out = []
+    for i, pattern in enumerate(patterns or [], start=1):
+        sources = []
+        for statement in pattern.get("findings") or []:
+            entry = by_statement.get(statement)
+            if entry and entry["sources"]:
+                sources.append(entry["sources"][0])
+        text = pattern.get("sentence") or ""
+        out.append({"id": f"P{i}", "statement": text, "status": "reported", "pattern": True,
+                    "independent_sources": len(sources) or 1, "first_seen": None,
+                    "sources": sources[:3], "text": text})
+    return out
+
+
 def ledger_text(ledger: list[dict]) -> str:
     lines = []
     for entry in ledger:
+        if entry.get("pattern"):
+            lines.append(f"{entry['id']} [PATTERN · counted across the whole record] {entry['statement']}")
+            continue
         n = entry["independent_sources"]
         when = f" · {entry['first_seen']}" if entry.get("first_seen") else ""
         lines.append(f"{entry['id']} [{_STATUS_LABEL.get(entry['status'], 'REPORTED')} · "
@@ -121,6 +143,23 @@ def _names(sentence: str) -> list[str]:
         if len([p for p in parts if p[:1].isupper()]) >= 2:
             found.append(" ".join(parts))
     return found
+
+
+def _unbacked_number(sentence: str, support: str, numbers: set[str] | None) -> str | None:
+    """The first number in `sentence` that neither the support nor the
+    engine's own counts state. Every number, not only the large ones the
+    quality measure counts as figures: "7 of the 3 findings" is a small
+    number and a false one. Years are checked on their own, and [n]
+    citation markers are not numbers the sentence states."""
+    allowed = {re.sub(r",", "", n) for n in (numbers or set())}
+    support_numbers = set(re.findall(r"\d+(?:\.\d+)?", support.replace(",", "")))
+    bare_text = re.sub(r"\[\d+\]", " ", sentence).replace(",", "")
+    for token in re.findall(r"\d+(?:\.\d+)?", bare_text):
+        if re.fullmatch(r"19\d\d|20\d\d", token):
+            continue
+        if token not in support_numbers and token not in allowed:
+            return token
+    return None
 
 
 def check_sentence(sentence: str, cited: list[str], ledger: list[dict], subject: str,
@@ -144,18 +183,19 @@ def check_sentence(sentence: str, cited: list[str], ledger: list[dict], subject:
     # A sentence with nothing checkable left once the subject's name and the
     # grammar are set aside — "Wanjiru will win in 2027." — passes every
     # ratio by having no content. It must carry something the findings say.
-    if len(set(backed)) < 2:
+    # Numbers the findings state count as content: a counted pattern ("5 of
+    # the 8 findings are allegations") is mostly figures.
+    support_figures = set(re.findall(r"\d+(?:\.\d+)?", support.replace(",", "")))
+    matched_figures = set(re.findall(r"\d+(?:\.\d+)?", sentence.replace(",", ""))) & support_figures
+    if len(set(backed)) + len(matched_figures) < 2:
         return "carries nothing from the findings it cites"
     for year in re.findall(r"\b(19\d\d|20\d\d)\b", sentence):
         if year not in support:
             return f"dates something to {year}, which the cited findings do not"
 
-    allowed = {re.sub(r",", "", n) for n in (numbers or set())}
-    support_numbers = set(re.findall(r"\d+(?:\.\d+)?", support.replace(",", "")))
-    for token, _value, _pct in figures_in(sentence):
-        bare = re.sub(r"[^\d.]", "", token.split()[0])
-        if bare and bare not in support_numbers and bare not in allowed:
-            return f"states a figure ({token}) the cited findings do not"
+    stray = _unbacked_number(sentence, support, numbers)
+    if stray:
+        return f"states a figure ({stray}) the cited findings do not"
 
     folded_support = support.lower()
     for name in _names(sentence):
@@ -229,6 +269,7 @@ Rules:
 - Lead with what is most independently sourced. Say plainly when something rests on a single source.
 - Use names exactly as the findings write them. British spelling. Four to seven sentences.
 - If the findings are too thin to support a sentence, write fewer sentences rather than fill.
+- Entries numbered P are patterns counted across the whole record — what an analyst would only see by reading everything. Use them: a brief that says what the pattern of coverage shows is worth more than one that lists stories. Their numbers are exact; do not round or restate them differently.
 
 From the same findings, also give what to watch:
 - "risks": up to four things on the record that could damage {subject}'s standing or position;
@@ -269,12 +310,9 @@ def check_assessment(text: str, cited: list[str], ledger: list[dict], subject: s
     figure and year in it must be in the findings its item cites."""
     by_id = {e["id"]: e for e in ledger}
     support = " ".join(by_id[c]["text"] for c in cited if c in by_id)
-    allowed = {re.sub(r",", "", n) for n in (numbers or set())}
-    support_numbers = set(re.findall(r"\d+(?:\.\d+)?", support.replace(",", "")))
-    for token, _value, _pct in figures_in(text):
-        bare = re.sub(r"[^\d.]", "", token.split()[0])
-        if bare and bare not in support_numbers and bare not in allowed:
-            return f"introduces a figure ({token}) the findings do not"
+    stray = _unbacked_number(text, support, numbers)
+    if stray:
+        return f"introduces a figure ({stray}) the findings do not"
     for year in re.findall(r"\b(19\d\d|20\d\d)\b", text):
         if year not in support:
             return f"introduces a date ({year}) the findings do not"
@@ -326,7 +364,8 @@ def brief_from_record(subject: str, record: dict, numbers: set[str] | None = Non
     if len(findings) < MIN_FINDINGS:
         return {"used": False, "reason": f"only {len(findings)} finding(s) on the record; "
                                          f"{MIN_FINDINGS} are needed to write the brief from it"}
-    ledger = build_ledger(findings)
+    ledger = build_ledger(findings) + pattern_entries((record or {}).get("patterns"),
+                                                      build_ledger(findings))
     written = write(subject, ledger)
     kept, removed = check(written["sentences"], ledger, subject, numbers)
     risks, risks_removed = watch_items(written["risks"], ledger, subject, "risks", MAX_RISKS, numbers)
