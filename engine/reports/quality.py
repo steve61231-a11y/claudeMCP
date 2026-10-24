@@ -376,6 +376,48 @@ def record(payload: dict) -> dict:
     }
 
 
+def support_map(payload: dict, subject: str = "") -> dict | None:
+    """How much of what the analysts wrote the verified record supports.
+
+    Every analyst sentence is held against each finding on the record with
+    the same check the brief's sentences pass (`from_facts.check_sentence`):
+    a sentence one finding fully backs is "on the record"; the rest is the
+    analyst's own reading. Nothing is removed — this measures, per section,
+    so the next section to move onto the record is chosen by number. None
+    when there is no record to hold sentences against."""
+    from engine.reports import from_facts
+
+    findings = ((payload.get("established_record") or {}).get("findings") or [])
+    if not findings:
+        return None
+    ledger = from_facts.build_ledger(findings, size=len(findings))
+    by_section: dict[str, list[int]] = {}
+    total = backed = 0
+    refs: set[str] = set()
+    for key, value in (payload or {}).items():
+        if key in _NOT_ANALYST_PROSE:
+            continue
+        for text, _b, _d in analyst_prose({key: value}, refs):
+            for sentence in sentences(text):
+                plain = _CITED.sub("", sentence).strip()
+                if len(plain.split()) < 5:
+                    continue
+                ok = any(from_facts.check_sentence(plain, [e["id"]], ledger, subject) is None
+                         for e in ledger)
+                counts = by_section.setdefault(key, [0, 0])
+                counts[0] += 1
+                counts[1] += int(ok)
+                total += 1
+                backed += int(ok)
+    return {
+        "sentences": total,
+        "on_record": backed,
+        "share": round(100 * backed / total, 1) if total else None,
+        "by_section": {k: {"sentences": n, "on_record": b} for k, (n, b) in
+                       sorted(by_section.items(), key=lambda kv: -kv[1][0])},
+    }
+
+
 def completeness(payload: dict) -> dict:
     status = payload.get("section_status") or {}
     return {
@@ -405,7 +447,7 @@ def headline(depth: dict, support: dict, sections: dict) -> str:
     return ("; ".join(parts) + ".") if parts else "Nothing to measure."
 
 
-def assess(payload: dict, corpus: list[dict]) -> dict:
+def assess(payload: dict, corpus: list[dict], subject: str = "") -> dict:
     """The report's quality, measured. Never raises: a measurement must not
     cost the report it measures — and a measurement that failed says so,
     rather than looking like a report with nothing wrong."""
@@ -414,6 +456,7 @@ def assess(payload: dict, corpus: list[dict]) -> dict:
         support = prose_support(payload or {}, corpus or [])
         sections = completeness(payload or {})
         on_record = record(payload or {})
+        on_record["support"] = support_map(payload or {}, subject)
     except Exception as exc:  # noqa: BLE001
         return {"version": VERSION, "measured": False,
                 "error": f"{type(exc).__name__}: {exc}"[:300]}

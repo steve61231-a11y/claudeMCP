@@ -4802,6 +4802,7 @@
             ${tile('Dated',cp.dated_share==null?'—':`${Math.round(cp.dated_share)}%`)}
             ${q.record&&q.record.findings_on_record!=null?tile('Findings on the record',fmt(q.record.findings_on_record)):''}
             ${q.record&&q.record.verified_share!=null?tile('Extracted quotes verified',`${Math.round(q.record.verified_share)}%`,q.record.verified_share<80):''}
+            ${q.record&&q.record.support&&q.record.support.sentences?tile('Analyst sentences the record supports',of(q.record.support.on_record,q.record.support.sentences)):''}
             ${q.record&&q.record.brief_sentences_written!=null?tile('Brief sentences removed by the check',`${fmt(q.record.brief_sentences_removed)} of ${fmt(q.record.brief_sentences_written)}`,q.record.brief_sentences_removed>0):''}
           </div>
           ${(pr.computed_sections||[]).length?`<div class="muted" style="font-size:12px;margin-top:6px">

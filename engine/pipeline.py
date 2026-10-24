@@ -939,7 +939,7 @@ def run_analysis(
     # much of the prose a source backs, which figures and citations match
     # nothing. Without it "better" is an opinion — phase 0 of FOUNDATION.md.
     # Last, so it measures the report as delivered, after every guard ran.
-    payload["quality"] = quality.assess(payload, corpus)
+    payload["quality"] = quality.assess(payload, corpus, politician.name)
     publish("quality", payload["quality"])
 
     report = IntelligenceReport(

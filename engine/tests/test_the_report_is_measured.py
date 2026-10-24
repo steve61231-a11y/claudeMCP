@@ -233,3 +233,23 @@ def test_the_record_and_the_brief_check_are_measured():
     assert measured["findings_on_record"] == 7
     assert (measured["brief_sentences_written"], measured["brief_sentences_removed"]) == (6, 1)
     assert measured["brief_not_used_because"] is None
+
+
+def test_each_section_is_measured_against_the_record():
+    finding = {"statement": "The Senate Finance Committee summoned the Treasury over delayed county disbursements.",
+               "status": "reported", "independent_sources": 2,
+               "sources": [{"quote": "summoned the Treasury over the delayed county disbursements",
+                            "publisher": "Daily Nation", "ref": "aaaaaaaa"}]}
+    payload = {
+        "established_record": {"findings": [finding]},
+        "deep_insights": {"insights": [{
+            "headline": "The Senate Finance Committee summoned the Treasury over delayed disbursements to counties.",
+            "reasoning": "Wanjiru is quietly positioning herself for the governorship next year."}]},
+    }
+    support = quality.assess(payload, CORPUS, "Jane Wanjiru")["record"]["support"]
+    assert (support["sentences"], support["on_record"]) == (2, 1)
+    assert support["by_section"]["deep_insights"] == {"sentences": 2, "on_record": 1}
+
+
+def test_no_record_means_no_support_figure_rather_than_zero():
+    assert quality.assess({"executive_brief": "x" * 50}, CORPUS)["record"]["support"] is None
