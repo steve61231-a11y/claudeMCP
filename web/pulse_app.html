@@ -600,6 +600,11 @@
       object, never from the escaped text itself. An unresolved ref (url is
       null) renders as a plain, undecorated number rather than a dead link —
       the honest state is "cited, source not traced", not a broken click. */
+  /** An event's text without its citation markers — for a tooltip or a
+      label, where a marker cannot be a link and reads as a stray "[2]". */
+  function plainEvent(t){
+    return String((t&&t.event)||'').replace(/\s*\[\d+\]/g,'');
+  }
   function linkifyRefs(escapedHtml, cites){
     if(!cites||!cites.length)return escapedHtml;
     const byN={};cites.forEach(c=>byN[c.n]=c);
@@ -1611,7 +1616,7 @@
       g.appendChild(mk('line',{x1:x,x2:x,y1:8,y2:base,class:'tl-guide'}));
       g.setAttribute('aria-label',
         `${whenLabel(p.t)}: `
-        +String((p.t&&p.t.event)||'').slice(0,80));
+        +plainEvent(p.t).slice(0,80));
       const cy=base-18*(levelOf[p.idx]||0);
       const c=mk('circle',{cx:x,cy:cy,r:8,
         class:'tl-node-dot '+(tc?(tc.confirmed?'is-confirmed':'is-single'):'is-plain')});
@@ -1623,7 +1628,7 @@
       const show=()=>{
         tip.style.display='block';
         tip.innerHTML=`<div class="tl-tip-date">${esc(whenLabel(p.t))}</div>
-          <div>${esc(String((p.t&&p.t.event)||'').slice(0,180))}${String((p.t&&p.t.event)||'').length>180?'…':''}</div>
+          <div>${esc(plainEvent(p.t).slice(0,180))}${plainEvent(p.t).length>180?'…':''}</div>
           ${p.t&&p.t.mentions_that_day?`<div class="muted" style="margin-top:4px">${fmt(p.t.mentions_that_day)} mentions that day</div>`:''}
           ${tc?`<div class="muted" style="margin-top:4px">${esc(tc.label)}</div>`:''}`;
         tip.style.left=Math.round((x/W)*100)+'%';
@@ -2457,7 +2462,7 @@
         s6.appendChild(el('div','fw-sub','Key dates'));
         const strip=interactiveTimelineStrip(si.key_dates,null,{key:false});
         s6.appendChild(strip);
-        const KIND={first:'First seen',peak:'Busiest day',latest:'Most recent',briefing:'Analyst briefing'};
+        const KIND={first:'First seen',peak:'Busiest day',latest:'Most recent',briefing:'Analyst briefing',record:'On the record'};
         si.key_dates.forEach((d,idx)=>{
           const row=el('div','mentr');
           row.appendChild(el('div','',`<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
@@ -4011,7 +4016,13 @@
     const rows=all.filter(t=>!t.before_period).sort(byDate);
     const earlier=all.filter(t=>t.before_period).sort(byDate);
     if(!rows.length&&!earlier.length)return null;
-    const c=deepCard('What happened, and when','Dated moments that drove the conversation');
+    // Days written from the record say so; where any are, the analyst's
+    // entries say what they are too, so a reader can tell a day the sources
+    // establish from a day the analyst described.
+    const anyRecord=all.some(t=>t.basis==='verified_facts');
+    const c=deepCard('What happened, and when',anyRecord
+      ?'Dated moments — days on the record are dated by when their sources first published'
+      :'Dated moments that drove the conversation');
     if(!rows.length){
       c.appendChild(fwEmpty('no dated moment inside the period'));
     }
@@ -4030,8 +4041,17 @@
            <span class="row" style="gap:8px;align-items:center"><span class="tl-key-n">${graph.numberOf(idx)||''}</span>
            <b style="font-size:14px;color:var(--sky2)">${esc(t.date?ukDate(t.date):'undated')}</b></span>
            ${t.mentions_that_day?`<span class="chip">${share(t.mentions_that_day,CORPUS_TOTAL,"mentions that day")} of mentions</span>`:''}</div>
+         ${anyRecord?`<div class="row" style="margin-top:4px;gap:6px;flex-wrap:wrap">${t.basis==='verified_facts'
+             ?`<span class="chip">First reported this day · on the record</span>${t.corroboration?`<span class="chip">${esc(String(t.corroboration.label||'').replace(/^On the record: /,''))}</span>`:''}`
+             :'<span class="chip">Analyst briefing</span>'}</div>`:''}
          <div class="tl-row-event">${linkifyRefs(esc(t.event||''),t.event_citations)}</div>
          ${quotesHTML(t.quotes)}`);
+      const rec=(t.on_record||[]).filter(f=>f&&f.statement);
+      if(rec.length){
+        const f=foldBlock('The record for this day',`${rec.length} finding${rec.length===1?'':'s'}`);
+        rec.forEach(x=>f.appendChild(recordRow(x)));
+        row.appendChild(f);
+      }
       row.tabIndex=0;
       row.addEventListener('click',()=>graph.selectMoment(idx));
       row.addEventListener('keydown',e=>{
@@ -6243,7 +6263,15 @@
         {platform:'news',mention_count:187,tone:'Official-source led. Announcements and rebuttals dominate; facility-level reporting is thinner than the volume suggests.',themes:['90-day fix promise','county assembly questions'],notable_voices:['Mfano Daily','Mfano Tribune'],quotes:[{ref:'b1c2d3e4',text:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]},
         {platform:'youtube',mention_count:96,tone:'Comment sections are markedly angrier than the videos they sit under \u2014 broadcast framing is neutral, audience reaction is not.',themes:['cost of living','trust in delivery'],notable_voices:['Mfano TV'],quotes:[{ref:'f5a6b7c8',text:'Mfano: "No resident will be turned away" \u2014 full address on health financing.'}]}],
       timeline:[
-        {date:'2026-06-02',mentions_that_day:41,event:'Facility-level complaints cross from individual anecdote into organised reporting: patient advocacy groups begin collating cases of registered members being turned away, and the story moves from Reddit threads into mainstream coverage. The shift matters because it changes the claim from "my clinic failed" to "the system fails", which is far harder to answer with individual remedies.',quotes:[{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},
+        // A day on the record, as the pipeline merges one: the record's
+        // account replaces the analyst's briefing, its quotes are kept.
+        {date:'2026-06-02',mentions_that_day:41,basis:'verified_facts',
+          event:'The Mfano County health department said registration under Afya Mfano had reached 410,000 residents [1].',
+          event_citations:[{n:1,ref:'a1b2c3d4',url:'https://mfano-daily.example/afya-registration',platform:'Mfano Daily'}],
+          corroboration:{independent_sources:2,confirmed:true,label:'On the record: 2 independent sources',basis:'verified_facts'},
+          on_record:[{statement:'The Mfano County health department said registration under Afya Mfano had reached 410,000 residents.',status:'reported',independent_sources:2,first_seen:'2026-06-02',
+            sources:[{publisher:'Mfano Daily',url:'https://mfano-daily.example/afya-registration',published_at:'2026-06-02',quote:'registration under Afya Mfano had reached 410,000 residents'}]}],
+          quotes:[{ref:'a3b4c5d6',text:'Chronic illness patients are the ones paying for this experiment.'}]},
         {date:'2026-07-09',mentions_that_day:118,event:'The Governor addresses the rollout directly and commits to fixes within 90 days. Coverage is heavy and broadly neutral in framing, but the comment reaction is sharply negative \u2014 the promise is read as confirmation that the problems are real. This is the largest single-day volume in the window.',quotes:[{ref:'f5a6b7c8',text:'Mfano: "No resident will be turned away" \u2014 full address on health financing.'}]}],
       influencerStances:[
         {handle:'Mfano Daily',account_type:'County newspaper',stance:'neutral',influence_score:88.4,what_they_say:'Reports both the official commitment and the facility complaints, generally sourcing the government first and patients second.',quotes:[{ref:'b1c2d3e4',text:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]},

@@ -122,6 +122,22 @@ def _grounded_terms(haystack: str) -> set[str]:
     return {term for term, _family in _ALL if _mentions_term(haystack, term)}
 
 
+def introduced(text: str, source: str) -> tuple[str, str] | None:
+    """The first protected term `text` uses that `source` never did, with
+    its family — or None.
+
+    The same rule as `scan`, held to ONE source rather than the corpus: the
+    fact store's statements are a model's paraphrase of a verified quote,
+    and a paraphrase that names a community its own source never named is
+    the model's addition however exact the quote beneath it is."""
+    allowed = _grounded_terms((source or "").lower())
+    lowered = (text or "").lower()
+    for term, family in _ALL:
+        if term not in allowed and _mentions_term(lowered, term):
+            return term, family
+    return None
+
+
 def scan(payload: dict, mentions: list[dict]) -> dict:
     """Sentences introducing identity the corpus never mentioned.
 

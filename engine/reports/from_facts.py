@@ -664,3 +664,101 @@ def storylines_from_record(subject: str, by_story: dict[str, list[dict]],
             out[label]["unfolded"], out[label]["unfolded_citations"] = text, citations
             check_["storylines_written"] += 1
     return {"storylines": out, "check": check_}
+
+
+# ---------------------------------------------------------------------------
+# The timeline — key dates on the record
+#
+# The timeline analyst chose the dates and wrote an 80-200 word briefing for
+# each; only its quotes were checked. A date is exactly where an invented
+# detail does the most damage, and the record already knows, for every
+# finding, the day its sources first published it. So the record's key
+# dates are built with no model at all: each day's event is the findings
+# first published that day, in their own words, each cited — and an
+# allegation reads as one even where the statement did not say so.
+# ---------------------------------------------------------------------------
+
+def _attributed(finding: dict) -> str:
+    """A finding's statement as a timeline may print it: an allegation the
+    statement does not itself attribute is marked, because a line under a
+    date reads as something that happened."""
+    text = str(finding.get("statement") or "").strip()
+    if finding.get("status") in _NEEDS_ATTRIBUTION and not _ATTRIBUTION.search(text):
+        # Not lower-cased: the first word is as often a name as not.
+        return "Alleged: " + text
+    return text
+
+
+def _day_corroboration(found: list[dict]) -> dict:
+    """The strip's dot for a day: confirmed when its strongest established
+    finding has two or more independent origins. The wording says what was
+    counted — origins on the record, not outlets."""
+    established = [int(f.get("independent_sources") or 1) for f in found
+                   if f.get("status") not in _NEEDS_ATTRIBUTION]
+    best = max(established, default=0)
+    if best >= 2:
+        label = f"On the record: {best} independent sources"
+    elif established:
+        label = "On the record: a single original report"
+    else:
+        label = "On the record: allegations only"
+    return {"independent_sources": best, "confirmed": best >= 2, "label": label, "basis": "verified_facts"}
+
+
+def timeline_from_record(by_day: dict[str, list[dict]]) -> dict[str, dict]:
+    """{day: {"event", "event_citations", "on_record", "corroboration"}} —
+    no model involved."""
+    union, seen = [], set()
+    for found in (by_day or {}).values():
+        for f in found:
+            if f.get("statement") not in seen:
+                seen.add(f.get("statement"))
+                union.append(f)
+    ledger = build_ledger(union, size=len(union))
+    id_of = {e["statement"]: e["id"] for e in ledger}
+    out = {}
+    for day, found in (by_day or {}).items():
+        kept = [{"text": _attributed(f), "facts": [id_of[f["statement"]]]}
+                for f in found if f.get("statement") in id_of and str(f.get("statement")).strip()]
+        if not kept:
+            continue
+        text, citations = render(kept, ledger)
+        out[day] = {"event": text, "event_citations": citations,
+                    "on_record": [_record_view(f) for f in found],
+                    "corroboration": _day_corroboration(found)}
+    return out
+
+
+def merge_timeline(analysts: list[dict], record: dict[str, dict],
+                   mentions_by_day: dict | None = None) -> list[dict]:
+    """The report's timeline with the record's key dates in it.
+
+    On a day the record covers, the analyst's briefing is REPLACED by what
+    the record says — two accounts of one day, one checked and one not,
+    read as corroboration — and the analyst's verified reaction quotes are
+    kept beside it. Analyst entries on days the record does not cover stay,
+    labelled by the page as the analyst's briefing. Days only the record
+    has are added."""
+    mentions_by_day = mentions_by_day or {}
+    out, covered = [], set()
+    for entry in analysts or []:
+        if not isinstance(entry, dict):
+            continue
+        day = str(entry.get("date") or "")[:10]
+        rec = record.get(day) if not entry.get("before_period") else None
+        if rec and day not in covered:
+            covered.add(day)
+            out.append({**entry, **rec, "basis": "verified_facts"})
+        elif rec:
+            # A second analyst entry on a day already replaced: its quotes
+            # join the first, its unchecked briefing does not.
+            first = next(e for e in out if str(e.get("date") or "")[:10] == day
+                         and e.get("basis") == "verified_facts")
+            first["quotes"] = (first.get("quotes") or []) + (entry.get("quotes") or [])
+        else:
+            out.append(entry)
+    for day, rec in record.items():
+        if day not in covered:
+            out.append({"date": day, "quotes": [], "mentions_that_day": mentions_by_day.get(day, 0),
+                        **rec, "basis": "verified_facts"})
+    return sorted(out, key=lambda t: str(t.get("date") or ""))

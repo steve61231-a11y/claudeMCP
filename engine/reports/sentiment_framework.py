@@ -1149,12 +1149,23 @@ def _issue_dates(prof: dict, narrative: dict, payload: dict,
             continue
         shared = terms & _distinctive_terms(str(entry.get("event") or ""))
         if len(shared) >= GROUP_SHARED_TERMS:
-            out.append({"date": entry.get("date"), "kind": "briefing",
-                        "event": entry.get("event"),
-                        "quotes": (entry.get("quotes") or [])[:2],
-                        "mentions_that_day": entry.get("mentions_that_day")})
+            out.append(_key_date(entry))
     out.sort(key=lambda d: str(d.get("date") or ""))
     return out[:7]
+
+
+def _key_date(entry: dict) -> dict:
+    """A timeline entry as a key date. Its citations travel with its text —
+    the event carries [n] markers, and without the list they reach the
+    reader as bare brackets — and a day written from the record is called
+    that, not an analyst's briefing."""
+    on_record = entry.get("basis") == "verified_facts"
+    return {"date": entry.get("date"), "kind": "record" if on_record else "briefing",
+            "event": entry.get("event"),
+            "event_citations": entry.get("event_citations") or [],
+            "corroboration": entry.get("corroboration") if on_record else None,
+            "quotes": (entry.get("quotes") or [])[:2],
+            "mentions_that_day": entry.get("mentions_that_day")}
 
 
 def _status(prof: dict) -> str:
@@ -1260,13 +1271,8 @@ def build_strategic_implications(payload: dict, current_issues: dict,
         # The dated timeline entries the analyst wrote are mini-briefings, not
         # headlines — carry the whole thing, because "what happened and why it
         # mattered" is the section's entire job.
-        key_dates = [
-            {"date": item.get("date"), "event": item.get("event"), "kind": "briefing",
-             "quotes": (item.get("quotes") or [])[:2],
-             "mentions_that_day": item.get("mentions_that_day")}
-            for item in (payload.get("timeline") or [])[:5]
-            if item.get("date")
-        ]
+        key_dates = [_key_date(item) for item in (payload.get("timeline") or [])[:5]
+                     if item.get("date")]
 
     if prof:
         chosen_because = (

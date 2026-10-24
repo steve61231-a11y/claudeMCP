@@ -125,7 +125,13 @@ def _hash(statement: str) -> str:
 
 def verify(item: dict, entries: list[dict], max_chars: int) -> tuple[list[dict], int]:
     """The records whose quote is in the text the model was shown, and how
-    many were not."""
+    many were not. A statement that names an ethnic, religious or other
+    protected identity its own source never raised is not kept either
+    (`protected_terms.introduced`): the quote under it may be exact, but
+    the identity is the paraphrase's addition, and it is counted with the
+    rest of what failed."""
+    from engine.reports import protected_terms
+
     text = records_mod.item_text(item, max_chars)
     kept, dropped, seen = [], 0, set()
     for entry in entries:
@@ -134,6 +140,9 @@ def verify(item: dict, entries: list[dict], max_chars: int) -> tuple[list[dict],
         if not statement:
             continue
         if not quote_in_source(quote, text):
+            dropped += 1
+            continue
+        if protected_terms.introduced(statement, text):
             dropped += 1
             continue
         digest = _hash(statement)
@@ -288,6 +297,14 @@ def record_for(db, politician, corpus: list[dict], most: int = 20, keep_all: boo
     terms = subject_terms(politician)
     about_others = [f for f in rows if not about(f.statement, terms)]
     rows = [f for f in rows if about(f.statement, terms)]
+    # Held to the identity rule at read time as well, for facts stored
+    # before `verify` applied it: a statement naming a community its own
+    # source never named is withheld, and counted.
+    from engine.reports import protected_terms
+
+    withheld = [f for f in rows
+                if protected_terms.introduced(f.statement, by_key[f.source_key].get("text") or "")]
+    rows = [f for f in rows if f not in withheld]
     listed = []
     for fact in rows:
         item = by_key[fact.source_key]
@@ -308,6 +325,7 @@ def record_for(db, politician, corpus: list[dict], most: int = 20, keep_all: boo
     out = {"findings": findings[:most], "findings_total": len(findings),
            "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows),
            "facts_about_others": len(about_others),
+           "withheld_for_identity": len(withheld),
            # Read across every finding, not only the ones shown.
            "patterns": patterns.detect(findings, politician.name)}
     if keep_all:
@@ -447,3 +465,32 @@ def _origins(members: list[dict]) -> tuple[int, bool]:
         for other in ids[1:]:
             union(ids[0], other)
     return len({find(i) for i in range(len(members))}), syndicated
+
+
+#: Source types that are the state's own record rather than coverage of it.
+PRIMARY_TYPES = {"gazette", "judgment"}
+
+
+def by_date(findings: list[dict], most_dates: int = 10, per_date: int = 4) -> dict[str, list[dict]]:
+    """The record's own key dates: the days on which findings were FIRST
+    PUBLISHED, each with what was published, weightiest days kept and then
+    put in date order.
+
+    The date is the publication date of the earliest source that printed
+    it — when it was first reported, which is a fact the store holds — not
+    when the model believed it happened. A day weighs what its findings are
+    worth: one per independent origin, and more for a gazette notice or a
+    judgment, the documents the rest of the coverage is reported from."""
+    days: dict[str, list[dict]] = {}
+    for finding in findings or []:
+        day = str(finding.get("first_seen") or "")[:10]
+        if len(day) == 10:
+            days.setdefault(day, []).append(finding)
+
+    def weight(found: list[dict]) -> int:
+        return sum(int(f.get("independent_sources") or 1)
+                   + (2 if any(s.get("source_type") in PRIMARY_TYPES for s in f.get("sources") or []) else 0)
+                   for f in found)
+
+    chosen = sorted(days.items(), key=lambda kv: (weight(kv[1]), kv[0]), reverse=True)[:most_dates]
+    return {day: found[:per_date] for day, found in sorted(chosen)}

@@ -479,3 +479,15 @@ def test_each_storyline_carries_its_own_record(db_session, scripted_model, monke
     assert dive["how_it_unfolded"] == "The analyst's own chronology."
     assert dive.get("unfolded_basis") is None
     assert "all_findings" not in payload["established_record"], "the full list is for the join, not the page"
+
+
+def test_the_record_dates_its_own_day_on_the_timeline(db_session, scripted_model):
+    """The one finding on the record was first published on a known day, so
+    the timeline carries that day, written from the record and cited."""
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    days = [t for t in payload["timeline"] if t.get("basis") == "verified_facts"]
+    assert len(days) == 1
+    assert days[0]["event"].startswith("Edwin Sifuna spoke about the cost of living in Nairobi")
+    assert days[0]["event_citations"] and days[0]["on_record"]
+    assert days[0]["date"] == payload["established_record"]["findings"][0]["first_seen"]

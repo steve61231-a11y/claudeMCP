@@ -277,6 +277,31 @@ storyline's findings, and replaces the analyst's only where at least two
 sentences survive — two accounts of one storyline, one checked and one not,
 would read as corroboration.
 
+**A date is when the sources published it, and nothing may write it.** The
+timeline analyst chose its own dates and wrote an 80-200 word briefing for
+each; only the quotes were checked. The record knows, for every finding,
+the day its sources first published it, so `facts.by_date` picks the
+record's key days (weighted by independent origins, a gazette notice or
+judgment counting more) and `from_facts.timeline_from_record` writes each
+day with NO model: the findings first published that day, in their own
+words, cited, an unattributed allegation prefixed "Alleged:" because a
+line under a date reads as something that happened. `merge_timeline`
+replaces the analyst's briefing on a day the record covers (keeping its
+verified reaction quotes) and labels the rest. Prose that travels carries
+its citations: `sentiment_framework._key_date` and `_evidence_for` carry
+every `*_citations` list, and a test walks the WHOLE framework output for a
+marked string with no list beside it — and proves it reached some, because
+a rule that finds nothing passes vacuously.
+
+**A paraphrase may not add an identity its source never named.** The fact
+store verified each quote exactly and printed the model's statement above
+it unchecked — and `protected_terms` ran over the analysts' prose, never
+over the record. `protected_terms.introduced(text, source)` is the same
+rule held to ONE source: `facts.verify` drops a statement naming a
+community its own source never named (counted with `dropped_unverified`),
+and `record_for` withholds facts stored before that rule
+(`withheld_for_identity`).
+
 **A stored report is not a fallback.** The engine kept a July report for
 "Mbadi" and one for "Edwin Sifuna", and when a live run FAILED for any name
 containing either word it served the stored one as `ok: True` with a small

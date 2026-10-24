@@ -816,6 +816,7 @@ def run_analysis(
     # wall-clock to the report unless it is still reading when they finish.
     fact_future = None
     storyline_findings: dict = {}
+    record_days: dict = {}
     if settings.enable_fact_store and corpus:
         try:
             from engine.evidence import facts as facts_store
@@ -864,13 +865,27 @@ def run_analysis(
             # Each storyline's own record, joined on the items it holds. The
             # full list is used here and not stored: the page shows the top
             # of the record, and each storyline shows its own part of it.
-            storyline_findings = facts_store.by_storyline(
-                record.pop("all_findings", []), built_narratives)
+            all_findings = record.pop("all_findings", [])
+            storyline_findings = facts_store.by_storyline(all_findings, built_narratives)
+            record_days = facts_store.by_date(all_findings)
             payload["established_record"] = record
             publish("established_record", payload["established_record"])
         except Exception as exc:  # noqa: BLE001
             _rollback_quietly(db)
             stages.current().failed("established_record", exc)
+    # The record's key dates in the timeline: each the findings first
+    # published that day, cited, with no model involved. Its own guard, so a
+    # timeline that fails costs the timeline and not the record.
+    if record_days:
+        try:
+            from engine.reports import from_facts
+
+            payload["timeline"] = from_facts.merge_timeline(
+                payload.get("timeline") or [], from_facts.timeline_from_record(record_days),
+                (payload.get("volume_trends") or {}).get("by_day") or {})
+            publish("timeline", payload["timeline"])
+        except Exception as exc:  # noqa: BLE001
+            stages.current().failed("timeline_from_record", exc)
     stages.current().lap("facts")
 
     # The brief, rewritten from the verified record and checked sentence by
