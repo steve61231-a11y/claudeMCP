@@ -717,3 +717,33 @@ def all_signals(section: dict, subject: str) -> list[dict]:
                     "numbers": {},
                     "url": trends_url(query, world.get("timeframe"), "")})
     return out
+
+
+# ---------------------------------------------------------------------------
+# What the next run should ask
+# ---------------------------------------------------------------------------
+
+def leads(section: dict, most: int = 6) -> list[str]:
+    """Searches nothing collected answers — and the rising ones the record
+    does not hold — as questions for the NEXT run's collection.
+
+    An unanswered search is either a gap in the coverage or a gap in what
+    this engine collected; asking it is how the next report tells the two
+    apart. Kenya first, then the world; suggestions after Trends' own
+    searches, because a suggestion is a weaker signal than a measured rise.
+    Navigational searches ("… news") ask nothing and are never leads."""
+    out: list[str] = []
+    for place in ("kenya", "world"):
+        sec = (section or {}).get(place) or {}
+        out.extend(sec.get("unanswered") or [])
+        out.extend(q["query"] for q in sec.get("rising_queries") or []
+                   if (q.get("answer") or {}).get("state") in ("unanswered", "in_coverage"))
+    for place in ("kenya", "world"):
+        out.extend(((section or {}).get(place) or {}).get("suggested", {}).get("unanswered") or [])
+    seen, unique = set(), []
+    for q in out:
+        key = str(q).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(str(q).strip())
+    return unique[:most]

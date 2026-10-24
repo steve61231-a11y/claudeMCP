@@ -91,6 +91,8 @@
   #zenith canvas{display:block;width:100%;border-radius:12px;touch-action:none;cursor:grab}
   #zenith canvas:active{cursor:grabbing}
   #zenith .mentr{padding:12px 0;border-top:1px solid var(--line2)}
+  #zenith .ev-line{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:12.5px;font-weight:400;text-transform:none;letter-spacing:0}
+  #zenith .ev-line .pill{font-size:11px;padding:2px 8px}
   #zenith .search-q{gap:8px;align-items:center;flex-wrap:wrap;font-size:14px;padding:5px 0;border-top:1px dashed var(--line2)}
   /* The state's own document, told apart from someone's report of it.
      Deliberately a quiet, authoritative treatment rather than a loud one:
@@ -3613,6 +3615,24 @@
 
       `open` is for the few sections that are the answer rather than the
       evidence for it. */
+  /** How much a section can bear, on the section itself
+      (reports/evidence_status.py): a pill naming the grade and a line saying
+      what it rests on — visible without a cursor, so it survives a phone
+      and a printed page. A grade of "unavailable" belongs to the operator:
+      the reader is never shown an empty section. */
+  const EVIDENCE_TONE={record:'pos',mixed:'sky',counted:'sky',quoted:'',analyst:'amber',thin:'amber',unavailable:''};
+  function stampEvidence(card,st){
+    if(!card||!st||!st.label)return card;
+    const line=el('div','ev-line'+(st.grade==='unavailable'?' op-only':''),
+      `<span class="pill ${EVIDENCE_TONE[st.grade]||''}">${esc(st.label)}</span>`
+      +(st.detail?`<span class="muted">${esc(st.detail)}</span>`:''));
+    const title=card.querySelector('.sect-title');
+    if(title)title.appendChild(line);
+    else if(card.firstChild)card.insertBefore(line,card.firstChild.nextSibling);
+    else card.appendChild(line);
+    return card;
+  }
+
   function deepCard(label,sub,opts){
     opts=opts||{};
     const c=el('div','card sect');
@@ -3993,6 +4013,10 @@
         +(wiki.url?` <a class="src-link" href="${esc(wiki.url)}" target="_blank" rel="noopener noreferrer">open ↗</a>`:'')));
       c.appendChild(box);
     }
+    // The searches nothing collected answers become the next run's
+    // questions — said, so a reader sees the file keeps working.
+    if((sd.leads_for_next_run||[]).length)c.appendChild(el('div','muted chart-note',
+      'The next report on this subject goes looking for: '+sd.leads_for_next_run.map(q=>'“'+esc(q)+'”').join(' · ')));
     const fb=[k,w].map(x=>x.fallback_from).filter(Boolean)[0];
     if(fb)c.appendChild(el('div','muted chart-note op-only',`SocialCrawl did not answer (${esc(fb.reason||'')}); Google was asked directly instead.`));
     return c;
@@ -4617,16 +4641,18 @@
     // 02 — THE CASE. The analysis, in the order an argument is made: what we
     // read into it, the stories it divides into, who is saying what, when it
     // happened, where, and who is driving it.
+    const S=r.evidenceStatus||{}, ev=(card,key)=>stampEvidence(card,S[key]);
     const theCase=[
-      renderEstablishedRecord(r.establishedRecord),
-      renderInsights(r.deepInsights,r.insightsCheck),
-      renderSearchDemand(r.searchDemand),
-      renderNarratives(r.narratives),
-      renderPublicVoice(r.publicVoice),
-      renderDeepTimeline(r.timeline),
-      renderPlatformPulse(r.platformPulse),
-      renderInfluencerStances(r.influencerStances)]
-      .concat(renderNarrativeDeepDives(r.narrativeDeepDives,r.storylinesCheck,r.searchDemand))
+      ev(renderEstablishedRecord(r.establishedRecord),'established_record'),
+      ev(renderInsights(r.deepInsights,r.insightsCheck),'deep_insights'),
+      ev(renderSearchDemand(r.searchDemand),'search_demand'),
+      ev(renderNarratives(r.narratives),'narrative_breakdown'),
+      ev(renderPublicVoice(r.publicVoice),'public_voice'),
+      ev(renderDeepTimeline(r.timeline),'timeline'),
+      ev(renderPlatformPulse(r.platformPulse),'platform_pulse'),
+      ev(renderInfluencerStances(r.influencerStances),'influencer_stances')]
+      .concat(renderNarrativeDeepDives(r.narrativeDeepDives,r.storylinesCheck,r.searchDemand)
+              .map(c=>ev(c,'narrative_deep_dives')))
       .concat([renderSinceLastReport(r.sinceLastReport),
                renderSentimentHistory(r.sentimentHistory)])
       .filter(Boolean);
@@ -5102,6 +5128,7 @@
     if(r.executiveBrief||r.summary){
       const b=el('div','card');
       b.appendChild(el('div','lbl','Executive brief'));
+      stampEvidence(b,(r.evidenceStatus||{}).executive_brief);
       b.appendChild(prose(r.executiveBrief||r.summary,{
         cites:r.executiveBrief?r.executiveBriefCitations:r.summaryCitations,
         foldTitle:'The rest of the brief'}));
@@ -5177,7 +5204,7 @@
     // is the only section that tells the reader to DO something, so it is
     // part of the answer, and it is the one section of the answer that opens
     // as a section rather than a card.
-    const todo=renderJudgementLists(r);
+    const todo=stampEvidence(renderJudgementLists(r),(r.evidenceStatus||{}).risks);
     if(todo){todo.setAttribute('open','');
       const h=todo.querySelector('.sect-head');
       if(h)h.setAttribute('aria-expanded','true');
@@ -6507,6 +6534,12 @@
         {section:'executive_brief',status:'verified',confidence:0.91,independent_sources:1,
          text:'The Governor committed to fixes within 90 days.',
          citations:[{source:'Mfano Daily',url:'https://mfanodaily.example/afya-90-days',quote:'Governor defends Afya Mfano rollout amid facility complaints, promises fixes within 90 days.'}]}],
+      // What each section rests on, as reports/evidence_status.py grades it.
+      evidenceStatus:{
+        search_demand:{grade:'counted',label:'Counted',detail:'Google searches and suggestions and Wikipedia readers, counted; no model wrote it'},
+        narrative_deep_dives:{grade:'quoted',label:'Quotes checked',detail:'the analysts\u2019 accounts; the quotes in them are checked against their sources'},
+        timeline:{grade:'mixed',label:'Partly on the record',detail:'1 of 2 days on the record; the rest are analyst briefings'},
+        executive_brief:{grade:'analyst',label:'Analyst\u2019s reading',detail:'the analysts\u2019 synthesis \u2014 not checked sentence by sentence against the record'}},
       // Fictional search demand: the subject, the scheme and every query are
       // invented, and no link leaves the .example domain.
       searchDemand:{"state":"measured","kenya":{"state":"measured","place":"Kenya","timeframe_label":"the past 30 days","keyword":"Amani Mfano","series":[{"at":"2026-07-01T00:00:00Z","date":"2026-07-01","value":14,"partial":false},{"at":"2026-07-02T00:00:00Z","date":"2026-07-02","value":14,"partial":false},{"at":"2026-07-03T00:00:00Z","date":"2026-07-03","value":14,"partial":false},{"at":"2026-07-04T00:00:00Z","date":"2026-07-04","value":14,"partial":false},{"at":"2026-07-05T00:00:00Z","date":"2026-07-05","value":14,"partial":false},{"at":"2026-07-06T00:00:00Z","date":"2026-07-06","value":14,"partial":false},{"at":"2026-07-07T00:00:00Z","date":"2026-07-07","value":14,"partial":false},{"at":"2026-07-08T00:00:00Z","date":"2026-07-08","value":72,"partial":false},{"at":"2026-07-09T00:00:00Z","date":"2026-07-09","value":100,"partial":false},{"at":"2026-07-10T00:00:00Z","date":"2026-07-10","value":61,"partial":false},{"at":"2026-07-11T00:00:00Z","date":"2026-07-11","value":14,"partial":false},{"at":"2026-07-12T00:00:00Z","date":"2026-07-12","value":14,"partial":false},{"at":"2026-07-13T00:00:00Z","date":"2026-07-13","value":14,"partial":false},{"at":"2026-07-14T00:00:00Z","date":"2026-07-14","value":14,"partial":false},{"at":"2026-07-15T00:00:00Z","date":"2026-07-15","value":14,"partial":false},{"at":"2026-07-16T00:00:00Z","date":"2026-07-16","value":14,"partial":false},{"at":"2026-07-17T00:00:00Z","date":"2026-07-17","value":88,"partial":false},{"at":"2026-07-18T00:00:00Z","date":"2026-07-18","value":14,"partial":false},{"at":"2026-07-19T00:00:00Z","date":"2026-07-19","value":14,"partial":false},{"at":"2026-07-20T00:00:00Z","date":"2026-07-20","value":14,"partial":false},{"at":"2026-07-21T00:00:00Z","date":"2026-07-21","value":14,"partial":false},{"at":"2026-07-22T00:00:00Z","date":"2026-07-22","value":14,"partial":false},{"at":"2026-07-23T00:00:00Z","date":"2026-07-23","value":14,"partial":false},{"at":"2026-07-24T00:00:00Z","date":"2026-07-24","value":14,"partial":false},{"at":"2026-07-25T00:00:00Z","date":"2026-07-25","value":14,"partial":false},{"at":"2026-07-26T00:00:00Z","date":"2026-07-26","value":14,"partial":false},{"at":"2026-07-27T00:00:00Z","date":"2026-07-27","value":14,"partial":false},{"at":"2026-07-28T00:00:00Z","date":"2026-07-28","value":14,"partial":false},{"at":"2026-07-29T00:00:00Z","date":"2026-07-29","value":14,"partial":false},{"at":"2026-07-30T00:00:00Z","date":"2026-07-30","value":14,"partial":false},{"at":"2026-07-31T00:00:00Z","date":"2026-07-31","value":14,"partial":false}],"coverage_by_day":{"2026-07-01":12,"2026-07-02":12,"2026-07-03":12,"2026-07-04":12,"2026-07-05":12,"2026-07-06":12,"2026-07-07":12,"2026-07-08":12,"2026-07-09":118,"2026-07-10":64,"2026-07-11":12,"2026-07-12":12,"2026-07-13":12,"2026-07-14":12,"2026-07-15":12,"2026-07-16":12,"2026-07-17":12,"2026-07-18":12,"2026-07-19":12,"2026-07-20":12,"2026-07-21":12,"2026-07-22":40,"2026-07-23":12,"2026-07-24":12,"2026-07-25":12,"2026-07-26":12,"2026-07-27":12,"2026-07-28":12,"2026-07-29":12,"2026-07-30":12,"2026-07-31":12},"lead_lag":{"reading":"search_led","lag_days":1,"fit":0.81,"days":31},"traction":{"coverage_peaks":[{"date":"2026-07-09","items":118,"search_high":100,"search_typical":14,"moved":true},{"date":"2026-07-22","items":40,"search_high":14,"search_typical":14,"moved":false}],"search_without_coverage":[{"date":"2026-07-17","search":88,"items":12,"coverage_typical":12}]},"rising_queries":[{"query":"afya mfano refund","growth":null,"breakout":true,"answer":{"state":"unanswered"}},{"query":"afya mfano registration","growth":250,"breakout":false,"answer":{"state":"on_record"}},{"query":"mfano 90 days","growth":180,"breakout":false,"answer":{"state":"in_coverage"}}],"top_queries":[{"query":"amani mfano news","value":100,"answer":{"state":"navigational"}},{"query":"afya mfano","value":64,"answer":{"state":"on_record"}}],"unanswered":["afya mfano refund"],"scale_note":"Google's 0-100 index for searches in Kenya: 100 is the busiest moment of the past 30 days there, not a number of searches.","providers":{"interest":"SocialCrawl (Google Trends)","searches":"SocialCrawl (Google Trends)"},"storyline_searches":{"Afya Mfano rollout pain":[{"query":"afya mfano registration","kind":"rising","growth":250,"breakout":false}]},"suggested":{"state":"measured","rows":[{"query":"amani mfano afya mfano","answer":{"state":"on_record"}},{"query":"amani mfano age","answer":{"state":"unanswered"}}],"unanswered":["amani mfano age"]}},"world":{"state":"measured","place":"the world","timeframe_label":"the past 30 days","keyword":"Amani Mfano","series":[],"rising_queries":[{"query":"mfano county health levy","growth":120,"breakout":false,"answer":{"state":"on_record"}}],"top_queries":[],"scale_note":"Google's 0-100 index for searches worldwide: 100 is the busiest moment of the past 30 days there, not a number of searches.","suggested":{"state":"not_measured","rows":[]}},"contrast":{"world_only":["mfano county health levy"],"kenya_only":["afya mfano refund","mfano 90 days"]},"wikipedia":{"state":"measured","title":"Amani Mfano (fictional)","url":"https://wiki.example/Amani_Mfano","total":5120,"series":[{"date":"2026-07-01","views":140},{"date":"2026-07-02","views":140},{"date":"2026-07-03","views":140},{"date":"2026-07-04","views":140},{"date":"2026-07-05","views":140},{"date":"2026-07-06","views":140},{"date":"2026-07-07","views":140},{"date":"2026-07-08","views":140},{"date":"2026-07-09","views":900},{"date":"2026-07-10","views":140},{"date":"2026-07-11","views":140},{"date":"2026-07-12","views":140},{"date":"2026-07-13","views":140},{"date":"2026-07-14","views":140},{"date":"2026-07-15","views":140},{"date":"2026-07-16","views":140},{"date":"2026-07-17","views":140},{"date":"2026-07-18","views":140},{"date":"2026-07-19","views":140},{"date":"2026-07-20","views":140},{"date":"2026-07-21","views":140},{"date":"2026-07-22","views":140},{"date":"2026-07-23","views":140},{"date":"2026-07-24","views":140},{"date":"2026-07-25","views":140},{"date":"2026-07-26","views":140},{"date":"2026-07-27","views":140},{"date":"2026-07-28","views":140},{"date":"2026-07-29","views":140},{"date":"2026-07-30","views":140},{"date":"2026-07-31","views":140}],"peak":{"date":"2026-07-09","views":900}}},

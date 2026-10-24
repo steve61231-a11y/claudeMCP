@@ -221,6 +221,10 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
   identity rule against their own source. What remains written without the
   record: the supporter/critic framings (opinion, beside verified quotes),
   public voice, platform pulse and influencer stances.
+- **Phase 3 — every section says what it rests on.** The fixed report's
+  promise: each section carries a computed grade (on the record, counted,
+  quotes checked, the analyst's reading, thin) and the line behind it. Search
+  demand's unanswered searches become the next run's questions.
 - **Phase 3 — the Issue Map.** Its first section is now the connection on
   the record: every verified statement naming both the principal and the
   issue, counted, with "not established on the record" said in words when

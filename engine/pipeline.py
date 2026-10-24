@@ -927,6 +927,18 @@ def run_analysis(
                 previous=(prior_payload or {}).get("search_demand"))
             publish("search_demand", payload["search_demand"])
             search_signals = search_demand.all_signals(payload["search_demand"], politician.name)
+            # What the public asked that nothing collected answers becomes a
+            # question the next run goes and asks.
+            search_leads = search_demand.leads(payload["search_demand"])
+            if search_leads:
+                try:
+                    from engine.agents import investigator
+
+                    investigator.store_search_leads(db, politician, search_leads)
+                    payload["search_demand"]["leads_for_next_run"] = search_leads
+                except Exception as exc:  # noqa: BLE001 — never the report's cost
+                    _rollback_quietly(db)
+                    stages.current().failed("search_leads", exc)
         except FuturesTimeout:
             stages.current().failed("search_demand", TimeoutError(
                 f"search demand did not answer within {int(settings.search_demand_deadline_seconds)}s "

@@ -269,6 +269,12 @@ def _extract_url(raw_payload: dict) -> str | None:
     return None
 
 
+def _evidence_status(payload: dict) -> dict:
+    from engine.reports import evidence_status
+
+    return evidence_status.assess(payload or {})
+
+
 def _freshness(politician_id: str) -> dict:
     """How current the underlying data is — the honest 'live vs stale' signal."""
     from sqlalchemy import func
@@ -638,6 +644,11 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # world, Google's suggestions, Wikipedia's readers — and what the
         # report holds against it (evidence/search_demand.py).
         "searchDemand": payload.get("search_demand"),
+        # How much each section can bear, said on the section: on the
+        # record, counted, quotes checked, or the analyst's reading
+        # (reports/evidence_status.py). Computed, never a model's view of
+        # itself.
+        "evidenceStatus": _evidence_status(payload),
         # How good this report is, measured: full text versus headlines,
         # sentences a source backs, figures that match nothing, citations
         # that point at nothing. Operator view only — see reports/quality.py.

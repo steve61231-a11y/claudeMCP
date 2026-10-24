@@ -388,7 +388,9 @@ def _pending_leads(politician: Politician) -> list[str]:
 
     Held in their own column so they never leak into keyword MATCHING.
     """
-    return [str(q) for q in (getattr(politician, "investigation_leads", None) or [])]
+    from engine.agents.investigator import pending_leads
+
+    return pending_leads(politician) if getattr(politician, "investigation_leads", None) else []
 
 
 def _dedupe(items: list[str]) -> list[str]:

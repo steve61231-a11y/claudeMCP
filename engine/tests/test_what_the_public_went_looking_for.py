@@ -418,3 +418,47 @@ def test_the_page_says_what_the_index_is_and_keeps_failures_for_the_operator():
     assert "never compared as amounts" in body
     assert "renderSearchDemand(r.searchDemand)" in html
     assert "['search_demand','What people searched for']" in html
+
+
+# --- what the next run asks ------------------------------------------------------
+
+def test_unanswered_searches_become_the_next_runs_questions():
+    got = sd.leads(_section())
+    assert got[:2] == ["wanjiru husband", "wanjiru imf loan"]
+    assert "jane wanjiru news" not in got, "a navigational search asks nothing"
+    assert "jane wanjiru age" in got, "a suggestion nothing answers is a lead too, after the measured ones"
+
+
+def test_search_leads_and_the_investigators_do_not_erase_each_other():
+    from engine.agents import investigator
+
+    class _Db:
+        def commit(self):
+            pass
+
+    subject = type("P", (), {"investigation_leads": ['"Jane Wanjiru" tender']})()
+    import sqlalchemy.orm.attributes as attrs
+
+    original = attrs.flag_modified
+    attrs.flag_modified = lambda *a, **k: None
+    try:
+        investigator.store_search_leads(_Db(), subject, ["wanjiru husband"])
+        assert subject.investigation_leads == ['"Jane Wanjiru" tender', "search: wanjiru husband"]
+        investigator.store_follow_up_queries(_Db(), subject, ['"Jane Wanjiru" court'])
+        assert subject.investigation_leads == ['"Jane Wanjiru" court', "search: wanjiru husband"]
+    finally:
+        attrs.flag_modified = original
+    assert investigator.pending_leads(subject) == ['"Jane Wanjiru" court', "wanjiru husband"]
+
+
+def test_the_run_stores_the_searches_it_could_not_answer(db_session, scripted_model, monkeypatch):
+    from engine.config import settings
+    from engine.tests.test_end_to_end_run import _run, _seed
+
+    monkeypatch.setattr(settings, "enable_search_demand", True)
+    monkeypatch.setattr(sd, "gather", lambda *a, **k: _gathered())
+    subject = _seed(db_session)
+    payload = _run(db_session, subject).payload
+    assert payload["search_demand"]["leads_for_next_run"]
+    db_session.refresh(subject)
+    assert any(q.startswith("search: ") for q in subject.investigation_leads)

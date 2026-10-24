@@ -332,6 +332,22 @@ requests `monkeypatch` is torn down AFTER `db_session`, and a test that
 stubs `db_session.close` then held its transaction through teardown and hung
 the whole suite on the next DROP INDEX.
 
+**A section must never look stronger than its evidence.** A section
+written from the verified record and one an analyst wrote with nothing
+checking it rendered identically, so a client could not tell which
+sentences to repeat in a meeting. `reports/evidence_status.py` grades every
+section from how the payload says it was made — on the record, partly on
+the record, counted, quotes checked, the analyst's reading, thin, or
+unavailable — and the page stamps the grade and one line of what it rests
+on into each section's header (`stampEvidence`), visible folded and on
+paper. Never a model's view of itself; an ungradable section says "Not
+assessed"; "unavailable" is the operator's, since the reader is never shown
+an empty section. And the search section closes its own loop: searches
+nothing collected answers (`search_demand.leads`) are stored as the next
+run's questions, in `investigation_leads` with a `search: ` prefix so the
+investigator — which writes the same column after delivery — replaces only
+its own kind, and `pending_leads` strips the prefix for every reader.
+
 **The Issue Map's connection is a claim, so it stands on the record.**
 The map answers "how is this person connected to this issue?" with a
 verdict a model wrote over a digest — in a client's file, "X is tied to

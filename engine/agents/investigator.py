@@ -251,23 +251,49 @@ def _derive_queries(politician, agenda: list[dict], unexplained: list[str]) -> l
     return unique[:_MAX_QUERIES]
 
 
+#: Leads that came from what people searched for, kept in the same column
+#: as the investigator's own and told apart by this prefix, so each writer
+#: replaces only its own kind: the investigator runs after delivery and
+#: would otherwise erase the searches the report just raised.
+SEARCH_PREFIX = "search: "
+
+
+def _is_search(lead: str) -> bool:
+    return str(lead).startswith(SEARCH_PREFIX)
+
+
 def store_follow_up_queries(db, politician, queries: list[str]) -> int:
     """Persist follow-up queries so the next run picks them up.
 
     Stored in their own column rather than among `keywords`: keywords are
     matching terms used for entity linking, and a lead is a question to ask —
-    mixing them would corrupt matching.
+    mixing them would corrupt matching. Leads raised by search demand are
+    kept; only the investigator's own are replaced.
     """
     if not queries:
         return 0
     from sqlalchemy.orm.attributes import flag_modified
 
-    politician.investigation_leads = list(queries[:_MAX_QUERIES])
+    kept = [q for q in (politician.investigation_leads or []) if _is_search(q)]
+    politician.investigation_leads = list(queries[:_MAX_QUERIES]) + kept
     flag_modified(politician, "investigation_leads")
     db.commit()
     return len(politician.investigation_leads)
 
 
+def store_search_leads(db, politician, leads: list[str]) -> int:
+    """Searches nothing collected answers, as questions for the next run.
+    Replaces the previous report's search leads, keeps the investigator's."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    kept = [q for q in (politician.investigation_leads or []) if not _is_search(q)]
+    politician.investigation_leads = kept + [SEARCH_PREFIX + q for q in leads[:_MAX_QUERIES]]
+    flag_modified(politician, "investigation_leads")
+    db.commit()
+    return len(leads)
+
+
 def pending_leads(politician) -> list[str]:
-    """Follow-up queries recorded by a previous run."""
-    return list(politician.investigation_leads or [])
+    """Follow-up queries recorded by a previous run, as they are asked."""
+    return [str(q)[len(SEARCH_PREFIX):] if _is_search(q) else str(q)
+            for q in (politician.investigation_leads or [])]
