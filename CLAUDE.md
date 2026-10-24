@@ -206,7 +206,12 @@ and never sent again. It reads this period's unread sources alongside the analys
 a thread that touches no database; planned and stored on the report's own
 thread), the back office reads whatever it did not finish, and it is
 inspected at `/api/admin/facts?name=…`. "On the record", the first section
-of the Case, is built from it with no model writing anything.
+of the Case, is built from it with no model writing anything. It is the
+SUBJECT's record, not the article's: a source mentioning them in passing
+yields facts about other people, so `record_for` keeps only statements that
+name the subject or an alias (as whole words — "Karua" in "Karua told the
+rally", not "Martha" inside "Marthas") and counts the rest as
+`facts_about_others`. The extractor is told to write the name, never "he".
 
 **A sentence names the fact it rests on, and the fact must say it.**
 `reports/from_facts.py` hands a writer a numbered ledger of findings from

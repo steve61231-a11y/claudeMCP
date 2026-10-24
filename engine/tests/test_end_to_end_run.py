@@ -29,7 +29,7 @@ def _scripted(prompt, max_tokens=None, model=None):
     if "atomic things" in p:                                  # the fact store
         return {"records": [
             {"i": i, "kind": "fact", "status": "reported", "topic": "cost of living",
-             "statement": "The subject spoke about the cost of living in Nairobi.",
+             "statement": "Edwin Sifuna spoke about the cost of living in Nairobi.",
              "quote": "spoke about the cost of living in Nairobi", "actor": "", "sentiment": "neutral"}
             for i in range(1, 9)] + [
             {"i": 1, "kind": "fact", "status": "reported", "topic": "invented",
@@ -299,7 +299,7 @@ def test_the_record_is_built_from_verified_facts_and_reaches_the_page(db_session
     assert payload["fact_store"]["dropped_unverified"] > 0
     record = payload["established_record"]
     statements = [f["statement"] for f in record["findings"]]
-    assert statements == ["The subject spoke about the cost of living in Nairobi."]
+    assert statements == ["Edwin Sifuna spoke about the cost of living in Nairobi."]
     finding = record["findings"][0]
     # The seeded items are one template with a number changed, so the wire
     # copy check is right to call them one origin carried by many outlets.

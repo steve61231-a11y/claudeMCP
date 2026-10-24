@@ -94,6 +94,8 @@ For every record give:
   "statement" — ONE sentence, self-contained, in English, naming who and what.
                 Preserve attribution. Write "Governor X alleged that funds were
                 diverted", NEVER "funds were diverted".
+                Name people as the item names them — write "{subject}", never
+                "he", "she" or "the subject" — so the statement says who it is about.
   "topic"    — 2-4 words naming the issue, as a newsroom would ("cost of living",
                 "2027 coalition talks", "county funds audit")
   "actor"    — who states or performs it, if the item names them; else ""

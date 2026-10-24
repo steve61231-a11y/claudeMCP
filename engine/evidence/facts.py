@@ -242,6 +242,30 @@ def extract_and_store(db, politician, corpus: list[dict], limit: int | None = No
     return stats
 
 
+#: Name parts too common to say a statement is about this subject.
+_COMMON_NAME_PARTS = {"the", "and", "of", "hon", "dr", "mr", "mrs", "ms", "prof", "sen", "gov"}
+
+
+def subject_terms(politician) -> set[str]:
+    """The words that say a statement is about this subject: each part of
+    the name and of every alias, four letters or more."""
+    names = [politician.name or ""] + list(getattr(politician, "aliases", None) or [])
+    terms = set()
+    for name in names:
+        folded = _fold(name)
+        if len(folded) >= 4:
+            terms.add(folded)
+        terms |= {w for w in re.findall(r"[a-z]+", folded)
+                  if len(w) >= 4 and w not in _COMMON_NAME_PARTS}
+    return terms
+
+
+def about(statement: str, terms: set[str]) -> bool:
+    words = set(re.findall(r"[a-z]+", _fold(statement)))
+    folded = _fold(statement)
+    return any((t in words) if " " not in t else (t in folded) for t in terms)
+
+
 def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
     """What this period's sources establish, from the store, with no model.
 
@@ -257,6 +281,13 @@ def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
     rows = db.query(Fact).filter(Fact.politician_id == politician.id,
                                  Fact.source_key.in_(list(by_key)),
                                  Fact.kind != "opinion").all()
+    # The subject's record, not the article's. A source that mentions the
+    # subject in passing yields facts about other people too; a statement
+    # that does not name the subject (or an alias) is left out of THIS
+    # record and counted, never silently dropped.
+    terms = subject_terms(politician)
+    about_others = [f for f in rows if not about(f.statement, terms)]
+    rows = [f for f in rows if about(f.statement, terms)]
     listed = []
     for fact in rows:
         item = by_key[fact.source_key]
@@ -272,7 +303,8 @@ def record_for(db, politician, corpus: list[dict], most: int = 20) -> dict:
         for source in finding["sources"]:
             source.pop("source_text", None)
     return {"findings": findings[:most], "findings_total": len(findings),
-            "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows)}
+            "sources_with_facts": len({f.source_key for f in rows}), "facts": len(rows),
+            "facts_about_others": len(about_others)}
 
 
 # ---------------------------------------------------------------------------

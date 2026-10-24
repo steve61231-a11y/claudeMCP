@@ -266,3 +266,23 @@ def test_the_reading_pool_is_as_wide_as_the_other_model_stages(monkeypatch):
     monkeypatch.setattr(llm, "concurrency", lambda n: n)
     assert facts._workers(75) == 16
     assert facts._workers(3) == 3
+
+
+def test_the_record_is_about_the_subject_not_everyone_in_the_article(db_session, monkeypatch):
+    subject, _, item = _subject_and_item(db_session)
+    subject.aliases = ["Wanjiru"]
+    db_session.commit()
+    about_her = {**GOOD, "statement": "Wanjiru said the delay left fourteen counties unable to pay health workers."}
+    about_treasury = {**GOOD, "statement": "The Treasury said it would release the funds within ten days.",
+                      "quote": "the Treasury said it would release the funds within ten days"}
+    _model(monkeypatch, [about_her, about_treasury])
+    facts.extract_and_store(db_session, subject, [item])
+    record = facts.record_for(db_session, subject, [item])
+    assert [f["statement"] for f in record["findings"]] == [about_her["statement"]]
+    assert record["facts_about_others"] == 1
+
+
+def test_a_name_part_matches_as_a_word_not_inside_another():
+    terms = facts.subject_terms(type("P", (), {"name": "Martha Karua", "aliases": []})())
+    assert facts.about("Karua told the rally the party would field candidates.", terms)
+    assert not facts.about("Marthas Vineyard is a place.", terms)
