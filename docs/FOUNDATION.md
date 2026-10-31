@@ -228,8 +228,12 @@ park Network, test subjects Edwin Sifuna and Martha Karua.
 - **Phase 3 — the Issue Map.** Its first section is now the connection on
   the record: every verified statement naming both the principal and the
   issue, counted, with "not established on the record" said in words when
-  there are none, and search demand for the pair. The map's analysts still
-  write the framework below it.
+  there are none, and search demand for the pair. Scenario mapping (31 Oct,
+  from the founder's example paper) follows it: risk drivers with how each
+  reads now, a probability tree whose arithmetic the engine recomputes, and
+  most likely / credible alternative / outlier ranked by those computed
+  figures — every reading and factor held to the findings it cites. The
+  map's analysts still write the framework below it.
 - **Search demand — added.** What the public went looking for, Kenya and
   worldwide, against the coverage and the record: who led, which coverage
   nobody searched for, which searches nothing collected answers, which

@@ -5039,6 +5039,17 @@
           Object.values(bo.seconds).reduce((a,v)=>a+(Number(v)||0),0))}s after delivery`:''}.</div>
         <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${parts.map(([k,v])=>
           `<span class="chip">${esc(k)} ${Math.round(Number(v)||0)}s</span>`).join('')}</div>`;
+      // Where memory went: the process's resident memory at the end of
+      // each phase (engine/memory.py) — the figure a "ran out of memory"
+      // email never gives.
+      const mem=Object.entries(ss.memory_mb||{}).filter(([,v])=>Number(v)>0);
+      if(mem.length){
+        const [topK,topV]=mem.reduce((a,b)=>Number(b[1])>Number(a[1])?b:a);
+        card.appendChild(el('div','muted',`<div style="font-size:12.5px;margin-top:10px">Memory: highest
+          ${fmt(Math.round(topV))} MB, after ${esc(label[topK]||topK)}.</div>
+          <div class="row" style="margin-top:6px;flex-wrap:wrap;gap:6px">${mem.map(([k,v])=>
+          `<span class="chip">${esc(label[k]||k)} ${fmt(Math.round(Number(v)))} MB</span>`).join('')}</div>`));
+      }
       wrap.appendChild(card);
     }
 
@@ -6066,6 +6077,117 @@
     return c;
   }
 
+  /* Scenario mapping (engine/reports/scenarios.py) — the client's own model:
+     risk drivers, a branching tree with a probability on every branch, and
+     three scenarios. The probabilities are judgement and say so; every
+     scenario's figure is the product of its branches, recomputed by the
+     engine, and the tiers are the order of those figures. */
+  const SCEN_TONE={most_likely:'var(--pos)',credible_alternative:'var(--amber)',outlier:'var(--sky2)'};
+  const DIR_PILL={raises:['neg','Raises the risk'],lowers:['pos','Lowers the risk'],
+    mixed:['amber','Mixed'],unclear:['','Unclear']};
+  function pctText(p){return (Math.round(Number(p)*10)/10).toString().replace(/\.0$/,'')+'%';}
+  function citedLines(rows){
+    return (rows||[]).map(r=>`<li style="margin-top:5px">${linkifyRefs(esc(r.text||''),r.citations)}</li>`).join('');
+  }
+  function scenarioTree(tree){
+    const nodes=(tree||[]).filter(n=>n&&n.id);
+    if(nodes.length<2)return null;
+    const kids={};nodes.forEach(n=>{if(n.parent)(kids[n.parent]=kids[n.parent]||[]).push(n);});
+    const root=nodes.find(n=>!n.parent);if(!root)return null;
+    const W=168,H=58,GX=18,GY=46;
+    let slot=0;const pos={};
+    (function place(n){
+      const ks=kids[n.id]||[];
+      if(!ks.length){pos[n.id]={x:slot*(W+GX)};slot++;}
+      else{ks.forEach(place);pos[n.id]={x:(pos[ks[0].id].x+pos[ks[ks.length-1].id].x)/2};}
+      pos[n.id].y=(n.depth||0)*(H+GY);
+    })(root);
+    const width=slot*(W+GX),height=(Math.max(...nodes.map(n=>n.depth||0))+1)*(H+GY);
+    const wrap=t=>{const words=String(t).split(/\s+/),lines=[];let cur='';
+      words.forEach(w=>{if((cur+' '+w).trim().length>22&&cur){lines.push(cur);cur=w;}else cur=(cur+' '+w).trim();});
+      if(cur)lines.push(cur);return lines.slice(0,3);};
+    let svg='';
+    nodes.forEach(n=>{if(!n.parent||!pos[n.parent])return;
+      const a=pos[n.parent],b=pos[n.id],x1=a.x+W/2,y1=a.y+H,x2=b.x+W/2,y2=b.y,my=(y1+y2)/2;
+      const tone=SCEN_TONE[n.tier]||'var(--mut)';
+      svg+=`<path d="M${x1} ${y1} V${my} H${x2} V${y2}" fill="none" stroke="${tone}" stroke-width="1.5"${n.kind==='intervening'?' stroke-dasharray="4 4"':''}/>`;
+      if(n.kind!=='intervening'||n.p!==100)svg+=`<text x="${x2+5}" y="${my-4}" font-size="12" font-weight="700" fill="${tone}">${esc(pctText(n.p))}</text>`;
+    });
+    nodes.forEach(n=>{const q=pos[n.id];if(!q)return;
+      const tone=SCEN_TONE[n.tier]||'var(--mut)',leaf=!(kids[n.id]||[]).length;
+      const lines=wrap(n.label);
+      svg+=`<g><title>${esc(n.label+(n.detail?' — '+n.detail:'')+(n.parent?' · '+pctText(n.path_p)+' of all paths':''))}</title>
+        <rect x="${q.x}" y="${q.y}" width="${W}" height="${H}" rx="10" fill="var(--bg2)" stroke="${tone}" stroke-width="${n.tier?2:1}"${n.kind==='intervening'?' stroke-dasharray="4 4"':''}/>`
+        +lines.map((l,i)=>`<text x="${q.x+W/2}" y="${q.y+H/2-(lines.length-1)*7+i*14+4}" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">${esc(l)}</text>`).join('')
+        +(leaf&&n.parent?`<text x="${q.x+W/2}" y="${q.y+H+13}" text-anchor="middle" font-size="10.5" fill="var(--mut)">${esc(pctText(n.path_p))} of all paths</text>`:'')
+        +'</g>';
+    });
+    const box=el('div','');box.style.cssText='overflow-x:auto;margin-top:8px;-webkit-overflow-scrolling:touch';
+    box.innerHTML=`<svg role="img" aria-label="Probability tree" width="${width}" height="${height+16}" viewBox="0 0 ${width} ${height+16}" style="font-family:var(--sans);display:block">${svg}</svg>`;
+    return box;
+  }
+  function renderScenarios(sc,m){
+    if(!sc)return null;
+    if(sc.state!=='modelled'){
+      const c=deepCard('Scenarios','Not modelled this time');
+      c.classList.add('op-only');
+      c.appendChild(el('div','muted',esc(sc.reason||'no reason was recorded')));
+      return c;
+    }
+    const c=deepCard('Scenarios',`How ${m.principal||''} × ${m.issue||''} could unfold — risk drivers, a probability tree and three scenarios, each resting on the record`,{open:true});
+    c.appendChild(el('div','muted chart-note',esc(sc.basis||'')));
+    const rows=(sc.scenarios||[]);
+    if(rows.length){
+      const grid=el('div','');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:10px';
+      rows.forEach(r=>{
+        const tone=SCEN_TONE[r.tier]||'var(--mut)';
+        const card=el('div','mentr');card.style.cssText=`border-left:3px solid ${tone};margin:0`;
+        card.innerHTML=`<div class="row" style="justify-content:space-between;align-items:baseline;gap:8px">
+            <span class="lbl" style="color:${tone}">${esc(r.tier_label||'')}</span>
+            <b style="font-size:22px;color:${tone}">${esc(pctText(r.probability))}</b></div>
+          <div style="font-size:15px;font-weight:600;margin-top:6px;line-height:1.4">${esc(r.title||'')}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.strength_label||'')}</div>
+          ${[['Factors',r.factors],['Outlook',r.outlook],['Implications',r.implications]].filter(([,v])=>(v||[]).length).map(([k,v])=>
+            `<div class="lbl" style="margin-top:10px">${k}</div><ul style="font-size:13.5px;margin:2px 0 0 16px;line-height:1.5">${citedLines(v)}</ul>`).join('')}`;
+        grid.appendChild(card);
+      });
+      c.appendChild(grid);
+    }
+    const tree=scenarioTree(sc.tree);
+    if(tree){
+      const f=foldBlock('The probability tree','each branch is a judgement; each path is the product of its branches');
+      f.appendChild(tree);
+      f.appendChild(el('div','muted chart-note',`Colour follows the scenario a path belongs to: <span style="color:var(--pos)">most likely</span>, <span style="color:var(--amber)">credible alternative</span>, <span style="color:var(--sky2)">outlier</span>. Dashed lines are intervening steps.`));
+      c.appendChild(f);
+    }else if(sc.tree_withheld){
+      c.appendChild(el('div','muted chart-note op-only','The tree was withheld: '+esc(sc.tree_withheld)));
+    }
+    const drivers=(sc.drivers||[]);
+    if(drivers.length){
+      const f=foldBlock('Risk drivers',`${drivers.length} force${drivers.length===1?'':'s'}, and how ${drivers.length===1?'it reads':'each reads'} now`);
+      drivers.forEach(d=>{
+        const [cls,word]=DIR_PILL[d.direction]||DIR_PILL.unclear;
+        f.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <span><span class="chip">${esc(d.category||'')}</span> <b style="font-size:14.5px">${esc(d.driver||'')}</b></span>
+            <span class="pill ${cls}">${esc(word)}</span></div>
+          ${d.definition?`<div style="font-size:13.5px;margin-top:6px"><span class="lbl">Definition</span> ${esc(d.definition)}</div>`:''}
+          ${d.impact?`<div style="font-size:13.5px;margin-top:4px"><span class="lbl">Impact</span> ${esc(d.impact)}</div>`:''}
+          <div style="font-size:13.5px;margin-top:4px"><span class="lbl">Now</span> ${linkifyRefs(esc(d.reading||''),d.reading_citations)}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">${esc(d.strength_label||'')}</div>`));
+      });
+      c.appendChild(f);
+    }
+    const removed=((sc.check||{}).removed||[]);
+    if(removed.length){
+      const f=foldBlock('Removed by the check',`${removed.length} sentence(s) the record could not support`);
+      f.classList.add('op-only');
+      removed.forEach(x=>f.appendChild(el('div','mentr',`<div style="font-size:13px">${esc(x.sentence||'')}</div>
+        <div class="muted" style="font-size:12px;margin-top:3px">${esc(x.part||'')}: ${esc(x.reason||'')}</div>`)));
+      c.appendChild(f);
+    }
+    return c;
+  }
+
   function renderIssue(out,m){
     useRefIndex(m);
     // The same holding-still as the search report: each analyst that lands
@@ -6142,6 +6264,8 @@
     if(conn)out.appendChild(conn);
     const sd=renderSearchDemand(m.search_demand);
     if(sd)out.appendChild(sd);
+    const scen=renderScenarios(m.scenarios,m);
+    if(scen)out.appendChild(scen);
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
         +'&issue='+encodeURIComponent(m.issue||''),
@@ -6569,6 +6693,26 @@
           {statement:'Patient advocates alleged that Amani Mfano knew Afya Mfano facilities were charging registered members.',status:'alleged',independent_sources:1,first_seen:'2026-07-09',
             sources:[{publisher:'Mfano Voice',url:'https://mfano-voice.example/advocates',published_at:'2026-07-09',quote:'knew the facilities were charging registered members'}]}],
         timeline:[]},
+      // Fictional scenarios, in the shape reports/scenarios.py builds: each
+      // path's figure is the product of its branches (60×70=42, 60×30=18).
+      scenarios:{state:'modelled',
+        basis:'The probabilities are an analyst\u2019s judgement on the findings cited, not a measurement. Each scenario\u2019s figure is the product of the branches on its path, recomputed from the tree; every name, figure and date rests on the findings cited.',
+        drivers:[{category:'Political',driver:'Ownership of the scheme',definition:'A reform launched in person ties its fortunes to the person who launched it.',impact:'Failures are read as the owner\u2019s failures.',
+          reading:'Governor Amani Mfano launched Afya Mfano at the county referral hospital [1].',reading_citations:[{n:1,url:'https://mfano-daily.example/afya-launch',platform:'Mfano Daily'}],
+          direction:'raises',strength_label:'Independently corroborated'}],
+        tree:[{id:'n1',label:'County assembly review',kind:'event',depth:0,path_p:100,tier:'most_likely'},
+          {id:'n2',parent:'n1',label:'Fixes land within 90 days',p:60,kind:'event',depth:1,path_p:60,tier:'most_likely'},
+          {id:'n3',parent:'n1',label:'Complaints persist',p:40,kind:'event',depth:1,path_p:40,tier:'credible_alternative'},
+          {id:'n4',parent:'n2',label:'Scheme stabilises',p:70,kind:'outcome',depth:2,path_p:42,tier:'most_likely'},
+          {id:'n5',parent:'n2',label:'Partial recovery',p:30,kind:'outcome',depth:2,path_p:18,tier:'outlier'}],
+        scenarios:[{tier:'most_likely',tier_label:'Most likely',probability:42,title:'The scheme stabilises',strength_label:'Independently corroborated',
+          factors:[{text:'Governor Amani Mfano launched Afya Mfano at the county referral hospital [1].',citations:[{n:1,url:'https://mfano-daily.example/afya-launch',platform:'Mfano Daily'}]}],
+          outlook:[{text:'Registration complaints fall as the fixes take effect.',citations:[]}],implications:[]},
+          {tier:'credible_alternative',tier_label:'Credible alternative',probability:40,title:'Complaints persist',strength_label:'Includes allegations',
+          factors:[{text:'Patient advocates alleged that Amani Mfano knew facilities were charging registered members [1].',citations:[{n:1,url:'https://mfano-voice.example/advocates',platform:'Mfano Voice'}]}],outlook:[],implications:[]},
+          {tier:'outlier',tier_label:'Outlier',probability:18,title:'Partial recovery',strength_label:'Rests on a single original report',
+          factors:[{text:'Afya Mfano was launched at the county referral hospital [1].',citations:[{n:1,url:'https://mfano-daily.example/afya-launch',platform:'Mfano Daily'}]}],outlook:[],implications:[]}],
+        check:{removed:[]}},
       // The map runs the same name check the report does. It did not, for
       // three rounds of this codebase fixing things where they were seen.
       grounding:{checked:18,ungrounded:[],rate:0,method:'capitalised-names'},

@@ -368,6 +368,40 @@ letters, which would have lost "IMF"), and the page puts the record's
 count beside the model's verdict so an unsupported verdict never stands
 alone at the top of the file.
 
+**A scenario's probability is arithmetic over a judgement, and the page
+recomputes it.** The client's model for the Issue Map's scenario section is
+a 2022 election paper: risk drivers (definition, impact, how each reads
+now), a branching tree with a probability on every branch, and three
+scenarios — most likely, credible alternative, outlier — with factors,
+outlook and implications. A model writes that fluently from nothing, so
+`reports/scenarios.py` holds it to the record: every driver reading and
+scenario factor cites the map's findings and may not introduce a name,
+figure or date they lack (`check_assessment`); outlook and implications are
+held to their scenario's cited findings; a driver with no checked reading
+and a scenario with no checked factor are dropped and declared. The
+branches under each node must sum to 100 or the tree is withdrawn with the
+sum it reached; a scenario's probability is the product of its path,
+computed here and never taken from the writer; and the tiers are the order
+of those computed figures (the example paper headlines 45% over a branch
+reading 40%). A tree label naming someone off the record withdraws the
+whole tree. No finding naming both principal and issue, or fewer than
+three about the principal, and nothing is modelled — a scenario tree over
+no evidence is the most persuasive form of invention.
+
+**A crash for memory leaves no ledger, so the engine must say it first.**
+Railway's whole report of it was an email — "ran out of memory and
+crashed" — with no stage, no figure and no limit, and it takes every run in
+flight with it. `engine/memory.py` reads RSS and the high-water mark from
+`/proc/self/status` and the limit from the cgroup; `/api/health` reports
+them as `memory`, every `StageLedger.lap` records the figure
+(`memory_mb`, shown beside "Where the time went"), and NEW work — a report,
+a map, a back office, a scheduled sweep — is refused above 85% of the limit
+with a sentence, never started into a crash. An unreadable figure is None
+and never a refusal. `start.sh` sets `MALLOC_ARENA_MAX=2`, because glibc
+gives each allocating thread its own arena and this process runs dozens of
+pool threads. What actually filled memory on Railway is NOT yet known —
+read `memory_mb` on the next report before changing anything else.
+
 **Read the contract, not the memory of it.** The SocialCrawl account was
 unfunded, so nothing exercised the paid path, and reading every endpoint
 in SocialCrawl's own catalogue (`socialcrawl_endpoint`, free) found what

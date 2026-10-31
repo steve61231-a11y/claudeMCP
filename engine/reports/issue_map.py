@@ -589,12 +589,25 @@ def build_issue_map(
     # statement that names both the principal and the issue.
     payload["connection_record"] = _finish_connection(connection_job, principal, issue,
                                                       issue_aliases, mentions)
+    principal_findings = payload["connection_record"].pop("_principal_findings", None)
     publish("connection_record", payload["connection_record"])
     search = _finish_search_demand(search_job, principal, ws, we, mentions,
                                    (payload["connection_record"] or {}).get("findings") or [])
     if search is not None:
         payload["search_demand"] = search
         publish("search_demand", search)
+
+    # Risk drivers, the probability tree and three scenarios — the model's
+    # judgement, held to the record and recomputed (reports/scenarios.py).
+    payload["scenarios"] = _scenarios(principal, issue, payload["connection_record"],
+                                      principal_findings, search)
+    if payload["scenarios"].get("state") == "modelled":
+        # The identity rule over the scenarios too: a forecast blaming a
+        # community no source named is defamatory however it is checked.
+        identity = protected_terms.redact(payload["scenarios"], mentions)
+        if identity.get("removed"):
+            payload["scenarios"]["protected_terms"] = identity
+    publish("scenarios", payload["scenarios"])
 
     # Draw the graph as soon as the intersection lands, before the framework —
     # which is the slowest call in the run. It costs nothing but local work, and
@@ -670,6 +683,9 @@ def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str]
         record = facts.record_for(db, subject, corpus, most=50, keep_all=True)
         out = connection.build(record.get("all_findings") or [], principal, issue, aliases)
         out["sources_read_this_run"] = job.get("to_read", 0)
+        # The principal's whole record, for the scenario writer's context;
+        # popped before the payload is published or stored.
+        out["_principal_findings"] = record.get("all_findings") or []
         if note:
             out["note"] = note
         return out
@@ -682,6 +698,35 @@ def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str]
         return connection.not_measured(f"{type(exc).__name__}: {exc}"[:200])
     finally:
         db.close()
+
+
+def _scenarios(principal: str, issue: str, connection_record: dict | None,
+               principal_findings: list[dict] | None, search: dict | None) -> dict:
+    """The scenario section, or the reason it was not modelled — a failure
+    here is the operator's to read and never costs the map."""
+    from engine.evidence import search_demand
+    from engine.reports import scenarios
+
+    signals = None
+    if (search or {}).get("state") == "measured":
+        try:
+            signals = search_demand.all_signals(search, principal)
+        except Exception:  # noqa: BLE001 — the scenarios stand without search
+            signals = None
+    counts = (connection_record or {}).get("counts") or {}
+    numbers = {str(v) for v in counts.values() if isinstance(v, int)}
+    try:
+        out = scenarios.build(principal, issue, connection_record, principal_findings,
+                              search=signals, numbers=numbers)
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("issue_map:scenarios", exc)
+        return scenarios.withheld(f"the scenario writer failed: {type(exc).__name__}: {exc}"[:200])
+    if out.get("state") == "modelled":
+        stages.current().ok("issue_map:scenarios",
+                            f"{len(out['drivers'])} drivers, {len(out['scenarios'])} scenarios")
+    else:
+        stages.current().skipped("issue_map:scenarios", out.get("reason") or "not modelled")
+    return out
 
 
 def _start_search_demand(principal: str, issue: str, ws: datetime, we: datetime):
