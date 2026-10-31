@@ -57,6 +57,8 @@ class StageLedger:
     # that "takes too long" has to say WHERE, or every fix is a guess — and
     # this project has paid for guessing.
     timings: dict[str, float] = field(default_factory=dict)
+    # Resident memory (MB) at the end of each phase — where memory went.
+    memory_mb: dict[str, float] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _last_lap: float = field(default_factory=time.monotonic, repr=False)
 
@@ -68,6 +70,14 @@ class StageLedger:
             seconds = round(now - self._last_lap, 1)
             self._last_lap = now
             self.timings[name] = round(self.timings.get(name, 0.0) + seconds, 1)
+        # Where memory went, beside where time went: the process's resident
+        # memory at the end of this stage (engine/memory.py).
+        from engine import memory
+
+        rss = memory.rss_mb()
+        if rss is not None:
+            with self._lock:
+                self.memory_mb[name] = rss
         return seconds
 
     def record(self, name: str, status: str, error: str | None = None,
@@ -113,9 +123,11 @@ class StageLedger:
         failed = [r for r in records if r.status == STATUS_FAILED]
         with self._lock:
             timings = dict(self.timings)
+            memory_mb = dict(self.memory_mb)
         return {
             "stages": [r.to_dict() for r in sorted(records, key=lambda r: r.name)],
             "timings": timings,
+            "memory_mb": memory_mb,
             "failed": [r.name for r in failed],
             "failed_count": len(failed),
             "ok_count": sum(1 for r in records if r.status == STATUS_OK),

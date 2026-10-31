@@ -54,5 +54,12 @@ else
   fi
 fi
 
+# glibc gives every thread that allocates its own malloc arena and seldom
+# hands freed memory back, so a process running dozens of pool threads (the
+# analyst fan-out, collectors, scoring) grows RSS far past what it holds.
+# Two arenas is the standard setting for threaded Python servers; set the
+# variable on the host to override it.
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
+
 echo "Starting server on port ${PORT:-8000}..."
 exec uvicorn engine.api_server:app --host 0.0.0.0 --port "${PORT:-8000}"

@@ -41,6 +41,11 @@ def _scheduled_ingestion_loop() -> None:
     interval = settings.ingestion_refresh_hours * 3600
     while True:
         time.sleep(interval)
+        from engine import memory
+
+        if memory.refusal():
+            print("scheduled ingestion skipped this sweep:", memory.refusal())
+            continue
         db = SessionLocal()
         try:
             # Pre-warm: names likely to be searched (cabinet, governors…)
@@ -1177,6 +1182,16 @@ def _back_office_after_delivery(job_id: str, name: str, task) -> None:
         task.ledger.failed("back_office", "an earlier report's back office for this "
                            "subject was still running, so this one was not started")
         return
+    from engine import memory
+
+    near_limit = memory.refusal()
+    if near_limit:
+        # Delivered already; the enrichment can wait for the next run of this
+        # subject. Starting it here could crash the runs other readers are
+        # waiting on.
+        task.ledger.skipped("back_office", "not started near the memory limit — " + near_limit)
+        lock.release()
+        return
     try:
         run_back_office(task)
     except Exception:  # noqa: BLE001 — after delivery, a failure costs nothing visible
@@ -1207,6 +1222,26 @@ def _back_office_after_delivery(job_id: str, name: str, task) -> None:
         traceback.print_exc()
 
 
+def _memory_snapshot() -> dict:
+    from engine import memory
+
+    try:
+        return memory.snapshot()
+    except Exception as exc:  # noqa: BLE001 — a health check must answer
+        return {"error": f"{type(exc).__name__}"}
+
+
+def _admit_or_refuse() -> None:
+    """Refuse NEW work near the memory limit (engine/memory.py): a 503 the
+    page shows in words, rather than a crash that takes every run in
+    flight down with it."""
+    from engine import memory
+
+    reason = memory.refusal()
+    if reason:
+        raise HTTPException(status_code=503, detail=reason)
+
+
 @app.post("/api/report")
 def generate_report(req: ReportRequest, request: Request, x_api_key: str | None = Header(default=None)):
     _require_api_key(x_api_key)
@@ -1224,6 +1259,7 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
     if existing:
         return {"ok": True, "job_id": existing, "already_running": True}
 
+    _admit_or_refuse()
     job_id = uuid.uuid4().hex
     # Always run the LIVE pipeline so every report reflects the newest data.
     # A pre-generated report (if any) is used only as a fallback on failure
@@ -1339,6 +1375,7 @@ def create_issue_map(req: IssueMapRequest, request: Request, x_api_key: str | No
     issue = req.issue.strip()
     if not principal or not issue:
         raise HTTPException(status_code=400, detail="principal and issue are both required")
+    _admit_or_refuse()
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {"status": "running", "created_at": time.time()}
     thread = threading.Thread(target=_run_issue_map_job, args=(job_id, principal, issue, req.days, (req.desired_outcome or "").strip() or None), daemon=True)
@@ -2385,6 +2422,9 @@ def health():
         # than the raw variable because the parse is the thing that matters:
         # a typo in the value is exactly the failure this is for.
         "analysis": _analysis_capability(),
+        # Resident memory now and at its peak, against the container's
+        # limit — Railway says only "ran out of memory" after the crash.
+        "memory": _memory_snapshot(),
         # Did the last deploy's migration actually run? See `_schema_state`.
         "schema": schema,
         "uptime_seconds": int(time.time() - _PROCESS_START),
