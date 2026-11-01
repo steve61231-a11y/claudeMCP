@@ -225,6 +225,7 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
     # most damaging single lie this pipeline was capable of, because it is the
     # number that makes the thin sections beneath it look like the truth.
     read = [d for d in digests if not d.get("_failed")]
+    cause = _failure_cause(digests)
     # Every pass failed. The documents are still here; handing the analysts an
     # empty digest instead is how a run reports "analysed 0 of 23" and then
     # renders every section blank.
@@ -242,6 +243,7 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
                          f"{len(mentions)} mentions were never read by the map step. The "
                          "analysts were given the documents themselves instead, up to what "
                          "one window holds — nothing was summarised first."),
+                **cause,
             },
         }
     failed_chunks = [d for d in digests if d.get("_failed")]
@@ -258,7 +260,28 @@ def build_corpus_digest(name: str, mentions: list[dict]) -> dict:
             f"{len(failed_chunks)} of {len(chunks)} passes over the corpus failed, so "
             f"{len(mentions) - analyzed} mentions were never read. Everything below rests "
             "on the remainder.")
+        coverage.update(cause)
     return {"digests": digests, "coverage": coverage}
+
+
+def _failure_cause(digests: list[dict]) -> dict:
+    """Why the passes failed, in the operator's words — the first error that
+    is the provider's own, not the circuit breaker's "stopped asking" that
+    follows it, because the breaker is a consequence and naming it sends
+    the operator after the wrong thing. Empty when nothing failed."""
+    errors = [d["_failed"] for d in digests if d.get("_failed")]
+    if not errors:
+        return {}
+    root = next((e for e in errors if not e.startswith("ProviderUnavailable")), errors[0])
+    out = {"failure": root, "failures_alike": sum(1 for e in errors if e == root)}
+    try:
+        from engine import health
+
+        backend = llm.provider()
+        out["remedy"] = health._remedy_for(root, llm.bulk_model(), backend)
+    except Exception:  # noqa: BLE001 — the error itself is still said
+        pass
+    return out
 
 
 def digest_context(digest: dict, max_chars: int = 40000) -> str:

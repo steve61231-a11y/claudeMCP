@@ -3065,6 +3065,11 @@
         : (cov.complete?'every item read':(cov.chunks?cov.chunks+' passes':'partial'))));
     if(cov.note)g1.appendChild(el('div','',
       `<div class="qt" style="border-left-color:var(--amber);font-style:normal;color:var(--amber)">${esc(cov.note)}</div>`));
+    // Why — the provider's own error and what to do about it. The
+    // operator's, never the reader's: a client has no LLM_MODEL to change.
+    if(cov.failure)g1.appendChild(el('div','op-only',
+      `<div class="qt" style="border-left-color:var(--neg);font-style:normal;font-size:12.5px">
+        <b>Why:</b> ${esc(cov.failure)}${cov.remedy?`<div style="margin-top:6px"><b>What to do:</b> ${esc(cov.remedy)}</div>`:''}</div>`));
     const scoredN=(sc.scored!=null?sc.scored:s.totalAnalyzed), eligibleN=(sc.eligible!=null?sc.eligible:(v.total||0));
     g1.appendChild(kpiCard('Scored for sentiment',fmt(scoredN),
       eligibleN?`${Math.round(100*(scoredN||0)/eligibleN)}% of ${fmt(eligibleN)} mentions`:'not scored'));

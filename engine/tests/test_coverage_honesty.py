@@ -136,3 +136,27 @@ def test_a_report_with_no_assertions_says_so_plainly():
     with patch.object(verify, "extract_claims_batch", return_value={}):
         result = verify.verify_payload(None, None, {"executive_summary": "Some prose."})
     assert "no checkable factual assertions" in result["note"]
+
+
+# --- the why -----------------------------------------------------------------
+
+def test_a_total_failure_names_the_providers_error_not_the_breakers():
+    """A live scan read "All 14 passes over the corpus failed, so 507 mentions
+    were never read" and nothing else: the error of every pass was in hand
+    and thrown away, so the operator could not tell a spent account from a
+    retired model. The first error that is the provider's own is named, with
+    what to do — not the circuit breaker's "stopped asking" that follows it."""
+    from engine import llm
+
+    errors = iter([RuntimeError("HTTP 402: Insufficient credits")]
+                  + [llm.ProviderUnavailable("breaker open")] * 20)
+    coverage = _run(lambda *a, **k: (_ for _ in ()).throw(next(errors)))["coverage"]
+    assert "402" in coverage["failure"] and "ProviderUnavailable" not in coverage["failure"]
+    assert "out of credit" in coverage["remedy"]
+
+
+def test_the_why_is_the_operators():
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parents[2] / "web" / "pulse_app.html").read_text()
+    assert "if(cov.failure)g1.appendChild(el('div','op-only'" in html
