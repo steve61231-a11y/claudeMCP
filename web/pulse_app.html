@@ -2543,7 +2543,9 @@
   }
 
   /* ---- Issue Analysis & Mapping Framework V1.0 ---- */
-  function renderIssueFramework(out,fw){
+  function renderIssueFramework(out,fw,m){
+    m=m||{};
+    const it=m.intersection||{};
     if(!fw){out.appendChild(noteCard('Issue framework','Not present in this report.'));return;}
     resetSections();
 
@@ -2560,24 +2562,34 @@
     const s1=el('div','card');
     s1.appendChild(fwSection(null,'Background and context',
       `Outline, international and national approaches, timeline (${bg.controls?bg.controls.year_cutoff:10}-year cut-off)`));
-    // Each section carries its own resolved citations, so "[1]" becomes the
-    // article it came from rather than a footnote pointing at nothing.
-    [['Outline',bg.outline,bg.outline_citations],
-     ['International approach',bg.international,bg.international_citations],
-     ['National approach',bg.national,bg.national_citations]]
-      .forEach(([label,text,cites])=>{
-        s1.appendChild(el('div','lbl',label));
-        // "not yet established from the evidence" blamed the corpus for a
-        // section the model never wrote. Those are opposite findings.
-        s1.appendChild(text?prose(text,{cites:cites,lead:false})
-                           :fwEmpty(bg.unavailable||'not yet established from the evidence'));
-      });
-    s1.appendChild(el('div','lbl','Timeline of major developments'));
-    s1.appendChild(timelineChart(bg.timeline_of_major_developments||[]));
+    // The founder's layout: the outline is read first; each approach and the
+    // timeline is its own dropdown, named for what it holds, rather than a
+    // "The rest of it (2 paragraphs)" fold inside the one before it. Each
+    // carries its own resolved citations, so "[1]" becomes the article.
+    const whole=(text,cites)=>prose(text,{cites:cites,lead:false,open:Infinity});
+    s1.appendChild(el('div','lbl','Outline'));
+    s1.appendChild(bg.outline?whole(bg.outline,bg.outline_citations)
+                             :fwEmpty(bg.unavailable||'not yet established from the evidence'));
+    [['International approach',bg.international,bg.international_citations],
+     ['National approach',bg.national,bg.national_citations]].forEach(([label,text,cites])=>{
+      const f=foldBlock(label);
+      // "not yet established from the evidence" blamed the corpus for a
+      // section the model never wrote. Those are opposite findings.
+      f.appendChild(text?whole(text,cites):fwEmpty(bg.unavailable||'not yet established from the evidence'));
+      s1.appendChild(f);
+    });
+    if(it.involvement){
+      const f=foldBlock('Involvement',`how ${m.principal||'the principal'} is involved`);
+      f.appendChild(whole(it.involvement,it.involvement_citations));
+      s1.appendChild(f);
+    }
+    const tl=foldBlock('Timeline','major developments, oldest first');
+    tl.appendChild(timelineChart(bg.timeline_of_major_developments||[]));
     if(bg.controls){
-      s1.appendChild(el('div','row',`<span class="chip">${bg.controls.events_in_scope} in scope</span>
+      tl.appendChild(el('div','row',`<span class="chip">${bg.controls.events_in_scope} in scope</span>
         <span class="chip">${bg.controls.events_excluded_by_cutoff} excluded by ${bg.controls.year_cutoff}yr cut-off</span>`));
     }
+    s1.appendChild(tl);
     out.appendChild(s1);
 
     // 2 Main contours
@@ -2585,6 +2597,15 @@
     const s2=el('div','card');
     s2.appendChild(fwSection(null,'Main contours',
       `Narratives and positions — max ${mc.controls?mc.controls.max_stakeholders_per_segment:5} stakeholders per segment`));
+    // The main tension leads the contours, and the stakeholders below are
+    // mapped against it — the founder's note: "add the main tension section
+    // … here and then map the stakeholders according to that narrative".
+    if(it.tension_or_risk){
+      s2.appendChild(el('div','lbl','The main tension'));
+      s2.appendChild(prose(it.tension_or_risk,{cites:it.tension_or_risk_citations,lead:true,
+        foldTitle:'The rest of the tension'}));
+      s2.appendChild(el('div','lbl','Where the stakeholders stand on it'));
+    }
     const positions=mc.positions||{};
     const g2=el('div','grid');g2.style.gridTemplateColumns='repeat(auto-fit,minmax(220px,1fr))';
     [['for','For',TONE.positive],['against','Against',TONE.negative],['neutral','Neutral',TONE.neutral]]
@@ -2607,16 +2628,50 @@
         g2.appendChild(col);
       });
     s2.appendChild(g2);
+    // What the issue breaks into — each separate fight in its own dropdown.
+    const subs=(it.sub_issues||[]).filter(x=>x&&x.sub_issue);
+    if(subs.length){
+      s2.appendChild(el('div','lbl','Sub-issues'));
+      subs.forEach(x=>{
+        const f=foldBlock(x.sub_issue,x.root?'the root of it':'');
+        if(x.question)f.appendChild(el('div','muted',`<b>What is contested:</b> ${esc(x.question)}`));
+        if((x.actors||[]).length)f.appendChild(el('div','row',(x.actors||[]).map(a=>
+          `<span class="chip">${esc(a)}</span>`).join('')));
+        if(x.detail)f.appendChild(el('div','',`<div style="font-size:14px;margin-top:8px;white-space:pre-wrap">${
+          linkifyRefs(esc(x.detail),x.detail_citations)}</div>`));
+        s2.appendChild(f);
+      });
+    }
+    if(((it.media_set_aside)||[]).length){
+      s2.appendChild(el('div','muted chart-note op-only',
+        `Set aside as the press rather than stakeholders: ${it.media_set_aside.map(x=>esc(x.name)+' ('+esc(x.reason)+')').join(', ')}.`));
+    }
     out.appendChild(s2);
 
     // 2 Stakeholder networks (visualisation + hover profiles)
     const sn=fw.stakeholder_networks||{};
     const s2b=el('div','card');
-    s2b.appendChild(fwSection(null,'Stakeholder networks','Champions, challengers and neutrals — hover a node for the profile'));
+    s2b.appendChild(fwSection(null,'Stakeholder networks',m.issue_graph
+      ?'Champions, challengers and neutrals — click a node for its connections and evidence'
+      :'Champions, challengers and neutrals — hover a node for the profile'));
+    // The intersection-detail graph, with a ring marking champions, neutrals
+    // and challengers — the founder: "its much better, we just need to make
+    // sure it indicates who are champions, neutral, challengers".
+    const roles={};
+    [['for','for'],['against','against'],['neutral','neutral']].forEach(([key,role])=>
+      Object.values(((positions[key]||{}).segments)||{}).forEach(list=>
+        (list||[]).forEach(x=>{if(x&&x.name)roles[String(x.name).toLowerCase()]=role;})));
+    const graph=m.issue_graph?issueGraphCard(m.issue_graph,roles):null;
+    if(graph){
+      graph.style.cssText='margin:10px 0 0;padding:0;border:0;background:none';
+      s2b.appendChild(graph);
+      out.appendChild(s2b);
+    }
     const viz=sn.visualisation||{nodes:[],edges:[]};
     const profiles={};
     ['champions','challengers','neutral'].forEach(group=>(sn[group]||[]).forEach(s=>{profiles[s.name]=s;}));
-    s2b.appendChild(stakeholderMap(viz.nodes||[],viz.edges||[],{
+    // No graph for this map: the ring map of positions stands in.
+    if(!graph)s2b.appendChild(stakeholderMap(viz.nodes||[],viz.edges||[],{
       onHoverDetail:node=>{
         const p=profiles[node.id];
         if(!p||!p.profile)return '';
@@ -2633,7 +2688,7 @@
         alertProfile(p);
       },
     }));
-    out.appendChild(s2b);
+    if(!graph)out.appendChild(s2b);
 
     // INPUT 2
     const i2=el('div','card');
@@ -2647,12 +2702,44 @@
     const sr=fw.strategic_recommendations||{};
     const s4=el('div','card glow');
     s4.appendChild(fwSection(null,'Strategic recommendations','Baseline probability, messaging, and who to engage'));
+    // The founder: "I like the baseline prob section, we need to show our
+    // workings with a probability tree". Where the scenarios were modelled,
+    // the bars ARE the tree summed (reports/scenarios.baseline) and the
+    // tree is drawn beneath them; otherwise the influence-weighted baseline
+    // stands, labelled as what it is.
+    const sc=m.scenarios||{};
+    const sp=sc.state==='modelled'?scenarioParts(sc):{};
     s4.appendChild(el('div','lbl','Baseline probability of outcomes'));
-    s4.appendChild(probabilityBars(sr.probability_tree||{}));
-    if((sr.probability_tree||{}).major_variables){
+    if(sc.baseline&&sp.tree){
+      s4.appendChild(probabilityBars({baseline:sc.baseline}));
+      s4.appendChild(el('div','muted chart-note',`The sum of the paths in the tree below on which each outcome holds${
+        sc.desired_outcome?' — measured against the desired outcome above':''}. ${esc(sc.basis||'')}`));
+      const w=foldBlock('Our workings: the probability tree','each path, and the outcome it ends in');
+      w.setAttribute('open','');
+      w.appendChild(sp.tree);
+      s4.appendChild(w);
+    }else{
+      s4.appendChild(probabilityBars(sr.probability_tree||{}));
+      if(sp.tree){const w=foldBlock('The probability tree');w.appendChild(sp.tree);s4.appendChild(w);}
+    }
+    if(sp.drivers){
+      s4.appendChild(el('div','lbl','Major variables at play'));
+      s4.appendChild(sp.drivers);
+    }else if((sr.probability_tree||{}).major_variables){
       s4.appendChild(el('div','lbl','Major variables at play'));
       s4.appendChild(el('ul','muted','<li>'+sr.probability_tree.major_variables.map(esc).join('</li><li>')+'</li>'));
     }
+    if(sp.scenarios){
+      s4.appendChild(el('div','lbl','Scenarios'));
+      s4.appendChild(sp.scenarios);
+    }
+    if(sp.recommendations){
+      s4.appendChild(el('div','lbl','Recommendations'));
+      s4.appendChild(sp.recommendations);
+    }
+    if(sc.state&&sc.state!=='modelled')s4.appendChild(el('div','muted chart-note op-only',
+      'Scenarios were not modelled: '+esc(sc.reason||'no reason was recorded')));
+    if(sp.removed)s4.appendChild(sp.removed);
     s4.appendChild(el('div','lbl','Recommended messaging / positioning'));
     s4.appendChild(el('div','muted',esc(sr.recommended_messaging||'')));
     const g4=el('div','grid');g4.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';g4.style.marginTop='14px';
@@ -2678,8 +2765,19 @@
     const sq=fw.sequencing||{};
     const s5=el('div','card');
     s5.appendChild(fwSection(null,'Sequencing','When to engage, and when to build coalitions'));
-    s5.appendChild(el('div','lbl','Engagement timeline'));
-    s5.appendChild(timelineChart(sq.engagement_timeline||[]));
+    const stated=(sq.engagement_timeline||[]).filter(x=>x&&x.source==='stated');
+    if(stated.length){
+      s5.appendChild(el('div','lbl','Dates ahead, as the sources state them'));
+      stated.forEach(x=>s5.appendChild(el('div','mentr',`<b style="font-size:14px;color:var(--sky2)">${esc(ukDate(x.date))}</b>
+        <div style="font-size:14px;margin-top:4px">“${esc(x.event||'')}”</div>
+        <div class="muted" style="font-size:12px;margin-top:4px">${esc(x.publisher||'')}${x.printed?' · printed '+esc(ukDate(x.printed)):''}${
+          x.url?` · <a class="src-link" href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">source ↗</a>`:''}</div>`)));
+    }
+    const record=(sq.engagement_timeline||[]).filter(x=>x&&x.source!=='stated');
+    if(record.length||!stated.length){
+      s5.appendChild(el('div','lbl','Engagement timeline'));
+      s5.appendChild(timelineChart(record));
+    }
     if((sq.coalition_windows||[]).length){
       s5.appendChild(el('div','lbl','Coalition windows'));
       (sq.coalition_windows||[]).forEach(w=>s5.appendChild(el('div','mentr',
@@ -5316,7 +5414,7 @@
     const form=el('div','card glow');
     form.innerHTML=`<div class="grid" style="grid-template-columns:1fr 1fr 120px;gap:12px">
       <div><label class="fl">Principal</label><input id="pr" placeholder="William Ruto"></div>
-      <div><label class="fl">Issue / institution</label><input id="is" placeholder="SHA"></div>
+      <div><label class="fl">Issue</label><input id="is" placeholder="SHA"></div>
       <div><label class="fl">Look-back (days)</label><input id="dy" value="365" inputmode="numeric"></div></div>
       <div style="margin-top:12px"><label class="fl">Desired outcome (optional — INPUT 2)</label>
         <input id="do" placeholder="e.g. a softer levy regime"></div>
@@ -5456,7 +5554,10 @@
   //: a thin result comes to look like an analytical one.
   const GRAPH_MIN_NODES=6, GRAPH_MIN_EDGES=5;
 
-  function issueGraphCard(g){
+  //: The ring a stakeholder's position draws round its node in the graph.
+  const ROLE_RING={for:['var(--pos)','champion'],against:['var(--neg)','challenger'],neutral:['var(--neu)','neutral']};
+  function issueGraphCard(g,roles){
+    roles=roles||{};
     resetGraphSelection();
     if(!g||!(g.nodes||[]).length)return null;
     const st=g.stats||{};
@@ -5494,6 +5595,9 @@
       filters.appendChild(b);
     });
     card.appendChild(filters);
+    if(Object.keys(roles).length)card.appendChild(el('div','muted',`<div style="font-size:12px;margin-top:8px">Ring:
+      <span style="color:var(--pos)">◯ champion</span> · <span style="color:var(--neg)">◯ challenger</span> ·
+      <span style="color:var(--neu)">◯ neutral</span> — each stakeholder's position on the issue.</div>`));
 
     const W=860,H=460;
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
@@ -5554,12 +5658,14 @@
         const p=pos[n.id];if(!p)return;
         const lit=!sel||near.has(n.id);
         const r=n.type==='principal'||n.type==='issue'?15:Math.min(13,7+(n.weight||1));
+        const role=ROLE_RING[roles[String(n.label).toLowerCase()]];
         parts.push(`<g class="gnode" data-id="${n.id}" style="cursor:pointer;opacity:${lit?1:.2}">
+          ${role?`<circle cx="${p.x}" cy="${p.y}" r="${r+5}" fill="none" stroke="${role[0]}" stroke-width="3"/>`:''}
           <circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${n.color}"
             stroke="${sel===n.id?'#fff':'rgba(0,0,0,.35)'}" stroke-width="${sel===n.id?3:1.5}"/>
           <text x="${p.x}" y="${p.y-r-6}" text-anchor="middle" font-size="11"
             fill="rgba(226,232,240,.92)">${esc(String(n.label).slice(0,26))}</text>
-          <title>${esc(n.type)}: ${esc(n.label)}</title></g>`);
+          <title>${esc(n.type)}: ${esc(n.label)}${role?' · '+role[1]:''}</title></g>`);
       });
       parts.push('</g>');
       svg.innerHTML=parts.join('');
@@ -5713,7 +5819,7 @@
     if(m.intersection_gap){
       const c=el('div','card');
       c.style.cssText='border-color:var(--amber);background:rgba(251,191,36,.06)';
-      c.innerHTML=`<div class="lbl" style="color:var(--amber)">The record does not connect these two</div>
+      c.innerHTML=`<div class="lbl" style="color:var(--amber)">No direct link in the sources</div>
         <div style="font-size:14px;margin-top:8px">${esc(m.intersection_gap.note)}</div>
         <div class="muted" style="font-size:12.5px;margin-top:6px">${fmt(m.intersection_gap.read)} documents read.</div>`;
       host.appendChild(c);
@@ -6131,19 +6237,12 @@
     box.innerHTML=`<svg role="img" aria-label="Probability tree" width="${width}" height="${height+16}" viewBox="0 0 ${width} ${height+16}" style="font-family:var(--sans);display:block">${svg}</svg>`;
     return box;
   }
-  function renderScenarios(sc,m){
-    if(!sc)return null;
-    if(sc.state!=='modelled'){
-      const c=deepCard('Scenarios','Not modelled this time');
-      c.classList.add('op-only');
-      c.appendChild(el('div','muted',esc(sc.reason||'no reason was recorded')));
-      return c;
-    }
-    const c=deepCard('Scenarios',`How ${m.principal||''} × ${m.issue||''} could unfold — risk drivers, a probability tree and three scenarios, each resting on the record`,{open:true});
-    c.appendChild(el('div','muted chart-note',esc(sc.basis||'')));
+  /** The scenario section's parts, placed by the framework's section 4. */
+  function scenarioParts(sc){
+    const parts={};
     const rows=(sc.scenarios||[]);
     if(rows.length){
-      const grid=el('div','');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:10px';
+      const grid=el('div','');grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:8px';
       rows.forEach(r=>{
         const tone=SCEN_TONE[r.tier]||'var(--mut)';
         const card=el('div','mentr');card.style.cssText=`border-left:3px solid ${tone};margin:0`;
@@ -6156,23 +6255,23 @@
             `<div class="lbl" style="margin-top:10px">${k}</div><ul style="font-size:13.5px;margin:2px 0 0 16px;line-height:1.5">${citedLines(v)}</ul>`).join('')}`;
         grid.appendChild(card);
       });
-      c.appendChild(grid);
+      parts.scenarios=grid;
     }
     const tree=scenarioTree(sc.tree);
     if(tree){
-      const f=foldBlock('The probability tree','each branch is a judgement; each path is the product of its branches');
-      f.appendChild(tree);
-      f.appendChild(el('div','muted chart-note',`Colour follows the scenario a path belongs to: <span style="color:var(--pos)">most likely</span>, <span style="color:var(--amber)">credible alternative</span>, <span style="color:var(--sky2)">outlier</span>. Dashed lines are intervening steps.`));
-      c.appendChild(f);
+      const box=el('div','');
+      box.appendChild(tree);
+      box.appendChild(el('div','muted chart-note',`Each branch is a judgement on the findings cited; each path's figure is the product of its branches, recomputed by the engine. Colour follows the scenario a path belongs to: <span style="color:var(--pos)">most likely</span>, <span style="color:var(--amber)">credible alternative</span>, <span style="color:var(--sky2)">outlier</span>. Dashed lines are intervening steps.`));
+      parts.tree=box;
     }else if(sc.tree_withheld){
-      c.appendChild(el('div','muted chart-note op-only','The tree was withheld: '+esc(sc.tree_withheld)));
+      parts.tree=el('div','muted chart-note op-only','The tree was withheld: '+esc(sc.tree_withheld));
     }
     const drivers=(sc.drivers||[]);
     if(drivers.length){
-      const f=foldBlock('Risk drivers',`${drivers.length} force${drivers.length===1?'':'s'}, and how ${drivers.length===1?'it reads':'each reads'} now`);
+      const box=el('div','');
       drivers.forEach(d=>{
         const [cls,word]=DIR_PILL[d.direction]||DIR_PILL.unclear;
-        f.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+        box.appendChild(el('div','mentr',`<div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
             <span><span class="chip">${esc(d.category||'')}</span> <b style="font-size:14.5px">${esc(d.driver||'')}</b></span>
             <span class="pill ${cls}">${esc(word)}</span></div>
           ${d.definition?`<div style="font-size:13.5px;margin-top:6px"><span class="lbl">Definition</span> ${esc(d.definition)}</div>`:''}
@@ -6180,7 +6279,15 @@
           <div style="font-size:13.5px;margin-top:4px"><span class="lbl">Now</span> ${linkifyRefs(esc(d.reading||''),d.reading_citations)}</div>
           <div class="muted" style="font-size:12px;margin-top:4px">${esc(d.strength_label||'')}</div>`));
       });
-      c.appendChild(f);
+      parts.drivers=box;
+    }
+    const recs=(sc.recommendations||[]);
+    if(recs.length){
+      const box=el('div','');
+      recs.forEach((r,i)=>box.appendChild(el('div','mentr',`<div style="font-size:14.5px;font-weight:600">${i+1}. ${esc(r.action||'')}</div>
+        ${r.who||r.timing?`<div class="row" style="margin-top:6px;gap:6px;flex-wrap:wrap">${r.who?`<span class="chip">Engage: ${esc(r.who)}</span>`:''}${r.timing?`<span class="chip">When: ${esc(r.timing)}</span>`:''}</div>`:''}
+        ${r.rationale?`<div style="font-size:13.5px;margin-top:6px">${linkifyRefs(esc(r.rationale),r.rationale_citations)}</div>`:''}`)));
+      parts.recommendations=box;
     }
     const removed=((sc.check||{}).removed||[]);
     if(removed.length){
@@ -6188,9 +6295,9 @@
       f.classList.add('op-only');
       removed.forEach(x=>f.appendChild(el('div','mentr',`<div style="font-size:13px">${esc(x.sentence||'')}</div>
         <div class="muted" style="font-size:12px;margin-top:3px">${esc(x.part||'')}: ${esc(x.reason||'')}</div>`)));
-      c.appendChild(f);
+      parts.removed=f;
     }
-    return c;
+    return parts;
   }
 
   function renderIssue(out,m){
@@ -6237,7 +6344,7 @@
 
     const head=el('div','card glow');
     head.innerHTML=`<div class="eyebrow">${esc(m.principal)} × ${esc(m.issue)}</div>
-      <div class="hero-one" style="margin-top:10px">${esc((m.intersection||{}).verdict||'')}</div>
+      <div class="hero-one" style="margin-top:10px;font-size:17px;line-height:1.55;font-weight:500">${esc((m.intersection||{}).verdict||'')}</div>
       ${(()=>{
         // The verdict is the analyst's reading. Beside it, what the record
         // counts — so a verdict the record does not support never stands
@@ -6245,8 +6352,13 @@
         const cr=m.connection_record||{};
         if(cr.state!=='measured')return '';
         const n=(cr.counts||{}).findings||0;
-        return n?`<div class="row" style="margin-top:10px"><span class="pill pos">On the record: ${fmt(n)} verified statement${n===1?'':'s'} name both</span></div>`
-          :`<div class="row" style="margin-top:10px"><span class="pill amber">Not established on the record — see below</span></div>`;
+        // Which absence it is, in words: named together but never linked is
+        // a different finding from never named together at all.
+        const co=cr.co_mentioned||0;
+        return n?`<div class="row" style="margin-top:10px"><span class="pill pos">Direct link on the record: ${fmt(n)} verified statement${n===1?'':'s'} name both</span></div>`
+          :`<div class="row" style="margin-top:10px"><span class="pill amber">${co
+            ?`No direct link stated — both named in ${fmt(co)} source${co===1?'':'s'}, never linked in words`
+            :'No direct link stated — no source names both'}</span></div>`;
       })()}
       <div class="row" style="margin-top:12px">${(()=>{
         const cv=m.coverage||{};
@@ -6267,10 +6379,6 @@
     // the map's first answer and it does not depend on which tab is open.
     const conn=renderConnection(m.connection_record,m);
     if(conn)out.appendChild(conn);
-    const sd=renderSearchDemand(m.search_demand);
-    if(sd)out.appendChild(sd);
-    const scen=renderScenarios(m.scenarios,m);
-    if(scen)out.appendChild(scen);
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
         +'&issue='+encodeURIComponent(m.issue||''),
@@ -6281,7 +6389,7 @@
     // analysis it was built from. Both are produced on every run, so both are
     // reachable — one click apart, rather than one of them thrown away.
     const modes=[];
-    if(m.issue_framework)modes.push(['framework','Issue Framework',host=>renderIssueFramework(host,m.issue_framework)]);
+    if(m.issue_framework)modes.push(['framework','Issue Framework',host=>renderIssueFramework(host,m.issue_framework,m)]);
     modes.push(['detail','Intersection detail',host=>{
       intersectionDetail(host,m); layerIssueMap(host);
     }]);

@@ -9,8 +9,9 @@ to the IMF loan" is an allegation unless something on the record says it.
 Now the map opens with every verified statement naming both the principal
 and the issue: the sources' words, independent origins counted, allegations
 kept as allegations, dated by first publication. Its lead line is
-arithmetic. "Not established on the record" is said in words; a record that
-could not be read is the operator's, never "no connection".
+arithmetic. No link is said in words — and which absence it is: named together
+but never linked, or never named together. A record that could not be read is
+the operator's, never "no connection".
 """
 
 from datetime import datetime
@@ -74,8 +75,12 @@ def test_every_number_in_the_lead_was_counted():
 def test_no_connection_on_the_record_is_said_in_words():
     out = connection.build(FINDINGS[3:], "Okiya Omtatah", "IMF")
     assert out["findings"] == []
-    assert "not established on the record" in out["lead"]
-    assert "1 finding(s) about Okiya Omtatah" in out["lead"]
+    assert out["lead"].startswith("No direct link is stated")
+    assert "no source read names both" in out["lead"]
+    assert "1 verified statement(s) about Okiya Omtatah" in out["lead"]
+    named_together = connection.build(FINDINGS[3:], "Okiya Omtatah", "IMF", co_mentioned=4)
+    assert "4 source(s) name both" in named_together["lead"] and "not linked" in named_together["lead"], \
+        "the founder's nuance: named together but never linked in words is its own finding"
 
 
 def test_a_record_that_could_not_be_read_is_not_no_connection():
@@ -133,21 +138,6 @@ def test_the_map_reads_its_stored_sources_for_the_connection(db_session, monkeyp
     assert out["findings"][0]["sources"][0]["quote"] == records[0]["quote"]
 
 
-def test_search_demand_asks_the_pair_together(monkeypatch):
-    from engine.config import settings
-    from engine.evidence import search_demand
-    from engine.reports import issue_map as im
-
-    asked = {}
-    monkeypatch.setattr(settings, "enable_search_demand", True)
-    monkeypatch.setattr(search_demand, "gather",
-                        lambda *a, **k: asked.update(k) or {"KE": {}, "": {}, "suggestions": {}, "wikipedia": {}})
-    future = im._start_search_demand("Okiya Omtatah", "IMF", datetime(2026, 1, 1), datetime(2026, 10, 24))
-    out = im._finish_search_demand(future, "Okiya Omtatah", datetime(2026, 1, 1), datetime(2026, 10, 24), [], [])
-    assert asked["keywords"] == ["Okiya Omtatah", "IMF"], "IMF is three letters; it must not be dropped"
-    assert out["state"] == "not_measured"
-
-
 def test_the_page_opens_the_map_with_the_connection_and_keeps_failures_for_the_operator():
     html = (Path(__file__).resolve().parents[2] / "web" / "pulse_app.html").read_text()
     at = html.index("function renderConnection(")
@@ -157,4 +147,36 @@ def test_the_page_opens_the_map_with_the_connection_and_keeps_failures_for_the_o
     issue = html[html.index("function renderIssue(out,m){"):]
     assert issue.index("renderConnection(m.connection_record,m)") < issue.index("const modes=[]"), \
         "the connection is the map's first answer, above the tabs"
-    assert "Not established on the record" in issue[:6000]
+    head = issue[:6000]
+    assert "No direct link stated — both named in" in head and "No direct link stated — no source names both" in head, \
+        "the founder's nuance: which absence it is, in words"
+    assert "renderSearchDemand" not in issue[:issue.index("const modes=[]")], "no search section on the map"
+
+
+LONG_ISSUE = "Kenyan Court stopping the Kenyan government's sale of its Safaricom shares to Vodacom"
+
+
+@pytest.mark.parametrize("statement,expected", [
+    ("The High Court nullified the Kenyan government's sale of its Safaricom shares to Vodacom.", True),
+    ("The Court of Appeal rejected President Ruto's appeal over the Safaricom shares sale.", True),
+    ("Safaricom posted record profits.", False),
+    ("Ruto toured the court.", False),
+])
+def test_an_issue_written_as_a_sentence_matches_on_most_of_its_words(statement, expected):
+    """A live map on "Kenya Government" × that sentence said "not established
+    on the record" over the very ruling it was about: every distinctive word
+    had to appear, and no source says "stopping"."""
+    assert connection.about_issue(statement, LONG_ISSUE) is expected
+
+
+def test_the_corpus_pools_use_the_same_rule():
+    """The map's "no document names both" banner came from a second matcher
+    — a whole-phrase substring — with the same defect."""
+    from engine.reports import relevance
+
+    doc = {"text": "Kenya government loses: the High Court nullified the sale of its Safaricom shares to Vodacom."}
+    pools, _ = relevance.partition_corpus([doc], ["Kenya Government", "government"], [LONG_ISSUE], False)
+    assert len(pools[relevance.POOL_CORE]) == 1
+    unrelated = {"text": "The government spoke on Safaricom's results."}
+    pools, _ = relevance.partition_corpus([unrelated], ["government"], [LONG_ISSUE], False)
+    assert not pools[relevance.POOL_CORE], "one shared word is not the issue"

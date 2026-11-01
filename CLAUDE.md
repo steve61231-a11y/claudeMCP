@@ -362,11 +362,24 @@ arithmetic. None says "not established on the record" in words; a record
 that could not be read (`state: not_measured`, e.g. sources the map never
 stored) is the operator's and never reads as "no connection". The map
 reads its stored sources beside the analysts (`_start_connection_reading`
-/ `_finish_connection`), asks search demand for the PAIR in one request
-(`keywords=[principal, issue]` — the alias rule drops anything under four
-letters, which would have lost "IMF"), and the page puts the record's
-count beside the model's verdict so an unsupported verdict never stands
-alone at the top of the file.
+/ `_finish_connection`), and the page puts the record's count beside the
+model's verdict so an unsupported verdict never stands alone at the top of
+the file. Where no statement links them, the lead says WHICH absence:
+named together in N sources but never linked in words, or never named
+together (`co_mentioned`, from the corpus's `core` pool). The verdict is
+the firm's reading and opens "Our analysis indicates" (`our_analysis`).
+An issue written as a sentence ("Kenyan Court stopping the Kenyan
+government's sale of its Safaricom shares to Vodacom") matches on most of
+its distinctive words, not all (`about_issue`, and `relevance.
+mentions_issue` for the pools): no source says "stopping", so requiring
+every word reported "not established" over the very ruling the map was
+about. The map has no search section (founder, 1 Nov); the Search report
+keeps it. Stakeholders are institutions and individuals —
+`issue_framework.without_media` sets the press and commenters aside,
+declared, unless they are a party. Sequencing reads dates AHEAD that a
+source states (`evidence/upcoming.py`, no model: a calendar date after
+today in a sentence naming a hearing, sitting, ruling or deadline, cited),
+and a reaction is never a decision point.
 
 **A scenario's probability is arithmetic over a judgement, and the page
 recomputes it.** The client's model for the Issue Map's scenario section is
@@ -386,7 +399,11 @@ of those computed figures (the example paper headlines 45% over a branch
 reading 40%). A tree label naming someone off the record withdraws the
 whole tree. No finding naming both principal and issue, or fewer than
 three about the principal, and nothing is modelled — a scenario tree over
-no evidence is the most persuasive form of invention.
+no evidence is the most persuasive form of invention. It is oriented to the
+client's desired outcome: every end node says whether it prevails, and the
+framework's baseline bars are those paths SUMMED (`scenarios.baseline`),
+the tree drawn beneath as the workings. Recommendations name only who the
+record names and cite why (`check_recommendations`).
 
 **A crash for memory leaves no ledger, so the engine must say it first.**
 Railway's whole report of it was an email — "ran out of memory and

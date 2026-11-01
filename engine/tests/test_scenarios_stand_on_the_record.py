@@ -140,15 +140,54 @@ def test_a_tree_label_naming_someone_off_the_record_withdraws_the_tree(monkeypat
     assert out["drivers"], "the drivers stand without the tree"
 
 
-def test_the_page_draws_it_and_keeps_the_failures_for_the_operator():
+def test_the_page_draws_it_in_the_framework_and_keeps_the_failures_for_the_operator():
+    """The founder put scenarios in Strategic recommendations: "we need to
+    show our workings with a probability tree". So the baseline bars are the
+    tree summed, and the tree is drawn beneath them."""
     html = (Path(__file__).resolve().parents[2] / "web" / "pulse_app.html").read_text()
-    body = html[html.index("function renderScenarios("):]
-    assert "c.classList.add('op-only')" in body[:400]
-    assert "scenarioTree(sc.tree)" in body and "linkifyRefs(esc(d.reading" in body
-    issue = html[html.index("function renderIssue(out,m){"):]
-    assert issue.index("renderScenarios(m.scenarios,m)") < issue.index("const modes=[]")
+    parts = html[html.index("function scenarioParts("):]
+    assert "scenarioTree(sc.tree)" in parts and "linkifyRefs(esc(d.reading" in parts
+    assert "f.classList.add('op-only')" in parts[:6000]
+    fw = html[html.index("function renderIssueFramework("):]
+    s4 = fw[fw.index("// 4 Strategic recommendations"):fw.index("// 5 Sequencing")]
+    assert "probabilityBars({baseline:sc.baseline})" in s4 and "Our workings: the probability tree" in s4
+    assert "Major variables at play" in s4 and "Recommendations" in s4
     src = (Path(__file__).resolve().parents[1] / "reports" / "issue_map.py").read_text()
     assert 'payload["connection_record"].pop("_principal_findings", None)' in src, \
         "the principal's whole record never reaches the stored payload"
     assert 'protected_terms.redact(payload["scenarios"], mentions)' in src, \
         "the identity rule covers the scenarios as it covers the analysts"
+
+
+def test_the_baseline_is_the_tree_summed_so_the_workings_show():
+    """The founder: "I like the baseline prob section, we need to show our
+    workings with a probability tree." So the bars ARE the tree: the end
+    nodes where the desired outcome prevails, summed."""
+    tagged = [dict(n) for n in TREE]
+    outcome = {"n3": "opposed", "n4": "desired", "n5": "undetermined"}
+    for n in tagged:
+        if n["id"] in outcome:
+            n["outcome"] = outcome[n["id"]]
+    tree, _ = scenarios.validate_tree(tagged)
+    base, problem = scenarios.baseline(tree)
+    assert problem is None
+    assert (base["desired_outcome_prevails"], base["opposed_outcome_prevails"], base["undetermined"]) == (18.0, 40.0, 42.0)
+    assert [w["path"] for w in base["workings"]][0] == "Loan proceeds under review"
+    untagged, _ = scenarios.validate_tree(TREE)
+    assert scenarios.baseline(untagged)[0] is None, "an end node that does not say which way it falls is no baseline"
+
+
+def test_advice_names_only_who_the_record_names_and_cites_it():
+    recs = [
+        {"action": "Brief the petitioner's counsel before the hearing", "who": "Okiya Omtatah",
+         "when": "before the High Court hearing", "rationale": "Omtatah petitioned the High Court over the IMF loan.",
+         "facts": ["F1"]},
+        {"action": "Lobby Senator Edwin Sifuna", "who": "Edwin Sifuna", "facts": ["F1"]},
+        {"action": "Issue a statement", "rationale": "It helps."},
+    ]
+    ledger = scenarios.ledger_for(LINKED, OTHERS)
+    kept, removed = scenarios.check_recommendations(recs, ledger, "Okiya Omtatah")
+    assert [r["action"] for r in kept] == ["Brief the petitioner's counsel before the hearing"]
+    assert kept[0]["rationale_citations"]
+    reasons = " | ".join(r["reason"] for r in removed)
+    assert "Edwin Sifuna" in reasons and "cites nothing" in reasons

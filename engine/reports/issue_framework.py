@@ -31,6 +31,7 @@ Structure:
                                   how to read it. Weak spots are disclosed.
 """
 
+import re
 from datetime import datetime, timedelta
 
 # Framework-stated controls. Named constants because they ARE the framework —
@@ -386,7 +387,64 @@ def build_strategic_recommendations(desired: dict, contours: dict, stakeholders:
     }
 
 
-def build_sequencing(background: dict, now: datetime | None = None) -> dict:
+#: A reaction is not a decision point. The look-back windows below were built
+#: from the newest dated items, and on a live map those were YouTube
+#: comments — "Move while this is still live: A YouTube commenter…".
+_REACTION = re.compile(r"\b(comment(?:er|ed|s)?|viewer|reply|replied|reacted|emoji)\b", re.I)
+
+
+#: Words that make an actor the PRESS rather than a stakeholder. The founder,
+#: on a live map whose challengers were "@Kenyan Daily Report Tv",
+#: "@MWANAKENYA MEDIA" and two YouTube commenters: "No need for media
+#: outlets, just institutional and individual stakeholders."
+_MEDIA_NAME = re.compile(r"\b(tv|television|radio|fm|news|media|daily|channel|newspaper|blog|"
+                         r"podcast|digital|times|standard|nation|star|citizen|gazette)\b", re.I)
+_MEDIA_RELATION = re.compile(r"\b(youtube (?:channel|commenter|user|account)|commenter|"
+                             r"(?:news|media) outlet|broadcaster|newspaper|tv station|"
+                             r"news channel|blogger|vlogger|influencer account)\b", re.I)
+
+
+def is_media_actor(actor: dict) -> str | None:
+    """Why this actor is the press and not a stakeholder, or None. A party
+    to the issue stays, whatever its trade: a broadcaster that was itself
+    sued is a stakeholder in that suit, which `relation` will say."""
+    from engine.reports import outlets
+
+    name = str(actor.get("name") or "").strip()
+    relation = str(actor.get("relation") or "")
+    if not name:
+        return None
+    if re.search(r"\b(sued|petition(?:ed|er)|respondent|regulated|licen[cs]e|fined|contract(?:ed|or))\b",
+                 relation, re.I):
+        return None
+    if name.startswith("@"):
+        return "a social media account"
+    key = re.sub(r"[^a-z0-9]", "", name.lower())
+    if key in outlets.KENYAN_NAMES or key in outlets.INTERNATIONAL_NAMES:
+        return "a news outlet"
+    if str(actor.get("entity_type") or "").lower() in ("media", "outlet", "channel"):
+        return "a media outlet"
+    if _MEDIA_RELATION.search(relation):
+        return "described as the press or a commenter"
+    if _MEDIA_NAME.search(name) and not re.search(r"\b(ministry|commission|authority|court|council|"
+                                                   r"government|board|agency|department)\b", name, re.I):
+        return "named as a media outlet"
+    return None
+
+
+def without_media(actors: list[dict]) -> tuple[list[dict], list[dict]]:
+    kept, removed = [], []
+    for actor in actors or []:
+        why = is_media_actor(actor) if isinstance(actor, dict) else None
+        if why:
+            removed.append({"name": actor.get("name"), "reason": why})
+        else:
+            kept.append(actor)
+    return kept, removed
+
+
+def build_sequencing(background: dict, now: datetime | None = None,
+                     upcoming: list[dict] | None = None) -> dict:
     """5 — engagement timeline, including when to build coalitions.
 
     The framework's emphasis: coalition-building happens BEFORE the dates that
@@ -396,7 +454,10 @@ def build_sequencing(background: dict, now: datetime | None = None) -> dict:
     dated = [item for item in background.get("timeline_of_major_developments", [])
              if item.get("date")]
     today = reference.date().isoformat()
-    upcoming = [item for item in dated if item["date"] >= today]
+    stated = [dict(item, source="stated") for item in upcoming or [] if item.get("date", "") > today]
+    ahead = sorted(stated + [item for item in dated if item["date"] >= today],
+                   key=lambda item: item["date"])
+    upcoming = ahead
 
     if upcoming:
         return {
@@ -410,8 +471,9 @@ def build_sequencing(background: dict, now: datetime | None = None) -> dict:
                 for item in upcoming[:5]
             ],
             "looking": "forward",
-            "note": ("Derived from dated developments in the record; policy calendars "
-                     "supplied by the client should be merged in."),
+            "note": ("Dates a source states ahead of today (each cited, in its own words) and "
+                     "dated developments in the record; policy calendars supplied by the client "
+                     "should be merged in."),
         }
 
     # Nothing ahead of today. This is the ordinary case, not the exception: an
@@ -420,6 +482,7 @@ def build_sequencing(background: dict, now: datetime | None = None) -> dict:
     # Where the sequence stands is a real answer; "no engagement timeline" is
     # not, and reads as a failure of the analysis rather than of the calendar.
     recent = dated[-5:][::-1]
+    decisions = [item for item in recent if not _REACTION.search(str(item.get("event") or ""))]
     return {
         "engagement_timeline": recent,
         "coalition_windows": [
@@ -429,12 +492,13 @@ def build_sequencing(background: dict, now: datetime | None = None) -> dict:
                 "rationale": ("The most recent decision point in the record. Alignment built "
                               "now lands before the next one, which is not yet public."),
             }
-            for item in recent[:3]
+            for item in decisions[:3]
         ],
         "looking": "backward",
-        "note": ("No development in this window is dated ahead of today, so this is where the "
-                 "sequence has reached rather than what is scheduled next. Forward dates come "
-                 "from policy calendars the client supplies."
+        "note": ("No source collected states a date ahead of today — no hearing, sitting or "
+                 "deadline — and no development in this window is dated ahead of today, so this "
+                 "is where the sequence has reached rather than what is scheduled next. Forward "
+                 "dates come from policy calendars the client supplies."
                  if dated else
                  "No development in the record carries a date, so no sequence can be built "
                  "from it. Dates are what this section is made of."),
@@ -544,6 +608,6 @@ def build(issue: str, principal: str, payload: dict, stakeholders: list[dict],
         "stakeholder_networks": networks,
         "input_2_desired_outcome": desired,
         "strategic_recommendations": build_strategic_recommendations(desired, contours, stakeholders),
-        "sequencing": build_sequencing(background, now=now),
+        "sequencing": build_sequencing(background, now=now, upcoming=payload.get("upcoming")),
         "data_overview": build_data_overview(payload, stakeholders, events),
     }

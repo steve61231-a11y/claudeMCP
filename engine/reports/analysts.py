@@ -827,7 +827,7 @@ Your section: {principal}'s POSITION on {issue}, and where it exposes them.
 
 - involvement: what is {principal}'s actual role, stance, action or exposure? Say which (supporter/architect/critic/implicated/absent) and then evidence it. **300-600 words** covering what they have done, what they have said, how their position has moved over time, and where the record is contested.
 - tension_or_risk: where {principal} is exposed, contradicted, or where the narratives conflict. **200-400 words**, naming the specific contradictions rather than gesturing at them.
-- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines. **150-300 words.**
+- verdict: the single clearest read of how {principal} and {issue} are actually connected, beneath the headlines. **150-300 words.** Open with "Our analysis indicates" — it is this firm's reading, and a client must be able to tell it from a statement the sources made.
 
 If the digest genuinely is thin, say so in `verdict` and return what it supports — but check that it is thin rather than assuming it.""" + ISSUE_DIGEST_TAIL + """
 Respond with ONLY this JSON:
@@ -838,9 +838,11 @@ ISSUE_ACTORS_PROMPT = ISSUE_PREAMBLE + """
 
 Your section: EVERY actor at this intersection.
 
-List every person, organisation, agency, company, outlet, court, committee or bloc that appears in connection with {principal} and {issue} — typically **15-40** when the digest is substantial, and more if it supports more. Include the obvious principals AND the officials, regulators, contractors, county figures, MPs, critics, litigants, unions, journalists and commentators who appear even briefly. An actor the digest names and you omit is gone from the analysis.
+List every person, organisation, agency, company, court, committee or bloc that appears in connection with {principal} and {issue} — typically **15-40** when the digest is substantial, and more if it supports more. Include the obvious principals AND the officials, regulators, contractors, county figures, MPs, critics, litigants and unions who appear even briefly. An actor the digest names and you omit is gone from the analysis.
 
 For each:
+A STAKEHOLDER is an institution or an individual with a stake in the outcome — not the press that reported it. Leave out news outlets, TV and YouTube channels, bloggers and commenters unless they are themselves a party to the issue (sued, regulated, contracted).
+
 - name
 - relation: **40-120 words** on what they actually did or said here — not a job title. What position did they take, when, against whom, and with what effect?
 - entity_type: person / organization / company

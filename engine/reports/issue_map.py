@@ -17,6 +17,7 @@ map degrades gracefully; it lights up on deploy. Callers may inject `mentions`
 directly (used by tests and by callers that already hold an intersection corpus).
 """
 
+import re
 import traceback
 from datetime import datetime, timedelta
 
@@ -494,7 +495,6 @@ def build_issue_map(
     # now and read beside the analysts: network and model calls only, no
     # database held across them.
     connection_job = _start_connection_reading(acquisition, principal, mentions)
-    search_job = _start_search_demand(principal, issue, ws, we)
     digest = build_corpus_digest(label, mentions)
     publish("coverage", digest["coverage"])
     # Four analysts run at once; each publishes the map as it stands the moment
@@ -510,6 +510,11 @@ def build_issue_map(
     # and everything filled this way is marked as derived so the page can say
     # where it came from.
     analysis = issue_floor.fill(analysis, mentions, principal, issue)
+    # Stakeholders are institutions and individuals; the press that reported
+    # them is the evidence, not a party. Set aside and declared.
+    from engine.reports import issue_framework as _ifw
+
+    analysis["key_actors"], analysis["media_set_aside"] = _ifw.without_media(analysis.get("key_actors"))
     # The model cites its sources inline as `[ref=fresh-0]` — imitating the
     # digest's own tagging format, because these are free-prose fields with
     # no separate quotes array to carry a citation in. Left alone that string
@@ -548,6 +553,8 @@ def build_issue_map(
     # less defamatory for appearing on the intersection page.
     publish("protected_terms", protected_terms.redact(analysis, mentions))
     prose.map_prose(analysis, dates.britishise)
+    if analysis.get("verdict"):
+        analysis["verdict"] = our_analysis(analysis["verdict"])
 
     sample = [
         {
@@ -575,10 +582,10 @@ def build_issue_map(
         # sections that quietly have nothing in them.
         payload["intersection_gap"] = {
             "read": len(mentions),
-            "note": (f"No document in this window names both “{principal}” and "
-                     f"“{issue}”. Everything below is each side's own record and "
-                     f"the actors around it — treat any connection between them "
-                     f"as unestablished until a source says otherwise."),
+            "note": (f"No source in this window names both “{principal}” and “{issue}” — "
+                     f"there is no direct link in the sources' own words. Everything below "
+                     f"is each side's own record and the actors around it, and any "
+                     f"connection drawn between them is our analysis, not a source's statement."),
         }
     if acquisition:
         # How the corpus was assembled travels with the map. A thin result has
@@ -591,16 +598,11 @@ def build_issue_map(
                                                       issue_aliases, mentions)
     principal_findings = payload["connection_record"].pop("_principal_findings", None)
     publish("connection_record", payload["connection_record"])
-    search = _finish_search_demand(search_job, principal, ws, we, mentions,
-                                   (payload["connection_record"] or {}).get("findings") or [])
-    if search is not None:
-        payload["search_demand"] = search
-        publish("search_demand", search)
 
     # Risk drivers, the probability tree and three scenarios — the model's
     # judgement, held to the record and recomputed (reports/scenarios.py).
     payload["scenarios"] = _scenarios(principal, issue, payload["connection_record"],
-                                      principal_findings, search)
+                                      principal_findings, desired_outcome)
     if payload["scenarios"].get("state") == "modelled":
         # The identity rule over the scenarios too: a forecast blaming a
         # community no source named is defamatory however it is checked.
@@ -615,6 +617,14 @@ def build_issue_map(
     # stage line. It is rebuilt below once the framework's contours exist.
     _publish_graph(principal, issue, analysis, None, mentions, payload, publish)
 
+    # Dates ahead that a source states — the next hearing, a committee
+    # sitting — for the framework's sequencing. No model chooses them.
+    try:
+        from engine.evidence import upcoming
+
+        payload["upcoming"] = upcoming.scan(mentions)
+    except Exception as exc:  # noqa: BLE001 — sequencing falls back to the record
+        stages.current().failed("issue_map:upcoming", exc)
     payload["issue_framework"] = _issue_framework(principal, issue, payload, analysis,
                                                   desired_outcome=desired_outcome)
     publish("issue_framework", payload["issue_framework"])
@@ -681,7 +691,9 @@ def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str]
                 note = ("some sources were still being read when the map finished; "
                         "the next map on this pair reads them")
         record = facts.record_for(db, subject, corpus, most=50, keep_all=True)
-        out = connection.build(record.get("all_findings") or [], principal, issue, aliases)
+        co_mentioned = sum(1 for m in corpus or [] if m.get("evidence_pool") == "core")
+        out = connection.build(record.get("all_findings") or [], principal, issue, aliases,
+                               co_mentioned=co_mentioned)
         out["sources_read_this_run"] = job.get("to_read", 0)
         # The principal's whole record, for the scenario writer's context;
         # popped before the payload is published or stored.
@@ -700,24 +712,36 @@ def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str]
         db.close()
 
 
+_OPENERS = re.compile(r"^(?:the record|the sources|the evidence)\s+(?:shows?|indicates?|suggests?)\s+(?:that\s+)?", re.I)
+
+
+def our_analysis(verdict: str) -> str:
+    """The verdict is the firm's reading, so it opens "Our analysis
+    indicates…" (the founder's note on a live map). Asked for in the prompt;
+    held here, because a prompt instruction is not a guarantee. "The record
+    connects X…" read as though the record had said it, while the connection
+    section beneath said the record did not."""
+    text = (verdict or "").strip()
+    if not text or text.lower().startswith("our analysis"):
+        return text
+    rest = _OPENERS.sub("", text)
+    first = rest.split(" ", 1)[0]
+    if first in ("The", "This", "These", "That", "A", "An", "It", "There"):
+        rest = rest[0].lower() + rest[1:]
+    return "Our analysis indicates that " + rest
+
+
 def _scenarios(principal: str, issue: str, connection_record: dict | None,
-               principal_findings: list[dict] | None, search: dict | None) -> dict:
+               principal_findings: list[dict] | None, desired_outcome: str | None) -> dict:
     """The scenario section, or the reason it was not modelled — a failure
     here is the operator's to read and never costs the map."""
-    from engine.evidence import search_demand
     from engine.reports import scenarios
 
-    signals = None
-    if (search or {}).get("state") == "measured":
-        try:
-            signals = search_demand.all_signals(search, principal)
-        except Exception:  # noqa: BLE001 — the scenarios stand without search
-            signals = None
     counts = (connection_record or {}).get("counts") or {}
     numbers = {str(v) for v in counts.values() if isinstance(v, int)}
     try:
         out = scenarios.build(principal, issue, connection_record, principal_findings,
-                              search=signals, numbers=numbers)
+                              numbers=numbers, desired_outcome=desired_outcome)
     except Exception as exc:  # noqa: BLE001
         stages.current().failed("issue_map:scenarios", exc)
         return scenarios.withheld(f"the scenario writer failed: {type(exc).__name__}: {exc}"[:200])
@@ -727,48 +751,6 @@ def _scenarios(principal: str, issue: str, connection_record: dict | None,
     else:
         stages.current().skipped("issue_map:scenarios", out.get("reason") or "not modelled")
     return out
-
-
-def _start_search_demand(principal: str, issue: str, ws: datetime, we: datetime):
-    """What people searched for, the person and the issue normalised
-    together in one request — which of the two the public looks up."""
-    if not settings.enable_search_demand:
-        return None
-    from concurrent.futures import ThreadPoolExecutor
-
-    from engine.evidence import search_demand
-    from engine.runctx import carry
-
-    pool = ThreadPoolExecutor(max_workers=1)
-    future = pool.submit(carry(lambda: search_demand.gather(
-        principal, [], ws, we, settings.socialcrawl_api_key, keywords=[principal, issue])))
-    pool.shutdown(wait=False)
-    return future
-
-
-def _finish_search_demand(future, principal: str, ws: datetime, we: datetime,
-                          corpus: list[dict], findings: list[dict]) -> dict | None:
-    if future is None:
-        return None
-    from concurrent.futures import TimeoutError as FuturesTimeout
-
-    from engine.evidence import search_demand
-
-    try:
-        gathered = future.result(timeout=settings.search_demand_deadline_seconds)
-    except FuturesTimeout:
-        return {"state": "not_measured",
-                "reason": f"search demand did not answer within {int(settings.search_demand_deadline_seconds)}s"}
-    except Exception as exc:  # noqa: BLE001
-        return {"state": "not_measured", "reason": f"{type(exc).__name__}: {exc}"[:200]}
-    by_day: dict[str, int] = {}
-    for m in corpus or []:
-        at = m.get("posted_at")
-        if isinstance(at, datetime) and not m.get("date_estimated"):
-            by_day[at.date().isoformat()] = by_day.get(at.date().isoformat(), 0) + 1
-    return search_demand.assemble(gathered, ws, we, principal, coverage_by_day=by_day,
-                                  findings=findings,
-                                  corpus_texts=[str(m.get("text") or "") for m in corpus or []])
 
 
 #: How much of each pool an analyst reads. The intersection is the answer, so
@@ -1054,6 +1036,10 @@ def _as_corpus(mentions) -> list[dict]:
                 "engagement": m.get("engagement") or {},
                 "language": m.get("language"),
                 "source_url": raw.get("url") or m.get("source_url"),
+                # Which half of the question it answers — "core" names both.
+                # Dropped here, the connection could not tell "named together,
+                # never linked" from "never named together".
+                "evidence_pool": m.get("evidence_pool"),
             }
         )
     return out

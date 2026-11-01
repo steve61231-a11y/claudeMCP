@@ -301,4 +301,4 @@ def test_a_broken_reader_never_costs_the_map(monkeypatch):
         raise RuntimeError("reader went away")
 
     payload = issue_map.build_issue_map("A", "B", on_section=boom)
-    assert payload["intersection"]["verdict"] == "v"
+    assert payload["intersection"]["verdict"] == "Our analysis indicates that v"

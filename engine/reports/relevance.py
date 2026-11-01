@@ -113,6 +113,21 @@ def mentions_any(text: str, terms) -> bool:
     return any(_norm(t) and _norm(t) in haystack for t in terms)
 
 
+def mentions_issue(text: str, issue_terms) -> bool:
+    """`mentions_any`, plus the rule for an issue written out as a sentence:
+    a document names it when it carries most of the sentence's distinctive
+    words (`connection.about_issue`). The phrase whole never appears — no
+    source writes "Kenyan Court stopping the Kenyan government's sale of its
+    Safaricom shares to Vodacom" — so on substring alone every document was
+    "about the principal" and none "names both", and the map said the
+    record did not connect the two over the ruling it was about."""
+    if mentions_any(text, issue_terms):
+        return True
+    from engine.evidence import connection
+
+    return any(connection.is_sentence(t) and connection.about_issue(text, t) for t in issue_terms)
+
+
 def score_document(document: dict, identities, issue_terms,
                    require_market: bool) -> tuple[bool, str]:
     """Keep or drop, with the reason. Never raises.
@@ -131,7 +146,7 @@ def score_document(document: dict, identities, issue_terms,
 
     if not mentions_any(text, identities):
         return False, "does not mention the principal"
-    if not mentions_any(text, issue_terms):
+    if not mentions_issue(text, issue_terms):
         return False, "does not mention the issue"
     if require_market and not mentions_any(text, MARKET_TERMS):
         foreign = [m for m in FOREIGN_MARKERS if _norm(m) in _norm(text)]
@@ -182,7 +197,7 @@ def partition_corpus(corpus: list[dict], identities, issue_terms,
             continue
 
         has_principal = mentions_any(text, identities)
-        has_issue = mentions_any(text, issue_terms)
+        has_issue = mentions_issue(text, issue_terms)
         if not has_principal and not has_issue:
             reason = "mentions neither the principal nor the issue"
         elif require_market and not mentions_any(text, MARKET_TERMS):

@@ -45,6 +45,8 @@ from engine.reports import from_facts
 MIN_FINDINGS = 3
 LEDGER_SIZE = 30
 MAX_DRIVERS = 8
+MAX_RECOMMENDATIONS = 8
+OUTCOMES = ("desired", "opposed", "undetermined")
 MAX_NODES = 40
 MAX_DEPTH = 6
 #: Rounding in the writer's percentages: 33/33/33 is a fair split of three.
@@ -62,7 +64,9 @@ You are given a numbered ledger. F entries are findings on the verified record (
 
 Write three things.
 
-1. "drivers": up to {max_drivers} risk drivers — the forces that decide how this issue goes. For each:
+{desired}
+
+1. "drivers": up to {max_drivers} risk drivers — the major variables that decide how this issue goes: a court decision, presidential or executive pressure, a parliamentary committee, a regulator, public pressure, money. For each:
    - "category": one of Political, Electoral, Institutional, Legal, Security, Economic, International, Public opinion, Media
    - "driver": the force, in a few words
    - "definition": how this force works, in general terms (no names, figures or dates)
@@ -71,7 +75,7 @@ Write three things.
    - "direction": "raises", "lowers", "mixed" or "unclear" — what it does to the risk to {principal} on this issue now
    - "facts": the ledger ids the reading rests on (at least one)
 
-2. "tree": the branching of what could happen next, as nodes. The first node is the trigger (the next decision point the ledger points to) and has no parent. Every other node has a "parent" and a "p": the percentage chance of that branch given its parent. The branches under one parent must add up to 100. A node with exactly one child that is not a choice (an intervening step) may leave that child's "p" out. Each node: "id" (n1, n2…), "parent", "label" (a few words), "kind" ("event", "outcome" or "intervening"), "detail" (optional, one sentence), "p". At most {max_nodes} nodes and {max_depth} levels.
+2. "tree": the branching of what could happen next, as nodes. The first node is the trigger (the next decision point the ledger points to) and has no parent. Every other node has a "parent" and a "p": the percentage chance of that branch given its parent. The branches under one parent must add up to 100. A node with exactly one child that is not a choice (an intervening step) may leave that child's "p" out. Each node: "id" (n1, n2…), "parent", "label" (a few words), "kind" ("event", "outcome" or "intervening"), "detail" (optional, one sentence), "p". Every END node (a node with no children) also carries "outcome": "desired" if the desired outcome prevails on that path, "opposed" if it does not, "undetermined" if the path does not settle it. At most {max_nodes} nodes and {max_depth} levels.
 
 3. "scenarios": exactly three, the most likely, a credible alternative and an outlier. Each:
    - "title": one line
@@ -80,9 +84,11 @@ Write three things.
    - "outlook": sentences on how it plays out, each {{"text"}}
    - "implications": sentences on what it means for {principal} and for a client, each {{"text"}}
 
+4. "recommendations": up to {max_recs} actions a client pursuing the desired outcome should take, the most important first. Each: "action" (what to do, one line), "who" (whom to engage — only a name the ledger contains, or a role such as "the Attorney General's office" if the ledger names it), "when" (before which decision point in the tree, in words), "rationale" (one or two sentences, why, from the ledger), "facts" (the ledger ids the rationale rests on, at least one).
+
 Do not state a probability for a scenario: it is computed from the tree. The probabilities are your judgement; make them honest — a thin ledger means wide uncertainty, not confident numbers. If the ledger cannot support a credible tree, return "tree": [] and "scenarios": [] and say why in "withheld".
 
-Return JSON: {{"drivers": [...], "tree": [...], "scenarios": [...], "withheld": ""}}"""
+Return JSON: {{"drivers": [...], "tree": [...], "scenarios": [...], "recommendations": [...], "withheld": ""}}"""
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +141,7 @@ def validate_tree(nodes: list[dict]) -> tuple[list[dict], str | None]:
         clean.append({"id": nid, "parent": parent, "label": label,
                       "kind": kind if kind in KINDS else "event",
                       "detail": str(raw.get("detail") or "").strip(),
+                      "outcome": str(raw.get("outcome") or "").strip().lower() or None,
                       "p": _pct(raw.get("p")) if raw.get("p") not in (None, "") else None})
     if not clean:
         return [], "no tree was written"
@@ -364,6 +371,61 @@ def _tier_of_nodes(tree: list[dict], scenarios: list[dict]) -> None:
                     by_id[at]["tier"] = scenario["tier"]
 
 
+def baseline(tree: list[dict]) -> tuple[dict | None, str | None]:
+    """The baseline probability of the desired outcome — the sum of the
+    path probabilities of the end nodes on which it prevails, opposed and
+    undetermined likewise. The founder's note: "we need to show our
+    workings with a probability tree" — so the bars are this arithmetic
+    over the tree drawn beneath them, never a separate figure. Every end
+    node must say which way it falls, or there is no baseline."""
+    if not tree:
+        return None, "there is no tree"
+    parents = {n["parent"] for n in tree if n["parent"]}
+    leaves = [n for n in tree if n["id"] not in parents]
+    untagged = [n["label"] for n in leaves if n.get("outcome") not in OUTCOMES]
+    if untagged:
+        return None, f"the end of the path “{untagged[0]}” does not say whether the desired outcome prevails"
+    sums = {o: round(sum(n["path_p"] for n in leaves if n["outcome"] == o), 1) for o in OUTCOMES}
+    return ({"desired_outcome_prevails": sums["desired"], "opposed_outcome_prevails": sums["opposed"],
+             "undetermined": sums["undetermined"],
+             "workings": [{"path": n["label"], "probability": n["path_p"], "outcome": n["outcome"]}
+                          for n in sorted(leaves, key=lambda n: -n["path_p"])]}, None)
+
+
+def check_recommendations(raw: list, ledger: list[dict], principal: str,
+                          numbers: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+    """Advice is judgement, so it may reason — but whom it names and why
+    must stand on the record: `who` and `action` held to the whole ledger,
+    the rationale to the findings it cites, and no citation, no advice."""
+    kept, removed = [], []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "").strip()
+        if not action:
+            continue
+        cited = _known(_ids(item.get("facts")), ledger)
+        rationale = str(item.get("rationale") or "").strip()
+        if not cited:
+            removed.append({"part": "recommendation", "sentence": action, "reason": "cites nothing on the record"})
+            continue
+        why = (_general(action, ledger, principal, numbers)
+               or _general(str(item.get("who") or ""), ledger, principal, numbers)
+               or _general(str(item.get("when") or ""), ledger, principal, numbers)
+               or (from_facts.check_assessment(rationale, cited, ledger, principal, numbers) if rationale else None))
+        if why:
+            removed.append({"part": "recommendation", "sentence": action, "facts": cited, "reason": why})
+            continue
+        text, citations = from_facts.render([{"text": rationale, "facts": cited}], ledger) if rationale else ("", [])
+        kept.append({"action": action, "who": str(item.get("who") or "").strip(),
+                     # A phrase ("before the hearing"), not a date — named so.
+                     "timing": str(item.get("when") or "").strip(), "rationale": text,
+                     "rationale_citations": citations, "basis": "verified_facts"})
+        if len(kept) >= MAX_RECOMMENDATIONS:
+            break
+    return kept, removed
+
+
 # ---------------------------------------------------------------------------
 # The section
 # ---------------------------------------------------------------------------
@@ -372,10 +434,15 @@ def withheld(reason: str) -> dict:
     return {"state": "not_modelled", "reason": reason}
 
 
-def write(principal: str, issue: str, ledger: list[dict]) -> dict:
+def write(principal: str, issue: str, ledger: list[dict], desired_outcome: str | None = None) -> dict:
+    desired = (f"The client's DESIRED OUTCOME, which the tree and the recommendations are oriented to: "
+               f"“{desired_outcome}”." if desired_outcome else
+               "No desired outcome was given: orient the tree to whether the issue goes for or against "
+               f"{principal}, and mark end nodes \"desired\" where it goes for them.")
     reply = llm.call_json_untrusted(
         PROMPT.format(principal=principal, issue=issue, max_drivers=MAX_DRIVERS,
-                      max_nodes=MAX_NODES, max_depth=MAX_DEPTH),
+                      max_nodes=MAX_NODES, max_depth=MAX_DEPTH, desired=desired,
+                      max_recs=MAX_RECOMMENDATIONS),
         from_facts.ledger_text(ledger),
         expected_keys={"drivers", "tree", "scenarios"},
         max_tokens=llm.budget_for(5000),
@@ -388,7 +455,7 @@ def write(principal: str, issue: str, ledger: list[dict]) -> dict:
 
 def build(principal: str, issue: str, connection_record: dict | None,
           principal_findings: list[dict] | None = None, search: list[dict] | None = None,
-          numbers: set[str] | None = None) -> dict:
+          numbers: set[str] | None = None, desired_outcome: str | None = None) -> dict:
     """The scenario section, or `withheld(reason)` — which the page shows the
     operator and never shows the reader as "no scenarios"."""
     record = connection_record or {}
@@ -403,7 +470,7 @@ def build(principal: str, issue: str, connection_record: dict | None,
         return withheld(f"fewer than {MIN_FINDINGS} findings on the record about {principal}; "
                         "too little to model")
     ledger = ledger_for(linked, everything, record.get("patterns"), search)
-    reply = write(principal, issue, ledger)
+    reply = write(principal, issue, ledger, desired_outcome)
 
     drivers, removed = check_drivers(reply.get("drivers"), ledger, principal, numbers)
     tree, tree_problem = validate_tree(reply.get("tree") or [])
@@ -427,11 +494,18 @@ def build(principal: str, issue: str, connection_record: dict | None,
         removed.extend(lost)
         _tier_of_nodes(tree, scenarios)
 
+    recommendations, lost = check_recommendations(reply.get("recommendations"), ledger, principal, numbers)
+    removed.extend(lost)
+    base, base_problem = baseline(tree) if tree else (None, None)
+
     check = {"written": {"drivers": len(reply.get("drivers") or []),
+                         "recommendations": len(reply.get("recommendations") or []),
                          "scenarios": len(reply.get("scenarios") or [])},
              "removed": removed, "ledger": len(ledger)}
     if tree_problem:
         check["tree"] = tree_problem
+    if base_problem:
+        check["baseline"] = base_problem
     if not drivers and not scenarios:
         why = str(reply.get("withheld") or "").strip()
         out = withheld(tree_problem or why or "nothing the writer offered survived the check against the record")
@@ -439,6 +513,8 @@ def build(principal: str, issue: str, connection_record: dict | None,
         return out
     return {"state": "modelled", "principal": principal, "issue": issue,
             "drivers": drivers, "tree": tree, "scenarios": scenarios,
+            "recommendations": recommendations, "baseline": base,
+            "desired_outcome": desired_outcome,
             "tree_withheld": tree_problem, "check": check,
             "basis": ("The probabilities are an analyst's judgement on the findings cited, not a "
                       "measurement. Each scenario's figure is the product of the branches on its "
