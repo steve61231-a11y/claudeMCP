@@ -1,0 +1,29 @@
+name: cost-probe
+
+# What a scan actually costs, measured: OpenRouter's live DeepSeek prices,
+# exchange rates, and from the live database the model tokens used per day
+# beside the scans run that day (scripts/cost_probe.py). Prints totals only —
+# no subject names, no hostnames — because this repository is public.
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - scripts/cost_probe.py
+      - .github/workflows/cost-probe.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install psycopg2-binary
+      - name: Measure
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/cost_probe.py
