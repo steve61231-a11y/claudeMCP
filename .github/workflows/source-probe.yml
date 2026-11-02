@@ -34,3 +34,10 @@ jobs:
         run: pip install requests curl_cffi==0.16.2 pypdf==5.1.0
       - name: Probe each source
         run: python scripts/source_probe.py
+      # The Issue Map's record connectors, run for real on public topics
+      # (scripts/record_probe.py) — a connector is never declared working
+      # on a fake alone.
+      - name: Install what the record connectors import
+        run: pip install pydantic==2.9.2 pydantic-settings==2.5.2 python-dotenv
+      - name: Run the record connectors
+        run: PYTHONPATH=. python scripts/record_probe.py

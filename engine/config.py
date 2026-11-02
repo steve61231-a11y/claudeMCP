@@ -215,6 +215,10 @@ class Settings(BaseSettings):
     # on-demand ceiling. The map had none: four pairs × the 50-credit
     # brand-mentions composite plus a comment call per post found.
     issue_map_credit_budget: float = 300.0
+    # The Issue Map's primary records: Kenya Law's case search, Parliament's
+    # Hansard and order papers, the World Bank. Keyless, bounded, and
+    # measured reachable from the live server (evidence/record_reach.py).
+    enable_issue_map_records: bool = True
     # Optional JSON webhook for early-warning alerts (Slack/Make/WhatsApp bridge).
     alert_webhook_url: str = ""
     # Comma-separated names to track automatically in scheduled sweeps, so

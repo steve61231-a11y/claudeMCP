@@ -18,6 +18,9 @@ requests==2.32.3
 # Full-article body extraction (keyless): turns headline-only article mentions
 # into the whole readable article. Powers engine/ingestion/article_text.py.
 trafilatura==2.1.0
+# Parliament's Hansard and order papers are PDFs (engine/ingestion/parliament_records.py).
+# Pure Python, no system libraries; measured on the 22 Oct 2026 Hansard: 88 pages.
+pypdf==5.1.0
 # Tier-2 page fetch: a real Chrome TLS/HTTP2 fingerprint for the Kenyan
 # newsrooms that answer 403 to plain `requests` on fingerprint alone.
 #

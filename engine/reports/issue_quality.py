@@ -34,6 +34,11 @@ from engine.reports.prose import sentences
 
 VERSION = 1
 
+#: The state's own records: judgments and gazette notices (as the Search
+#: report counts them), Hansard speeches, bills and acts, other Kenya Law
+#: documents (engine/ingestion/kenya_law_records.py, parliament_records.py).
+PRIMARY_KINDS = ("judgment", "gazette", "hansard", "bill", "legislation", "record")
+
 #: The analysts' prose — written over a digest, no sentence checked.
 UNCHECKED = ("verdict", "involvement", "tension_or_risk")
 
@@ -58,7 +63,10 @@ def corpus_read(corpus: list[dict]) -> dict:
             kenyan_outlets.add(outlets.publisher(m))
     articles = [m for m in corpus if m.get("source_type") == "article"]
     full = sum(1 for m in articles if m.get("full_text") or m.get("kind") == "document")
-    primary = sum(1 for m in corpus if m.get("source_type") in ("judgment", "gazette"))
+    primary = sum(1 for m in corpus if m.get("source_type") in PRIMARY_KINDS)
+    international = sum(1 for m in corpus if m.get("source_type") == "report"
+                        and "worldbank" in str(m.get("platform") or ""))
+    by_record = {k: sum(1 for m in corpus if m.get("source_type") == k) for k in PRIMARY_KINDS}
     reactions = sum(1 for m in corpus if m.get("source_type") == "comment")
     video = sum(1 for m in corpus if (m.get("platform") or "").lower() in ("youtube", "tiktok"))
     dated = sum(1 for m in corpus if m.get("posted_at") and not m.get("date_estimated"))
@@ -69,7 +77,9 @@ def corpus_read(corpus: list[dict]) -> dict:
     return {"items": items, "by_kind": kinds, "by_segment": segments,
             "kenyan_outlets": len(kenyan_outlets), "articles": len(articles),
             "articles_full_text": full, "full_text_share": pct(full, len(articles)),
-            "primary_records": primary, "reactions": reactions, "reaction_share": pct(reactions, items),
+            "primary_records": primary, "records_by_kind": {k: v for k, v in by_record.items() if v},
+            "international_records": international,
+            "reactions": reactions, "reaction_share": pct(reactions, items),
             "video_share": pct(video, items), "dated_share": pct(dated, items),
             "pools": {k: sum(1 for m in corpus if m.get("evidence_pool") == k)
                       for k in ("core", "principal_side", "issue_side")}}
@@ -114,6 +124,7 @@ def headline(read: dict, support: dict, record: dict) -> str:
     bits = [f"{read['items']} item(s) read"]
     if read["items"]:
         bits.append(f"{read['kenyan_outlets']} Kenyan outlet(s)")
+        bits.append(f"{read['primary_records']} official record(s)")
         if read["video_share"] is not None and read["video_share"] >= 50:
             bits.append(f"{read['video_share']:g}% video")
     bits.append(f"{read['pools']['core']} naming both")

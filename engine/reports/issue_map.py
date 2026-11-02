@@ -707,14 +707,23 @@ def build_issue_map(
     if analysis.get("verdict"):
         analysis["verdict"] = our_analysis(analysis["verdict"])
 
+    # Half the sample is reserved for the state's own records, the Search
+    # report's rule: a judgment or a Hansard speech has no engagement and
+    # was never first in the list, and the record is what a client opens the
+    # evidence to check.
+    from engine.reports import issue_quality
+
+    records_first = [m for m in mentions if m.get("source_type") in issue_quality.PRIMARY_KINDS][:7]
+    rest = [m for m in mentions if m not in records_first]
     sample = [
         {
             "platform": m.get("platform"),
+            "source_type": m.get("source_type"),
             "text": (m.get("text") or "")[:400],
             "url": (m.get("raw_payload") or {}).get("url") or m.get("source_url"),
             "posted_at": m.get("posted_at"),
         }
-        for m in mentions[:15]
+        for m in (records_first + rest)[:15]
     ]
 
     payload = {
@@ -787,7 +796,12 @@ def build_issue_map(
     try:
         from engine.evidence import upcoming
 
-        payload["upcoming"] = upcoming.scan(mentions)
+        # Order papers first: a sitting the record schedules is firmer than a
+        # date a news sentence mentions.
+        ahead = list((acquisition or {}).get("records_ahead") or [])
+        seen = {(a["date"], a["event"][:80]) for a in ahead}
+        payload["upcoming"] = ahead + [u for u in upcoming.scan(mentions)
+                                       if (u["date"], u["event"][:80]) not in seen]
     except Exception as exc:  # noqa: BLE001 — sequencing falls back to the record
         stages.current().failed("issue_map:upcoming", exc)
     payload["issue_framework"] = _issue_framework(principal, issue, payload, analysis,
@@ -807,6 +821,92 @@ def build_issue_map(
     payload["quality"] = issue_quality.assess(payload, mentions)
     publish("quality", payload["quality"])
     return payload
+
+
+def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None, ws, we,
+                    identities: list[str], report: dict, publish=lambda *a: None
+                    ) -> tuple[list[IngestedMention], list[dict]]:
+    """The primary records an issue is made on (docs/ISSUE_MAP_FOUNDATION.md
+    Phase 1), each source in its own thread, each failure the source's own:
+
+      * Kenya Law's case search — every map; the issue's search terms, and
+        the principal with the leading term, ten cases a page;
+      * Parliament — every map; the Hansard speeches on the issue from the
+        sittings in the window, and the order papers ahead that list it;
+      * the World Bank — when the issue's kind is money, energy, transport
+        or international.
+
+    Returns (corpus items, dated sittings ahead). A source that answered
+    nothing says so in `report`, so "no court record" is never produced by
+    a refused host."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from engine.ingestion import kenya_law_records, parliament_records, world_bank_records
+    from engine.reports import issue_framework, issue_profile
+    from engine.runctx import carry
+
+    if not settings.enable_issue_map_records:
+        report["skipped"] = "switched off (ENABLE_ISSUE_MAP_RECORDS)"
+        return [], []
+    the_issue = issue_profile.profile(issue, issue_aliases)
+    terms = the_issue["search_terms"]
+    match_terms = relevance.merge_terms(terms, the_issue["identities"])
+    cutoff = we - timedelta(days=365 * issue_framework.BACKGROUND_YEAR_CUTOFF)
+
+    def about(text: str) -> bool:
+        return relevance.mentions_issue(text, match_terms)
+
+    def kenya_law():
+        queries = list(dict.fromkeys([*terms[:3], f"{identities[0]} {terms[0]}" if identities else terms[0]]))
+        found, notes = [], []
+        for query in queries[:4]:
+            records, count, why = kenya_law_records.search(query)
+            if why:
+                notes.append(f"“{query}”: {why}")
+            # Ten years back, the framework's own cut-off: an old case is
+            # history, kept with its real date, never moved into the window.
+            found += [r for r in records if r["date"] is None or r["date"] >= cutoff]
+        unique = {r["url"]: r for r in found}
+        report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique), "notes": notes[:4]}
+        return [kenya_law_records.as_mention(r) for r in unique.values()], []
+
+    def parliament():
+        sub: dict = {}
+        mentions, ahead = parliament_records.fetch(about, ws, we, sub)
+        report["parliament"] = sub
+        return mentions, ahead
+
+    def world_bank():
+        if "world_bank" not in the_issue["records"]:
+            report["world_bank"] = {"skipped": "not a money, energy, transport or international issue"}
+            return [], []
+        out, notes = [], []
+        for term in terms[:2]:
+            for fetch in (world_bank_records.projects, world_bank_records.documents):
+                try:
+                    out += fetch(term)
+                except Exception as exc:  # noqa: BLE001
+                    notes.append(f"{fetch.__name__} “{term}”: {type(exc).__name__}")
+        report["world_bank"] = {"items": len(out), "notes": notes}
+        return out, []
+
+    publish("stage", "Reading the record — court cases, Parliament, the lenders…")
+    mentions: list[IngestedMention] = []
+    ahead: list[dict] = []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        jobs = {name: pool.submit(carry(fn)) for name, fn in
+                (("kenya_law", kenya_law), ("parliament", parliament), ("world_bank", world_bank))}
+        for name, job in jobs.items():
+            try:
+                found, later = job.result(timeout=240)
+                mentions += found
+                ahead += later
+            except Exception as exc:  # noqa: BLE001 — one source down costs only itself
+                report[name] = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+                stages.current().failed(f"issue_map:records:{name}", exc)
+    report["total"] = len(mentions)
+    report["kinds"] = the_issue["kinds"]
+    return mentions, ahead
 
 
 def _start_connection_reading(acquisition: dict, principal: str, corpus: list[dict]) -> dict:
@@ -1130,6 +1230,12 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
                              + str(discovery_report.get("error")
                                    or discovery_report.get("skipped")))
 
+        # The records a connection is made on — court cases, Parliament,
+        # the lenders — stored with the rest so they compound across maps.
+        records_report: dict = {}
+        record_mentions, records_ahead = acquire_records(
+            principal, issue, issue_aliases, ws, we, identities, records_report, publish)
+        fresh = list(fresh) + record_mentions
         stored = _persist_intersection(db, subject, fresh, documents, issue)
         gate = _gate_documents(db, subject)
 
@@ -1174,6 +1280,8 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             "discovery_probes": len(discovery),
             "discovery": discovery_report,
             "social_tier": social_report,
+            "records": records_report,
+            "records_ahead": records_ahead,
             "fresh_mentions": len(fresh),
             "fresh_documents": len(documents),
             **stored,

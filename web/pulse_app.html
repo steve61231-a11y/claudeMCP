@@ -6026,8 +6026,12 @@
         }
         ehead.innerHTML=`<div class="lbl">Evidence sample</div><div class="muted" style="font-size:13px;margin-top:4px">${esc(note)}</div>`;
         ebody.innerHTML='';
-        (shown.length?shown:ev).forEach(e=>ebody.appendChild(el('div','mentr',
-          `<div class="row" style="gap:8px;font-size:12px"><span class="chip">${esc(e.platform||'')}</span>
+        // The state's own records say what they are: "a newspaper reported
+        // a case" and "here is the case" must not render alike.
+        const RECORD={judgment:'Court record',gazette:'Gazette notice',hansard:'Hansard',
+          bill:'Bill',legislation:'Act',record:'Kenya Law record'};
+        (shown.length?shown:ev).forEach(e=>ebody.appendChild(el('div','mentr'+(RECORD[e.source_type]?' is-primary':''),
+          `<div class="row" style="gap:8px;font-size:12px">${RECORD[e.source_type]?`<span class="pill pos">${RECORD[e.source_type]}</span>`:''}<span class="chip">${esc(e.platform||'')}</span>
              <span class="muted">${esc(ukDate(e.posted_at))}</span></div>
            <div style="font-size:14px;margin-top:6px">${esc(e.text)}</div>
            ${e.url?`<div class="muted" style="font-size:12px;margin-top:4px"><a class="src-link" href="${esc(e.url)}" target="_blank" rel="noopener noreferrer" data-src="${esc(outletOf(e.url))}">${esc(outletOf(e.url))} ↗</a></div>`:''}`)));
