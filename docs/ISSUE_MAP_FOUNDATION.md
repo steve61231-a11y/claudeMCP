@@ -332,6 +332,18 @@ spent; wall-clock time.
   ran here. In its place, the checks that DID run, each with what it
   removed — the answer from the record, names checked against the sources,
   the identity guard; a check that did not run is absent, never "applied".
+- **Phase 4 begun — a case's dates from the court's own cause lists.**
+  Kenya Law indexes daily cause lists as documents, including lists for
+  dates ahead; the list pages are behind a JavaScript challenge, but the
+  search API's cards carry each list's date and the listing
+  (`scripts/causelist_probe.py`, three rounds). A listing counts only in
+  the same court, with the same number and year, naming the case's first
+  party — round 1 found "HATC/E051/2026", another case in a tribunal, for a
+  High Court petition E051 of 2026. Asked by party and by number. Live:
+  Amana Capital v CMA (Appeal 2 of 2019) found in four Capital Markets
+  Tribunal lists; none of the 30 benchmark cases listed ahead. Kenya Law
+  publishes some courts' lists only, so "not found" is never "no hearing".
+  A listing ahead joins the order papers as a dated next step.
 
 ## 5. What the founder decides
 

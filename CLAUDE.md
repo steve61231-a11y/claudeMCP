@@ -428,7 +428,12 @@ a dispute between private parties, and an acronym that may be a party's
 initials ("JMA v SHA") are each set aside and counted under their reason. A
 Hansard's page header, disclaimer and headings are the Hansard's, never the
 member's: headings become the business a speech was made under, and under a
-heading naming the issue the whole contribution is kept.
+heading naming the issue the whole contribution is kept. A case's dates come
+from Kenya Law's published cause lists (`kenya_law_records.listings`), and a
+listing counts only in the same court, with the same number and year, naming
+the first party — a tribunal's "HATC/E051/2026" is not High Court Petition
+E051 of 2026. Those lists cover some courts only: never say a case has no
+hearing.
 
 **The map's answer is written from the record.** The verdict at the top of
 an Issue Map was a model's sentence over a digest, unchecked — the line a
