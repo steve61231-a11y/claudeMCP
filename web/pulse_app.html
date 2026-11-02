@@ -2543,6 +2543,18 @@
   }
 
   /* ---- Issue Analysis & Mapping Framework V1.0 ---- */
+  /* A stakeholder's involvement on the record (evidence/stakeholder_record.py):
+     verified statements naming them and the issue. Their position above is
+     the analysts' reading; this is what the record says about them. */
+  function stakeholderRecord(r){
+    if(!r||r.state!=='measured')return '';
+    if(!r.count)return '<div class="muted" style="font-size:12.5px;margin-top:4px">Not named with the issue in a verified statement</div>';
+    const rows=(r.findings||[]).map(f=>`<div style="font-size:13px;margin-top:6px">${f.status==='alleged'?'<b>Alleged:</b> ':''}${esc(f.statement||'')}
+      <span class="muted" style="font-size:12px"> · ${f.url?`<a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.publisher||'source')}</a>`:esc(f.publisher||'')}${f.independent_sources>1?` · ${f.independent_sources} independent sources`:''}</span></div>`).join('');
+    return `<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px"><span class="pill pos">On the record</span>
+      named with the issue in ${r.count} verified statement${r.count===1?'':'s'}</summary>${rows}</details>`;
+  }
+
   function renderIssueFramework(out,fw,m){
     m=m||{};
     const it=m.intersection||{};
@@ -2626,7 +2638,7 @@
           const c=el('div','card');c.style.marginTop='8px';c.style.borderLeft='3px solid '+colour;
           c.innerHTML=`<div class="lbl">${esc(seg.replace('_',' '))}</div>`+
             list.map(s=>`<div class="mentr"><div style="font-weight:600">${esc(s.name)}</div>
-              <div class="row" style="margin-top:4px">${influenceChip(s)}</div></div>`).join('');
+              <div class="row" style="margin-top:4px">${influenceChip(s)}</div>${stakeholderRecord(s.record)}</div>`).join('');
           col.appendChild(c);
         });
         if(!any)col.appendChild(fwEmpty('none identified'));

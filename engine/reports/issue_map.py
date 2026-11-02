@@ -799,6 +799,7 @@ def build_issue_map(
     payload["connection_record"] = _finish_connection(
         connection_job, principal, issue, list(issue_aliases or []), mentions)
     principal_findings = payload["connection_record"].pop("_principal_findings", None)
+    issue_findings = payload["connection_record"].pop("_issue_findings", None)
     publish("connection_record", payload["connection_record"])
     # The connection as a path: the roles the records state — party to a
     # case, speaker in the House, a lender's agency — each step sourced.
@@ -843,6 +844,16 @@ def build_issue_map(
         stages.current().failed("issue_map:upcoming", exc)
     payload["issue_framework"] = _issue_framework(principal, issue, payload, analysis,
                                                   desired_outcome=desired_outcome)
+    # Each stakeholder's involvement on the record: verified statements
+    # naming them and the issue. The position stays the analysts'.
+    try:
+        from engine.evidence import stakeholder_record
+
+        stakeholder_record.annotate(
+            payload["issue_framework"], issue_findings,
+            state="measured" if issue_findings is not None else "not_measured")
+    except Exception as exc:  # noqa: BLE001
+        stages.current().failed("issue_map:stakeholder_record", exc)
     publish("issue_framework", payload["issue_framework"])
 
     # One graph over everything the investigation found, built from the SAME
@@ -1172,6 +1183,17 @@ def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str]
         # The principal's whole record, for the scenario writer's context;
         # popped before the payload is published or stored.
         out["_principal_findings"] = record.get("all_findings") or []
+        # Every verified finding naming the issue, about anyone — each
+        # stakeholder's involvement on the record (evidence/stakeholder_record.py);
+        # popped before the payload is published or stored.
+        try:
+            from engine.evidence import stakeholder_record
+            from engine.reports import issue_match
+
+            out["_issue_findings"] = stakeholder_record.issue_findings(
+                db, subject, corpus, issue_match.of(issue, aliases))
+        except Exception as exc:  # noqa: BLE001 — the stakeholders stay the analysts', labelled
+            stages.current().failed("issue_map:stakeholder_record", exc)
         if note:
             out["note"] = note
         return out

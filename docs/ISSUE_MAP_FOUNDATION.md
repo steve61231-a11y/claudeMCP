@@ -320,9 +320,13 @@ spent; wall-clock time.
   writes the map's opening answer from verified findings naming both and the
   roles public records state, each sentence checked with no model
   (`from_facts.check`); the analysts' verdict stays beneath it as their
-  reading, or leads, labelled, when the record is too thin. Still to do in
-  Phase 3: involvement and tension (the stakeholder positions) from the
-  record.
+  reading, or leads, labelled, when the record is too thin.
+- **Phase 3 — involvement on the record.** `evidence/stakeholder_record.py`:
+  every stakeholder carries the verified statements, from the map's own
+  sources and about anyone, that name it and the issue — or says it is not
+  named with the issue in one. The position (for / against / neutral) stays
+  the analysts' reading and is labelled so: no code decides a stance from a
+  sentence. Still to do: claim verification on the map, or remove the chip.
 
 ## 5. What the founder decides
 

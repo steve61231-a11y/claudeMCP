@@ -438,7 +438,10 @@ verified findings naming both (F) and roles a public record states (R, from
 than what it cites; being a respondent is not wrongdoing, and the prompt and
 the check both hold that. Too little on the record, and the analysts' verdict
 leads, stamped as their reading; when the record's answer leads, theirs sits
-beneath it under "Our analysts' reading". Every map section is graded
+beneath it under "Our analysts' reading". Each stakeholder carries the
+verified statements naming it and the issue (`evidence/stakeholder_record.py`,
+from every fact in the map's sources, not only the principal's); the
+for/against position stays the analysts' and says so. Every map section is graded
 (`reports/issue_evidence_status.py`) in the Search report's vocabulary.
 
 **A scenario's probability is arithmetic over a judgement, and the page

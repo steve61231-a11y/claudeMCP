@@ -64,6 +64,11 @@ def background(payload: dict) -> dict:
 
 
 def stakeholders(payload: dict) -> dict:
+    rec = (((payload.get("issue_framework") or {}).get("main_contours") or {}).get("record") or {})
+    if rec.get("state") == "measured" and rec.get("on_record"):
+        return _grade("mixed", f"{rec['on_record']} of {_plural(int(rec.get('stakeholders') or 0), 'stakeholder')} "
+                               "named with the issue in verified statements; who stands where is the "
+                               "analysts' reading")
     return _grade("analyst", "who stands where is the analysts' reading of the coverage")
 
 
