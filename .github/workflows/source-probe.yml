@@ -31,6 +31,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install the two HTTP clients the engine uses
-        run: pip install requests curl_cffi==0.16.2
+        run: pip install requests curl_cffi==0.16.2 pypdf==5.1.0
       - name: Probe each source
         run: python scripts/source_probe.py

@@ -82,6 +82,19 @@ RECORD_PROBES = [
 #: Read further: a snippet of the body, for the contracts the shape alone
 #: does not settle — how a list filters and orders, what a cause list holds
 #: inside, what an order paper links. Public topics only.
+#: Round three (2 Nov): the corrected contracts, the cause list through
+#: Chrome's fingerprint, and whether a Parliament PDF downloads whole.
+CHROME_SNIPPETS = [
+    ("Kenya Law search API, search=", "https://new.kenyalaw.org/search/api/documents/?search=health%20insurance"),
+    ("A High Court cause list (Chrome)",
+     "https://new.kenyalaw.org/akn/ke/doc/cause-list-daily/kehc/2026-09-16/1/eng@2026-09-16"),
+    ("A gazette (Chrome)", "https://new.kenyalaw.org/akn/ke/officialGazette/2026-01-02/1/eng@2026-01-02"),
+    ("Mzalendo sittings, last page", "https://info.mzalendo.com/api/v0.1/hansard/sittings/?format=json&page=369"),
+]
+PDF_PROBE = ("Parliament Hansard PDF",
+             "https://www.parliament.go.ke/sites/default/files/2026-10/"
+             "The%20Hansard%20-%20Thursday%2C%2022%20October%202026_0.pdf")
+
 SNIPPET_PROBES = [
     ("Mzalendo entries, search=", "https://info.mzalendo.com/api/v0.1/hansard/entries/?format=json&search=health"),
     ("Mzalendo entries, newest", "https://info.mzalendo.com/api/v0.1/hansard/entries/?format=json&ordering=-id"),
@@ -183,7 +196,50 @@ def _snippet(url: str) -> str:
     return (f"HTTP {r.status_code} · docs={docs} akn={akn} · text: {text[start:start + 900]}")
 
 
+def _chrome_snippet(url: str) -> str:
+    import re
+
+    try:
+        from curl_cffi import requests as curl
+
+        r = curl.get(url, impersonate="chrome", timeout=30, headers={"Accept-Language": "en-GB,en;q=0.9"})
+    except Exception as exc:  # noqa: BLE001
+        return f"error: {type(exc).__name__}: {str(exc)[:100]}"
+    body = r.text or ""
+    text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", body, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    for marker in ("CAUSE LIST", "Cause List", "GAZETTE NOTICE", "results"):
+        at = text.find(marker)
+        if at > 0:
+            text = text[at:]
+            break
+    return f"HTTP {r.status_code} · {len(body)} bytes · text: {text[:1100]}"
+
+
+def _pdf(url: str) -> str:
+    try:
+        r = requests.get(url, headers={"User-Agent": ENGINE_UA}, timeout=60)
+    except Exception as exc:  # noqa: BLE001
+        return f"error: {type(exc).__name__}"
+    head = r.content[:8]
+    try:
+        import io
+
+        from pypdf import PdfReader
+
+        pages = PdfReader(io.BytesIO(r.content)).pages
+        first = (pages[1].extract_text() or "")[:600] if len(pages) > 1 else ""
+        extra = f" · {len(pages)} pages · page 2 text: {' '.join(first.split())}"
+    except Exception as exc:  # noqa: BLE001
+        extra = f" · not parsed ({type(exc).__name__})"
+    return f"HTTP {r.status_code} · {len(r.content)} bytes · starts {head!r} · {r.headers.get('content-type')}{extra}"
+
+
 def main() -> int:
+    for label, url in CHROME_SNIPPETS:
+        print(f"ROUND3 {label}: {_chrome_snippet(url)}", file=sys.stderr)
+    print(f"ROUND3 {PDF_PROBE[0]}: {_pdf(PDF_PROBE[1])}", file=sys.stderr)
     for label, url in SNIPPET_PROBES:
         print(f"SNIPPET {label}: {_snippet(url)}", file=sys.stderr)
     for label, url, ua in RECORD_PROBES:
