@@ -1031,6 +1031,10 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
         report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique),
                                "set_aside_off_issue": sum(aside.values()), "set_aside": aside,
                                "cases_checked_in_cause_lists": asked, "listings_found": listed,
+                               # Kenya Law publishes some courts' lists, not all:
+                               # "not found" is never "no hearing".
+                               "cause_list_coverage": "the cause lists Kenya Law publishes, which cover "
+                                                      "some courts and tribunals only",
                                "listings_ahead": len(ahead),
                                "notes": notes[:6]}
         return [kenya_law_records.as_mention(r) for r in unique.values()], ahead

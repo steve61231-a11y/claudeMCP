@@ -315,11 +315,11 @@ def test_a_listing_counts_only_in_the_same_court_with_the_same_number_and_party(
         _list_card("/akn/ke/doc/cause-list-daily/kehc/2026-06-01/1/eng@2026-06-01",
                    "High Court – Daily Cause List", "Petition E051 of 2026 Gachoka v Cabinet Secretary"),
     ])
-    asked = {}
+    asked = []
     monkeypatch.setattr(kenya_law_records.http, "get",
-                        lambda url, params=None, **k: asked.update(params or {}) or Resp(200, {"results_html": html}))
+                        lambda url, params=None, **k: asked.append(params["search"]) or Resp(200, {"results_html": html}))
     found, why = kenya_law_records.listings("Petition E051 of 2026", "kehc", ["Gachoka & 3 others"])
-    assert why is None and asked["search"] == "E051 of 2026 Gachoka cause list"
+    assert why is None and asked == ["Gachoka cause list", "E051/2026 cause list"]
     assert [x["date"] for x in found] == ["2026-06-01", "2099-01-12"], \
         "the tribunal's list (other court) and OMONDI (other party) are not this case"
 

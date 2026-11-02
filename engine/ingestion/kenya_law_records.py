@@ -238,7 +238,9 @@ def as_mention(record: dict) -> IngestedMention:
 # carrying "HATC/E051/2026" — a different case in a different court. A wrong
 # hearing date in a client's file is worse than none, so a listing counts
 # only when the list is the SAME court's, prints the same number and year,
-# and names the case's first party.
+# and names the case's first party. Kenya Law publishes cause lists for some
+# courts and tribunals only, so a case not found in them is NOT a case with
+# no hearing: the map never says it has none.
 
 _LIST_URI = re.compile(r"^/akn/ke/doc/(cause-list[a-z-]*|decongestion-causelist)/([a-z0-9-]+)/(\d{4}-\d{2}-\d{2})/")
 
@@ -273,17 +275,25 @@ def listings(case_number_text: str, court_code: str | None, parties: list[str]) 
     if not parts or not court_code or not party:
         return [], "the case number, court or a party to match on is missing"
     number, year = parts
-    try:
-        response = http.get(SEARCH, params={"search": f"{number} of {year} {party} cause list", "page": 1},
-                            timeout=30)
-    except Exception as exc:  # noqa: BLE001
-        return [], f"{type(exc).__name__}: {exc}"[:200]
-    if response.status_code != 200:
-        return [], f"HTTP {response.status_code}"
-    try:
-        html = (response.json() or {}).get("results_html") or ""
-    except ValueError:
-        return [], "the answer was not JSON — the contract has changed"
+    # Asked two ways (probe round 3): the party's name with "cause list"
+    # surfaces the lists that print it; the number with "cause list" ranks
+    # judgments first but sometimes reaches a list the name does not.
+    html, errors = "", []
+    for query in (f"{party} cause list", f"{number}/{year} cause list"):
+        try:
+            response = http.get(SEARCH, params={"search": query, "page": 1}, timeout=30)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{type(exc).__name__}: {exc}"[:200])
+            continue
+        if response.status_code != 200:
+            errors.append(f"HTTP {response.status_code}")
+            continue
+        try:
+            html += (response.json() or {}).get("results_html") or ""
+        except ValueError:
+            errors.append("the answer was not JSON — the contract has changed")
+    if not html and errors:
+        return [], "; ".join(errors)
     out, seen = [], set()
     for card in _CARD.findall(html):
         m = _TITLE.search(card)
