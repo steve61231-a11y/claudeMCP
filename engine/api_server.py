@@ -1549,8 +1549,11 @@ def _admin_metrics() -> dict:
                 func.coalesce(func.sum(LlmUsage.input_tokens), 0),
                 func.coalesce(func.sum(LlmUsage.output_tokens), 0),
                 func.coalesce(func.sum(LlmUsage.calls), 0),
+                func.coalesce(func.sum(LlmUsage.bulk_input_tokens), 0),
+                func.coalesce(func.sum(LlmUsage.bulk_output_tokens), 0),
             ).filter(LlmUsage.day >= cutoff).one()
             in_tok, out_tok, calls = int(rows[0]), int(rows[1]), int(rows[2])
+            bulk_in, bulk_out = int(rows[3]), int(rows[4])
             # Price at the rates of the backend that actually served the calls.
             # Reporting an OpenRouter run at Anthropic's rates overstated it by
             # several times, which is worse than showing nothing to someone
@@ -1559,11 +1562,19 @@ def _admin_metrics() -> dict:
 
             if _llm.provider() == "anthropic":
                 price_in, price_out = settings.anthropic_price_in, settings.anthropic_price_out
+                bulk_price_in, bulk_price_out = price_in, price_out
             else:
                 price_in, price_out = settings.llm_price_in, settings.llm_price_out
-            cost = (in_tok / 1e6) * price_in + (out_tok / 1e6) * price_out
+                # Each tier at its own rate: the bulk model's share at its
+                # price, the rest at the strong model's.
+                bulk_price_in = settings.llm_bulk_price_in or price_in
+                bulk_price_out = settings.llm_bulk_price_out or price_out
+            cost = (((in_tok - bulk_in) / 1e6) * price_in + ((out_tok - bulk_out) / 1e6) * price_out
+                    + (bulk_in / 1e6) * bulk_price_in + (bulk_out / 1e6) * bulk_price_out)
             return {"input_tokens": in_tok, "output_tokens": out_tok, "calls": calls,
-                    "usd": round(cost, 4), "priced_at": {"in": price_in, "out": price_out}}
+                    "bulk_input_tokens": bulk_in, "bulk_output_tokens": bulk_out,
+                    "usd": round(cost, 4), "priced_at": {"in": price_in, "out": price_out,
+                                                         "bulk_in": bulk_price_in, "bulk_out": bulk_price_out}}
 
         credits = {
             "socialcrawl_balance": socialcrawl_balance,
@@ -2267,7 +2278,7 @@ def _model_backend_state() -> dict:
         # Whether a report run on this deployment may be sold. Everything
         # but the Anthropic path is stamped test-grade in the UI, and an
         # operator should be able to see that before spending a run.
-        "production_grade": provider == "anthropic",
+        "production_grade": not _llm_test_grade(),
         "key_variable": ("ANTHROPIC_API_KEY" if provider == "anthropic"
                          else "LLM_API_KEY"),
         "key_present": bool((key or "").strip()),
@@ -2459,3 +2470,9 @@ def health():
         "llm": {**_llm.report_grade(), **_model_backend_state()},
         "data_supply": supply,
     }
+
+
+def _llm_test_grade() -> bool:
+    from engine import llm as _llm
+
+    return _llm.is_test_grade()

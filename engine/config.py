@@ -390,6 +390,17 @@ class Settings(BaseSettings):
     # LLM_PRICE_OUT when pointing LLM_MODEL somewhere else.
     llm_price_in: float = 0.75
     llm_price_out: float = 3.75
+    # The bulk-tier model's own prices (LLM_BULK_MODEL). 0 = the same as
+    # LLM_PRICE_IN/OUT. DeepSeek V4 Pro's output costs ~8x V4.1 Flash's, so
+    # pricing both tiers at one rate misstates the bill either way.
+    llm_bulk_price_in: float = 0.0
+    llm_bulk_price_out: float = 0.0
+    # Models on the openai_compatible path that may be sold as production
+    # (comma-separated id prefixes). The founder's decision of 2 Nov 2026:
+    # DeepSeek's strongest model is production. The deterministic guards —
+    # quote verification, check_sentence, protected terms, grounding — run on
+    # every backend; this flag decides only the "Test-grade" stamp.
+    llm_production_models: str = "deepseek/deepseek-v4-pro"
 
     class Config:
         env_file = ".env"

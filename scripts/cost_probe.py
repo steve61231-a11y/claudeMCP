@@ -106,7 +106,26 @@ def usage() -> None:
         print(f"   rows: {counts[0][0]:,} mentions, {counts[0][1]:,} documents, {counts[0][2]:,} reports")
 
 
+def live() -> None:
+    """The live server's model settings and memory, from its public health
+    endpoint — model names only; it never reports any part of a key."""
+    print("\n=== Live server: which models it runs")
+    url = os.environ.get("ENGINE_URL") or "https://muugi-production-8e01.up.railway.app"
+    try:
+        h = get(f"{url}/api/health")
+    except Exception as exc:  # noqa: BLE001
+        print(f"   could not read: {type(exc).__name__}")
+        return
+    llm = h.get("llm") or {}
+    for k in ("backend", "provider", "model", "bulk_model", "production", "production_grade", "key_present"):
+        if k in llm:
+            print(f"   {k}: {llm[k]}")
+    mem = h.get("memory") or {}
+    print(f"   memory: rss {mem.get('rss_mb')} MB, peak {mem.get('peak_mb')} MB, limit {mem.get('limit_mb')} MB")
+
+
 if __name__ == "__main__":
+    live()
     prices()
     rates()
     usage()

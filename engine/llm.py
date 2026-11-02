@@ -116,7 +116,13 @@ def is_test_grade() -> bool:
     stamps this onto the payload so a cheap run cannot be mistaken for a real
     one — see `report_grade()`.
     """
-    return provider() != "anthropic"
+    if provider() == "anthropic":
+        return False
+    if provider() != "openai_compatible":
+        return True
+    allowed = [m.strip().lower() for m in (settings.llm_production_models or "").split(",") if m.strip()]
+    model = (settings.llm_model or "").strip().lower()
+    return not (model and any(model.startswith(m) for m in allowed))
 
 
 def strong_model() -> str:
@@ -1212,19 +1218,26 @@ def _record_openai_usage(payload: dict) -> None:
     """
     try:
         usage = (payload or {}).get("usage") or {}
+        served = str((payload or {}).get("model") or "").lower()
+        bulk = (settings.llm_bulk_model or "").strip().lower()
+        strong = (settings.llm_model or "").strip().lower()
+        # A bulk call is one served by the bulk model when it differs from
+        # the strong one — the provider names the model it used.
+        is_bulk = bool(bulk) and bulk != strong and (served.startswith(bulk) or bulk.startswith(served or "-"))
         _persist_usage(int(usage.get("prompt_tokens") or 0),
-                       int(usage.get("completion_tokens") or 0))
+                       int(usage.get("completion_tokens") or 0), bulk=is_bulk)
     except Exception:  # noqa: BLE001 — accounting must never fail a call
         pass
 
 
-def _persist_usage(in_tok: int, out_tok: int) -> None:
+def _persist_usage(in_tok: int, out_tok: int, bulk: bool = False) -> None:
     """The daily rollup both provider paths write to. Never breaks a call."""
     if not in_tok and not out_tok:
         return
     try:
         from datetime import date
 
+        from sqlalchemy import func
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         from engine.db.models import LlmUsage
@@ -1232,15 +1245,20 @@ def _persist_usage(in_tok: int, out_tok: int) -> None:
 
         db = SessionLocal()
         try:
+            b_in, b_out = (in_tok, out_tok) if bulk else (0, 0)
+            t = LlmUsage.__table__.c
             stmt = pg_insert(LlmUsage.__table__).values(
-                day=date.today(), calls=1, input_tokens=in_tok, output_tokens=out_tok
+                day=date.today(), calls=1, input_tokens=in_tok, output_tokens=out_tok,
+                bulk_input_tokens=b_in, bulk_output_tokens=b_out,
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["day"],
                 set_={
-                    "calls": LlmUsage.__table__.c.calls + 1,
-                    "input_tokens": LlmUsage.__table__.c.input_tokens + in_tok,
-                    "output_tokens": LlmUsage.__table__.c.output_tokens + out_tok,
+                    "calls": t.calls + 1,
+                    "input_tokens": t.input_tokens + in_tok,
+                    "output_tokens": t.output_tokens + out_tok,
+                    "bulk_input_tokens": func.coalesce(t.bulk_input_tokens, 0) + b_in,
+                    "bulk_output_tokens": func.coalesce(t.bulk_output_tokens, 0) + b_out,
                 },
             )
             db.execute(stmt)
@@ -1317,8 +1335,8 @@ def report_grade() -> dict:
     judgement about a real person or company.
     """
     backend = provider()
-    if backend == "anthropic":
-        return {"backend": "anthropic", "production": True,
+    if not is_test_grade():
+        return {"backend": backend, "production": True,
                 "model": strong_model(), "bulk_model": bulk_model()}
     return {
         "backend": backend,

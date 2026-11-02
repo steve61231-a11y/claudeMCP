@@ -252,6 +252,9 @@ class LlmUsage(Base):
     calls = Column(Integer, default=0)
     input_tokens = Column(Integer, default=0)
     output_tokens = Column(Integer, default=0)
+    # Of those, what the bulk-tier model served — priced at its own rate.
+    bulk_input_tokens = Column(Integer, default=0)
+    bulk_output_tokens = Column(Integer, default=0)
 
 
 # ---------------------------------------------------------------------------
