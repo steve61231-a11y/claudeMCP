@@ -88,7 +88,9 @@ def _gazette_passages(issue: str) -> None:
     about = issue_match.of(issue)
     since = (datetime.utcnow() - timedelta(days=365)).date().isoformat()
     naming = worded = 0
-    for term in issue_profile.profile(issue, None)["search_terms"][:2]:
+    first = issue_profile.profile(issue, None)["search_terms"][0]
+    for term in (first, f"{first} on or before", f"{first} memoranda", f"{first} within days",
+                 f"{first} objections"):
         cards, count, why = kenya_law_records.search(term, params={"nature": "Gazette", "ordering": "-date",
                                                                    "date__gte": since})
         print(f"   GAZETTE “{term}”: {count} issues since {since}, {len(cards)} read {why or ''}", file=sys.stderr)
