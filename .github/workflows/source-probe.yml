@@ -38,6 +38,8 @@ jobs:
       # (scripts/record_probe.py) — a connector is never declared working
       # on a fake alone.
       - name: Install what the record connectors import
-        run: pip install pydantic==2.9.2 pydantic-settings==2.5.2 python-dotenv
+        # The engine's requirements without the heavy NLP and scraping
+        # stacks, which nothing in the record connectors imports.
+        run: grep -vE "^(spacy|hdbscan|scikit-learn|scrapling|yt-dlp|trafilatura|sentence-transformers)" engine/requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt python-dotenv
       - name: Run the record connectors
         run: PYTHONPATH=. python scripts/record_probe.py

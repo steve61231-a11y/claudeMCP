@@ -49,7 +49,7 @@ _SPANS = re.compile(r'<span class="me-3">\s*(.*?)\s*</span>', re.S)
 _SNIPPET = re.compile(r'<div class="ms-3 snippet text-muted">(.*?)</div>|<span>\s*(\[\.\.\.\].*?)</span>', re.S)
 _URI = re.compile(r"^/akn/ke/([A-Za-z]+)/(?:([a-z0-9-]+)/)?")
 #: "(Constitutional Petition E015 of 2022)", "(Civil Appeal 12 of 2021)".
-_CASE_NO = re.compile(r"\(((?:[A-Z][A-Za-z]*\s+){0,4}(?:Petition|Appeal|Application|Suit|Cause|Case|"
+_CASE_NO = re.compile(r"\(((?:(?:[A-Z][A-Za-z]*|and|of|&)\s+){0,7}(?:Petition|Appeal|Application|Suit|Cause|Case|"
                       r"Reference|Revision|Complaint|Claim|Judicial Review|Miscellaneous)[^()]*?\d{4})\)")
 _DATE = re.compile(r"\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|"
                    r"November|December)\s+(\d{4})\b")
@@ -59,6 +59,7 @@ def _text(html: str) -> str:
     # <mark> highlights are inside words' runs: "of <mark>Insurance</mark>;"
     # must read "of Insurance;", not "of Insurance ;".
     text = " ".join(unescape(re.sub(r"<[^>]+>", " ", html or "")).split())
+    text = re.sub(r"\(\s+", "(", text)
     return re.sub(r"\s+([;,.:)])", r"\1", text)
 
 
