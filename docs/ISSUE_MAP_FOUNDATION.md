@@ -232,6 +232,34 @@ spent; wall-clock time.
 
 ---
 
+## 4a. Progress
+
+- **Phase 0 — done (2 Nov 2026).**
+  - An issue is searched by its anchors and the phrases round them
+    (`decompose.search_terms`): the Safaricom sentence becomes "Safaricom
+    shares", "Safaricom sale", "Safaricom", "Vodacom" — never the
+    sentence, never "Kenyan", never "Kenyan Court" beside a real name.
+    The news sources also ask for the issue alone, for its background.
+  - The research dimensions anchor on the distinctive name, and history
+    asks for the three years before the window.
+  - A new principal is typed from its name, so "Kenya Government" is no
+    longer searched as "Hon Government", and it is searched as the press
+    prints it ("Kenyan Government", "Government of Kenya").
+  - SocialCrawl on the map: page by page, every page's cost counted
+    against `ISSUE_MAP_CREDIT_BUDGET` (300) before it is spent; no
+    50-credit composite, no comment threads; spend on the operator's card.
+  - Every map carries `quality` (`reports/issue_quality.py`): what was read
+    by kind and segment, Kenyan outlets, full text, official records,
+    reactions, video share, the pools, sentences on the record against
+    unchecked, removals, spend, the commit. Listed at `/api/admin/quality`
+    beside the reports, labelled `issue_map`.
+  - Found on the way, and fixed: the map's GDELT path still clamped dates
+    into the window (the Search report's 21 Oct defect); `_as_corpus`
+    dropped `date_estimated` and the full-text flag; the identity guard's
+    removals were streamed but never stored with the map.
+  - *Measured on the benchmark set:* waiting on OpenRouter credits and the
+    Railway deploy. The figures go here when they exist.
+
 ## 5. What the founder decides
 
 - **OpenRouter credits** — every model-written part of the map stops

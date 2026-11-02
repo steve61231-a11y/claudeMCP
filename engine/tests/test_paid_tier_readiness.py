@@ -20,9 +20,16 @@ class _Fake:
     def __init__(self, *a, **k):
         pass
 
+    credits_exhausted = False
+
     def fetch(self, query, aliases, ws, we):
         _Fake.calls.append(query)
         return [{"text": f"from {query}", "raw_payload": {"url": f"https://x/{len(_Fake.calls)}"}}]
+
+    def search_page(self, platform, path, query, page, ws, we, default_source_type="post", seen=None, **k):
+        _Fake.calls.append(query)
+        return [{"text": f"from {query} on {path}",
+                 "raw_payload": {"url": f"https://x/{len(_Fake.calls)}"}}], False
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +83,7 @@ def test_a_failing_paid_call_costs_its_own_query_only(monkeypatch):
     _tier(monkeypatch, "managed")
 
     class _Boom(_Fake):
-        def fetch(self, query, aliases, ws, we):
+        def search_page(self, *a, **k):
             raise RuntimeError("402 Payment Required")
 
     monkeypatch.setattr("engine.ingestion.socialcrawl_connector.SocialCrawlConnector", _Boom)
@@ -112,3 +119,34 @@ def test_the_tier_is_resolved_live_so_paying_needs_no_redeploy():
 def test_the_paid_budget_is_smaller_than_the_free_ones():
     """Free calls cost time; paid calls cost money."""
     assert issue_map.PAIR_BUDGET["socialcrawl"] <= issue_map.PAIR_BUDGET["gdelt"]
+
+
+def test_the_map_spends_no_more_than_its_budget_and_says_what_it_spent(monkeypatch):
+    """The map called the connector's whole fetch per pair — a 50-credit
+    composite and a comment call per post — with no ceiling. Each page's
+    cost is now counted before it is spent."""
+    from engine.ingestion import socialcrawl_connector as sc
+
+    _tier(monkeypatch, "managed")
+    monkeypatch.setattr(issue_map.settings, "issue_map_credit_budget", 10.0)
+    report: dict = {}
+    issue_map.acquire_intersection("Okiya Omtatah", "IMF", None, None,
+                                   identities=["Okiya Omtatah"], issue_terms=["IMF", "International Monetary Fund"],
+                                   report=report)
+    assert report["credits_spent"] <= 10.0
+    assert report["stopped"] == "the map's 10-credit budget was reached"
+    assert report["calls"] == len(_Fake.calls)
+    assert all("brand" not in path for path in issue_map.MAP_SOCIAL_ENDPOINTS)
+    assert all(path in {p for _, p, _, _ in sc.SEARCH_ENDPOINTS} for path in issue_map.MAP_SOCIAL_ENDPOINTS)
+
+
+def test_an_exhausted_account_stops_the_sweep_at_once(monkeypatch):
+    _tier(monkeypatch, "managed")
+
+    class _Empty(_Fake):
+        credits_exhausted = True
+
+    monkeypatch.setattr("engine.ingestion.socialcrawl_connector.SocialCrawlConnector", _Empty)
+    report: dict = {}
+    issue_map.acquire_intersection("P", "I", None, None, identities=["P"], issue_terms=["I"], report=report)
+    assert _Fake.calls == [] and report["stopped"] == "the SocialCrawl account ran out of credits"

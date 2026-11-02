@@ -81,8 +81,11 @@ def test_acquisition_sweeps_every_pair_not_one_query(monkeypatch):
         identities=["John Mbadi", "CS Mbadi", "Mbadi"],
         issue_terms=["SHA", "Social Health Authority"],
     )
-    assert len(seen) == min(6, issue_map.PAIR_BUDGET["gdelt"])
+    pairs = [p for p in seen if p[0]]
+    assert len(pairs) == min(6, issue_map.PAIR_BUDGET["gdelt"])
     assert ("John Mbadi", "SHA") in seen
+    # And the issue on its own, for the issue's background.
+    assert [p for p in seen if not p[0]] == [("", "SHA")][:issue_map.ISSUE_ALONE_BUDGET["gdelt"]]
 
 
 def test_one_failing_query_does_not_end_the_sweep(monkeypatch):
@@ -104,7 +107,8 @@ def test_one_failing_query_does_not_end_the_sweep(monkeypatch):
         "John Mbadi", "SHA", datetime(2026, 1, 1), datetime(2026, 6, 1),
         identities=["A", "B", "C"], issue_terms=["SHA"],
     )
-    assert len(calls) == 3
+    # Three pairs and the issue alone: the first failure ended none of them.
+    assert len(calls) == 3 + issue_map.ISSUE_ALONE_BUDGET["gdelt"]
 
 
 def test_google_news_gets_a_both_terms_query():

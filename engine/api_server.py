@@ -1869,7 +1869,8 @@ def admin_quality(name: str | None = None, limit: int = 20,
     try:
         query = (db.query(IntelligenceReport.id, IntelligenceReport.generated_at,
                           IntelligenceReport.window_start, IntelligenceReport.window_end,
-                          IntelligenceReport.payload["quality"], Politician.name)
+                          IntelligenceReport.payload["quality"], Politician.name,
+                          IntelligenceReport.period)
                  .join(Politician, Politician.id == IntelligenceReport.politician_id))
         if name and name.strip():
             query = query.filter(func.lower(Politician.name) == name.strip().lower())
@@ -1877,12 +1878,15 @@ def admin_quality(name: str | None = None, limit: int = 20,
                 .limit(max(1, min(int(limit), 100))).all())
         return {"ok": True, "reports": [
             {"report_id": str(rid), "subject": subject, "generated_at": str(at),
+             # Issue maps are filed beside reports as "issue:<issue>".
+             "kind": "issue_map" if str(period or "").startswith("issue:") else "report",
+             "issue": str(period)[6:] if str(period or "").startswith("issue:") else None,
              "window": [str(start), str(end)],
              # Absent on reports written before the measurement existed —
              # said, rather than shown as a report with nothing wrong.
              "quality": measured or {"measured": False,
                                      "error": "written before reports were measured"}}
-            for rid, at, start, end, measured, subject in rows]}
+            for rid, at, start, end, measured, subject, period in rows]}
     finally:
         db.close()
 

@@ -30,9 +30,12 @@ def test_gdelt_intersection_uses_the_article_timestamp(monkeypatch):
     articles = [
         {"url": "https://a.example/1", "title": "One", "seendate": "20260210T090000Z", "domain": "a.example"},
         {"url": "https://a.example/2", "title": "Two", "seendate": "20260615T113000Z", "domain": "a.example"},
-        # No seendate at all: falls back to the window end rather than crashing.
+        # No seendate at all: kept at the window end and MARKED estimated.
         {"url": "https://a.example/3", "title": "Three", "domain": "a.example"},
-        # Older than the window: clamped in, never left outside it.
+        # Older than the window: not this map's evidence (`period_date`). This
+        # test used to require it be clamped to the window's first day — the
+        # defect the Search report removed on 21 Oct, which made "published
+        # in 2020" read as "published this year".
         {"url": "https://a.example/4", "title": "Four", "seendate": "20200101T000000Z", "domain": "a.example"},
     ]
     monkeypatch.setattr(issue_map.http, "get", lambda *a, **k: _Resp({"articles": articles}))
@@ -42,7 +45,7 @@ def test_gdelt_intersection_uses_the_article_timestamp(monkeypatch):
 
     assert dates[0] == datetime(2026, 2, 10, 9, 0, 0)
     assert dates[1] == datetime(2026, 6, 15, 11, 30, 0)
-    assert dates[2] == we
-    assert dates[3] == ws  # clamped, not dropped and not fabricated
+    assert dates[2] == we and out[2]["raw_payload"]["date_estimated"] is True
+    assert len(out) == 3, "the 2020 article is dropped, never moved into the window"
     # The bug: every article sharing one date.
     assert len(set(dates)) > 1

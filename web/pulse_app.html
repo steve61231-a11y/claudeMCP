@@ -5767,8 +5767,27 @@
         `<div class="lbl">Social sources</div>
          <div class="muted" style="font-size:13px;margin-top:4px">${
            st2.tier==='managed'
-             ? 'Paid backbone active — '+fmt(st2.mentions||0)+' mentions from TikTok, Instagram, LinkedIn and X. '+esc(st2.reason||'')
+             ? 'Paid backbone active — '+fmt(st2.mentions||0)+' mentions from '+fmt(st2.calls||0)+' searches, '
+               +(st2.credits_spent!=null?fmt(st2.credits_spent)+' of '+fmt(st2.credit_budget)+' credits spent'
+                 +(st2.stopped?' ('+esc(st2.stopped)+')':'')+'. ':'')+esc(st2.reason||'')
              : 'Free sources only — '+esc(st2.reason||'')+'. News, Reddit, YouTube and web discovery were still swept.'}</div>`));
+    }
+    // How good this map is — measured (reports/issue_quality.py). The
+    // operator's: it is how a change to the map is judged better or not.
+    const q=m.quality||{};
+    if(q.kind==='issue_map'){
+      const r=q.read||{},pg=q.page||{},rm=q.removed||{};
+      host.appendChild(el('div','card op-only',q.measured
+        ?`<div class="lbl">Quality check</div>
+          <div style="font-size:14px;margin-top:6px">${esc(q.headline||'')}</div>
+          <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+            <span class="chip">${fmt(r.articles_full_text||0)} of ${fmt(r.articles||0)} articles read in full</span>
+            <span class="chip">${fmt(r.primary_records||0)} official records</span>
+            <span class="chip">${r.reaction_share!=null?r.reaction_share+'% reactions':'no reactions'}</span>
+            <span class="chip">${fmt(pg.on_record||0)} sentences on the record · ${fmt(pg.unchecked||0)} unchecked</span>
+            <span class="chip">removed: ${fmt(rm.grounding||0)} names · ${fmt(rm.identity||0)} identity · ${fmt(rm.scenario_check||0)} scenario</span>
+            ${q.commit?`<span class="chip">build ${esc(String(q.commit).slice(0,7))}</span>`:''}</div>`
+        :`<div class="lbl">Quality check</div><div class="muted" style="font-size:13px;margin-top:4px">${esc(q.error||'not measured')}</div>`));
     }
     if(disc&&disc.documents!=null&&!(disc.error||disc.skipped)){
       host.appendChild(el('div','card',

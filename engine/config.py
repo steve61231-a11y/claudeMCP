@@ -211,6 +211,10 @@ class Settings(BaseSettings):
     ingestion_refresh_hours: float = 0.0
     # Per-sweep, per-politician SocialCrawl credit cap for scheduled runs.
     scheduled_credit_budget: float = 200.0
+    # SocialCrawl credits one Issue Map may spend — the Search report's
+    # on-demand ceiling. The map had none: four pairs × the 50-credit
+    # brand-mentions composite plus a comment call per post found.
+    issue_map_credit_budget: float = 300.0
     # Optional JSON webhook for early-warning alerts (Slack/Make/WhatsApp bridge).
     alert_webhook_url: str = ""
     # Comma-separated names to track automatically in scheduled sweeps, so

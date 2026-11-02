@@ -35,7 +35,7 @@ _GDELT_MAX = 250
 def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) -> list[IngestedMention]:
     """GDELT DOC full-text search requiring BOTH terms (AND is implicit when
     space-separated quoted phrases are given)."""
-    query = f'"{principal}" "{issue}"'
+    query = f'"{principal}" "{issue}"' if principal else f'"{issue}"'
     params = {
         "query": query,
         "mode": "artlist",
@@ -66,8 +66,16 @@ def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) 
         # the same day, and the analyst dating events from it. GDELT ships the
         # real timestamp in `seendate`; parse it the way the main connector
         # does and clamp out-of-window items rather than inventing a date.
-        posted = GdeltConnector._parse_seendate(art.get("seendate")) or we
-        posted = min(max(posted, ws), we)
+        # The date of publication decides, and nothing may move it — the
+        # Search report's rule (`ingestion.base.period_date`), which this
+        # path never took: it clamped an older article to the window's first
+        # day and stamped an undated one with its last.
+        from engine.ingestion.base import period_date
+
+        dated = period_date(GdeltConnector._parse_seendate(art.get("seendate")), ws, we)
+        if dated is None:
+            continue
+        posted, estimated = dated
         out.append(
             IngestedMention(
                 platform=art.get("domain") or "news",
@@ -76,7 +84,8 @@ def _gdelt_intersection(principal: str, issue: str, ws: datetime, we: datetime) 
                 text=title,
                 posted_at=posted,
                 engagement={},
-                raw_payload={"url": url, "title": title, "source": "gdelt", "intersection": True},
+                raw_payload={"url": url, "title": title, "source": "gdelt", "intersection": True,
+                             "date_estimated": estimated},
             )
         )
     return out
@@ -91,6 +100,8 @@ def _both_terms_for_quoting_source(identity: str, issue_term: str) -> str:
     connector interface built for one subject, kept in one named place rather
     than repeated at each call site.
     """
+    if not identity:
+        return issue_term
     return f'{identity}" "{issue_term}'
 
 
@@ -118,18 +129,61 @@ def _youtube_intersection(identity: str, issue_term: str, ws: datetime, we: date
     return YouTubeConnector().fetch(f"{identity} {issue_term}", [], ws, we)
 
 
-def _socialcrawl_intersection(identity: str, issue_term: str,
-                             ws: datetime, we: datetime) -> list[IngestedMention]:
-    """The paid social backbone: TikTok, Instagram, LinkedIn, X, YouTube.
+#: The paid endpoints a map asks, best first for "who is connected to what":
+#: Kenya-located Google News with exact dates, then the platforms where
+#: officials and institutions post, then the rest. Hashtag endpoints need a
+#: hashtag, not a phrase, and the brand-mentions composite (50 credits) and
+#: comment threads (reactions, not stakeholders) are not asked at all.
+MAP_SOCIAL_ENDPOINTS = (
+    "/v1/google_news/search", "/v1/twitter/search/tweets", "/v1/facebook/search/posts",
+    "/v1/linkedin/search/posts", "/v1/youtube/search", "/v1/tiktok/search",
+    "/v1/instagram/search/reels", "/v1/threads/search", "/v1/reddit/search",
+)
 
-    This is where hashtag-level and platform-native material lives, and the
-    issue map has never asked for any of it — it swept the four free news and
-    forum sources and nothing else, so paying for SocialCrawl changed the
-    report and left the map exactly as it was.
-    """
-    from engine.ingestion.socialcrawl_connector import SocialCrawlConnector
 
-    return SocialCrawlConnector().fetch(f"{identity} {issue_term}", [], ws, we)
+def _socialcrawl_sweep(identities: list[str], issue_terms: list[str], ws, we, add,
+                       report: dict | None) -> None:
+    """The paid backbone, one page per endpoint per pair, every page's cost
+    counted against `issue_map_credit_budget` BEFORE it is spent. The map
+    used to call the connector's whole `fetch` per pair — the 50-credit
+    brand-mentions composite, seven searches, and a comment call for every
+    post found — with no ceiling at all."""
+    import uuid
+
+    from engine.ingestion import socialcrawl_connector as sc
+
+    connector = sc.SocialCrawlConnector()
+    endpoints = {path: (platform, kind) for platform, path, kind, _ in sc.SEARCH_ENDPOINTS}
+    budget = float(settings.issue_map_credit_budget)
+    spent, calls, stopped = 0.0, 0, None
+    seen = uuid.uuid4().hex
+    for identity, term in _pairs(identities, issue_terms, PAIR_BUDGET["socialcrawl"]):
+        query = f"{identity} {term}".strip()
+        for path in MAP_SOCIAL_ENDPOINTS:
+            if path not in endpoints:
+                continue
+            cost = sc.credit_cost(path)
+            if spent + cost > budget:
+                stopped = f"the map's {budget:g}-credit budget was reached"
+                break
+            if getattr(connector, "credits_exhausted", False):
+                stopped = "the SocialCrawl account ran out of credits"
+                break
+            platform, kind = endpoints[path]
+            try:
+                rows, _ = connector.search_page(platform, path, query, 1, ws, we, default_source_type=kind,
+                                                seen=seen if path in sc.SEEN_PATHS else None)
+            except Exception as exc:  # noqa: BLE001 — one refused page costs only itself
+                stages.current().failed(f"issue_map:socialcrawl:{platform}", exc)
+                continue
+            spent += cost
+            calls += 1
+            add(rows)
+        if stopped:
+            break
+    if report is not None:
+        report.update({"credits_spent": spent, "credit_budget": budget, "calls": calls,
+                       "stopped": stopped})
 
 
 # How many identity x issue-name pairs each source is asked for. GDELT and
@@ -137,7 +191,11 @@ def _socialcrawl_intersection(identity: str, issue_term: str,
 # the widest sweep; YouTube costs a yt-dlp subprocess per query, so it gets the
 # fewest. One literal query per source is what made the issue map shallow —
 # these numbers are the fix, and they are here to be tuned rather than buried.
-PAIR_BUDGET = {"gdelt": 8, "google_news": 8, "reddit": 4, "youtube": 3,
+#: Queries on the issue alone, per source — news sources only; social search
+#: on a bare issue term is a firehose of reactions.
+ISSUE_ALONE_BUDGET = {"gdelt": 1, "google_news": 2}
+
+PAIR_BUDGET = {"gdelt": 8, "google_news": 12, "reddit": 4, "youtube": 3,
                # Paid, and charged per call: fewer pairs, best-first.
                "socialcrawl": 4}
 
@@ -206,7 +264,13 @@ def acquire_intersection(
                 mentions.append(m)
 
     def _sweep(source: str, fetch):
-        for identity, term in _pairs(identities, issue_terms, PAIR_BUDGET[source]):
+        # The issue on its own as well, for the sources that carry the news
+        # record: the analysts need the issue's background, and an issue that
+        # is ABOUT the principal ("the government's sale of its Safaricom
+        # shares") is often reported without the principal's name in a form
+        # a pair query matches. The pools sort what comes back.
+        alone = [("", term) for term in issue_terms[:ISSUE_ALONE_BUDGET.get(source, 0)]]
+        for identity, term in _pairs(identities, issue_terms, PAIR_BUDGET[source]) + alone:
             try:
                 _add(fetch(identity, term, ws, we))
             except Exception as exc:  # noqa: BLE001 — one bad query must not end the sweep
@@ -232,7 +296,7 @@ def acquire_intersection(
         report.update({"tier": tier, "balance": balance, "reason": reason})
     if tier == "managed":
         before = len(mentions)
-        _sweep("socialcrawl", _socialcrawl_intersection)
+        _socialcrawl_sweep(identities, issue_terms, ws, we, _add, report)
         if report is not None:
             report["mentions"] = len(mentions) - before
     stages.current().ok("issue_map:social_tier", f"{tier} — {reason}")
@@ -320,10 +384,95 @@ def _ensure_subject(db, principal: str):
 
     subject = db.query(Politician).filter_by(name=principal).first()
     if subject is None:
-        subject = Politician(name=principal, aliases=[principal], keywords=[])
+        # Typed from its own name, so "Kenya Government" is not searched as
+        # "Hon Government" — person-shaped variants for a person only. An
+        # existing subject keeps the type the Search report gave it.
+        subject = Politician(name=principal, aliases=principal_variants(principal), keywords=[],
+                             subject_type=subject_type_for(principal))
         db.add(subject)
         db.commit()
     return subject
+
+
+_ORGANISATION_WORDS = re.compile(
+    r"\b(government|ministry|court|courts|judiciary|parliament|senate|assembly|county|commission|"
+    r"authority|board|agency|council|department|treasury|office|presidency|cabinet|"
+    r"bank|ltd|limited|plc|company|corporation|group|holdings|fund|party|university|union|"
+    r"society|association|coalition|movement|police|service|kra|sha|imf|iebc|eacc)\b", re.I)
+
+
+def issue_search_terms(issue: str, aliases: list[str] | None = None) -> list[str]:
+    """What the sources are asked for on the issue's side. The typed issue
+    went to every source as one quoted phrase; written as a sentence it
+    matched nothing anywhere, and a live map on one of the year's largest
+    business stories read 16 documents, every kept one from YouTube. Now:
+    the searchable terms decomposition finds (`decompose.search_terms`),
+    then the operator's aliases, which are names and kept as typed."""
+    terms = decompose.decompose(issue)["queries"] + [a for a in aliases or [] if a]
+    seen, out = set(), []
+    for t in terms:
+        key = " ".join(t.lower().split())
+        if key and key not in seen:
+            seen.add(key)
+            out.append(t)
+    return out or [issue]
+
+
+def map_identities(subject, principal: str) -> list[str]:
+    """The principal's search variants for a map: its own Kenyan forms first,
+    then whatever the subject row adds — without the person-shaped variants
+    ("Hon Government") when the principal is an institution, whatever type
+    an older row was stored with."""
+    from engine.ingestion import queries
+
+    stored = queries.text_variants(subject)
+    if subject_type_for(principal) == "organization":
+        stored = [v for v in stored if not re.match(r"^(hon|dr|mr|mrs|ms|prof)\.?\s", v, re.I)]
+    seen, out = set(), []
+    for v in principal_variants(principal) + stored:
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+class _SearchSubject:
+    """The two attributes `queries.intersection_discovery_variants` reads,
+    built from the map's own identities rather than the stored row's."""
+
+    def __init__(self, name: str, identities: list[str]):
+        self.name = name
+        self.aliases = identities[1:]
+        self.titles = []
+        self.swahili_terms = []
+        self.subject_type = "organization"
+
+
+def subject_type_for(principal: str) -> str:
+    """A principal is an organisation when its name says so; otherwise a
+    person, the type the rest of the engine assumes."""
+    return "organization" if _ORGANISATION_WORDS.search(principal or "") else "politician"
+
+
+def principal_variants(principal: str) -> list[str]:
+    """How the press prints an institution named with the country in it:
+    "Kenya Government" is "the Kenyan government" and "the Government of
+    Kenya" in every newsroom, and searched only as typed it matched neither."""
+    name = re.sub(r"\s+", " ", (principal or "").strip())
+    out = [name]
+    m = re.match(r"^(Kenya|Kenyan)\s+(.+)$", name, re.I)
+    if m:
+        rest = m.group(2)
+        out += [f"Kenyan {rest}", f"Kenya {rest}", f"{rest} of Kenya"]
+    m = re.match(r"^(.+?)\s+of\s+Kenya$", name, re.I)
+    if m:
+        out += [f"Kenyan {m.group(1)}", f"Kenya {m.group(1)}"]
+    seen, unique = set(), []
+    for v in out:
+        if v.lower() not in seen:
+            seen.add(v.lower())
+            unique.append(v)
+    return unique
 
 
 def _persist_intersection(db, subject, mentions, documents, issue: str) -> dict:
@@ -477,7 +626,12 @@ def build_issue_map(
             "market_anchored": relevance.needs_market_anchor(principal, issue),
         }
         publish("stage", "Nothing on topic — stopping before analysis.")
-        return _nothing_on_topic(principal, issue, ws, we, mentions, acquisition, report)
+        out = _nothing_on_topic(principal, issue, ws, we, mentions, acquisition, report)
+        from engine.reports import issue_quality
+
+        # The thin map is the one most worth measuring.
+        out["quality"] = issue_quality.assess(out, mentions)
+        return out
 
     # How many of these actually name both halves. A map built entirely from
     # background is a real result — "the public record does not connect these
@@ -551,7 +705,8 @@ def build_issue_map(
     # "Also goes for the issue map as well" — the standing instruction on
     # every change in this product. An invented ethnic attribution is no
     # less defamatory for appearing on the intersection page.
-    publish("protected_terms", protected_terms.redact(analysis, mentions))
+    identity_report = protected_terms.redact(analysis, mentions)
+    publish("protected_terms", identity_report)
     prose.map_prose(analysis, dates.britishise)
     if analysis.get("verdict"):
         analysis["verdict"] = our_analysis(analysis["verdict"])
@@ -574,6 +729,9 @@ def build_issue_map(
         "coverage": digest["coverage"],
         "intersection": analysis,
         "grounding": grounding_result,
+        # Kept with the map, not only streamed: what the identity guard
+        # removed is part of the record of how the page was made.
+        "protected_terms": identity_report,
         "evidence_sample": sample,
         "thin": digest["coverage"]["mentions_total"] == 0,
     }
@@ -636,6 +794,11 @@ def build_issue_map(
     # spiderweb this is explicitly not.
     _publish_graph(principal, issue, analysis, payload["issue_framework"],
                    mentions, payload, publish)
+    # Measured, not believed — Phase 0 of docs/ISSUE_MAP_FOUNDATION.md.
+    from engine.reports import issue_quality
+
+    payload["quality"] = issue_quality.assess(payload, mentions)
+    publish("quality", payload["quality"])
     return payload
 
 
@@ -880,9 +1043,12 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
     try:
         db = SessionLocal()
         subject = _ensure_subject(db, principal)
-        identities = queries.text_variants(subject)
-        issue_terms = queries.issue_variants(issue, issue_aliases)
-        discovery = queries.intersection_discovery_variants(subject, issue, issue_aliases)
+        identities = map_identities(subject, principal)
+        issue_terms = issue_search_terms(issue, issue_aliases)
+        # The discovery layers take the issue's searchable terms, never the
+        # typed sentence, and the principal's own variants.
+        discovery = queries.intersection_discovery_variants(
+            _SearchSubject(principal, identities), issue_terms[0], issue_terms[1:])
     except Exception:  # noqa: BLE001 — no database is not a reason to fail
         traceback.print_exc()
         if db is not None:
@@ -891,7 +1057,9 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             except Exception:
                 pass
         publish("stage", f"Searching for “{principal}” × “{issue}”…")
-        fresh = acquire_intersection(principal, issue, ws, we)
+        fresh = acquire_intersection(principal, issue, ws, we,
+                                     identities=principal_variants(principal),
+                                     issue_terms=issue_search_terms(issue, issue_aliases))
         return _as_corpus(fresh), {"stored": False, "reason": "database unavailable"}
 
     try:
@@ -918,7 +1086,7 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         match_identities = relevance.merge_terms(identities, principal_parts["identities"])
         match_issue_terms = relevance.merge_terms(issue_terms, issue_parts["identities"])
 
-        dimensions = decompose.research_dimensions(principal, issue)
+        dimensions = decompose.research_dimensions(principal, issue, window_start=ws)
         dimension_queries = [q for d in dimensions for q in d["queries"]]
         if relevance.needs_market_anchor(principal, issue):
             dimension_queries = [relevance.anchor_query(q) for q in dimension_queries]
@@ -1036,6 +1204,12 @@ def _as_corpus(mentions) -> list[dict]:
                 "engagement": m.get("engagement") or {},
                 "language": m.get("language"),
                 "source_url": raw.get("url") or m.get("source_url"),
+                # Undated items carry the flag through, as they do in the
+                # Search report: "we could not date this" must never read as
+                # a date in the map's timeline.
+                "date_estimated": bool(raw.get("date_estimated")),
+                # Read in full — the article enricher keeps the body here.
+                "full_text": bool(raw.get("article_text")),
                 # Which half of the question it answers — "core" names both.
                 # Dropped here, the connection could not tell "named together,
                 # never linked" from "never named together".

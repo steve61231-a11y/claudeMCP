@@ -45,6 +45,26 @@ _CAPITALISED = re.compile(r"\b([A-Z][a-z’'\-]+(?:\s+(?:of|the|and|for)\s+)?(?:
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9’'\-]+")
 
 
+#: Words that name a place or a people, not an issue or an actor. "Kenyan"
+#: on its own matched every Kenyan document as "about the issue"; a name
+#: made only of these and generic institution words ("Kenyan Court") is a
+#: description, not the thing a source would print as a name.
+_DEMONYMS = frozenset("""
+kenya kenyan kenyans african africa east west international national county
+""".split())
+_GENERIC_INSTITUTION = frozenset("""
+court courts government state parliament senate assembly ministry cabinet
+office president presidency commission authority board agency council
+department judiciary high supreme appeal public
+""".split())
+
+#: An issue with this many words or more is a sentence someone typed, not a
+#: name a source prints: "Kenyan Court stopping the Kenyan government's sale
+#: of its Safaricom shares to Vodacom" was searched whole and found nothing.
+SENTENCE_WORDS = 7
+MAX_SEARCH_TERMS = 6
+
+
 def _clean(term: str) -> str:
     return re.sub(r"\s+", " ", term).strip(" .,:;–—-")
 
@@ -91,17 +111,110 @@ def _dedupe(items) -> list[str]:
     return out
 
 
+def _words_of(name: str) -> list[str]:
+    return [w.lower().strip("’'") for w in _WORD.findall(name)]
+
+
+def is_descriptive(name: str) -> bool:
+    """A name made only of demonyms and generic institution words."""
+    words = [w for w in _words_of(name) if w not in _STOP]
+    return bool(words) and all(w in _DEMONYMS or w in _GENERIC_INSTITUTION
+                               or w.rstrip("s") in _GENERIC_INSTITUTION for w in words)
+
+
+def is_sentence(text: str) -> bool:
+    return len(_WORD.findall(text or "")) >= SENTENCE_WORDS
+
+
+def anchors(text: str) -> list[str]:
+    """The names a source would actually print, most distinctive first:
+    names with a word of their own (Safaricom, Vodacom, Okiya Omtatah), then
+    acronyms, then descriptive names (National Treasury). A demonym alone
+    is never one."""
+    found = names(text)
+    distinctive = [n for n in found if not is_descriptive(n)]
+    descriptive = [n for n in found if is_descriptive(n)
+                   and len([w for w in _words_of(n) if w not in _DEMONYMS]) >= 1
+                   and not all(w in _DEMONYMS for w in _words_of(n))]
+    # A descriptive name that is a single generic word ("Court") says nothing.
+    descriptive = [n for n in descriptive if len(_words_of(n)) >= 2
+                   and not all(w in _DEMONYMS for w in _words_of(n)[1:])]
+    # A descriptive name stands in only when there is nothing more
+    # distinctive: "a Kenyan court ruled…" is every court story in the
+    # country, so beside "Safaricom" it would let any of them count as the
+    # issue.
+    specific = _dedupe([*distinctive, *acronyms(text)])
+    return specific or _dedupe(descriptive)
+
+
+def _nounish(word: str) -> bool:
+    """A content word a headline would set beside a name: not a stopword,
+    not a verb form ("stopping", "nullified"), not a possessive."""
+    w = word.lower().strip("’'")
+    return (len(w) > 3 and w not in _STOP and w not in _DEMONYMS
+            and not w.endswith(("ing", "ed")) and not w.endswith("'s") and word[:1].islower())
+
+
+def phrases(text: str, anchor_names: list[str]) -> list[str]:
+    """Short phrases a headline would carry, built round each anchor from the
+    words beside it in the text: the word after it ("Safaricom shares"), and
+    the noun in "<noun> of its <anchor>" ("Safaricom sale"). Deterministic,
+    no model; a verb or an acronym is never a pairing word."""
+    out: list[str] = []
+    tokens = _WORD.findall(text or "")
+    lowered = [t.lower().strip("’'") for t in tokens]
+    for anchor in anchor_names[:3]:
+        first = _words_of(anchor)
+        if not first or is_descriptive(anchor) or anchor.isupper():
+            continue
+        n = len(first)
+        for i in range(len(lowered) - n + 1):
+            if lowered[i:i + n] != first:
+                continue
+            after = tokens[i + n] if i + n < len(tokens) else ""
+            if _nounish(after):
+                out.append(f"{anchor} {after}")
+            # "<noun> of [its|the|a] <anchor>"
+            j = i - 1
+            while j >= 0 and lowered[j] in ("its", "the", "a", "an", "his", "her", "their"):
+                j -= 1
+            if j >= 1 and lowered[j] == "of" and _nounish(tokens[j - 1]):
+                out.append(f"{anchor} {tokens[j - 1]}")
+            break
+    return _dedupe(out)
+
+
+def search_terms(text: str) -> list[str]:
+    """What to put in a search box for this half of the question. A short
+    issue as typed comes first ("Finance Bill 2024", "SHA"); a sentence
+    never does. Then the anchors and the phrases built round them."""
+    text = (text or "").strip()
+    found = anchors(text)
+    built = phrases(text, found)
+    lead = [] if is_sentence(text) else [text]
+    # A lone capitalised word that opens the box ("Odious debt case…") is
+    # sentence case, not a name; it is searched only inside its phrase.
+    opener = (_WORD.findall(text) or [""])[0]
+    found = [a for a in found if not (a == opener and " " not in a and not a.isupper()
+                                      and any(p.startswith(a + " ") for p in built))]
+    terms = _dedupe([*lead, *built, *found])
+    if not terms:
+        terms = [text] if text else []
+    return terms[:MAX_SEARCH_TERMS]
+
+
 def decompose(text: str) -> dict:
     """One box of free text, broken into its usable parts."""
     text = (text or "").strip()
-    found_names = names(text)
+    found_names = [n for n in names(text) if not all(w in _DEMONYMS for w in _words_of(n))]
     found_acronyms = acronyms(text)
     found_keywords = keywords(text)
 
     # What a document must mention for this half of the intersection to be
     # present. A name or an acronym is enough; the raw phrase is included so an
     # exact match still counts, but it is never the ONLY thing accepted.
-    identities = _dedupe([*found_names, *found_acronyms, text])
+    specific = anchors(text)
+    identities = _dedupe([*(specific or found_names), *found_acronyms, text])
     # Keywords alone are too loose to prove identity ("debt" is not Omtatah),
     # so they are search terms only — except when nothing else was found, in
     # which case they are all we have.
@@ -114,14 +227,16 @@ def decompose(text: str) -> dict:
         "acronyms": found_acronyms,
         "keywords": found_keywords,
         "identities": identities,
+        "anchors": anchors(text),
+        "sentence": is_sentence(text),
         # Most specific first, so a source that truncates our query list still
-        # gets the best ones.
-        "queries": _dedupe([text, *found_names, *found_acronyms,
-                            " ".join(found_keywords[:3]) if found_keywords else ""]),
+        # gets the best ones — and never a typed sentence, which no source
+        # prints and every source answers with nothing.
+        "queries": search_terms(text),
     }
 
 
-def research_dimensions(principal: str, issue: str) -> list[dict]:
+def research_dimensions(principal: str, issue: str, window_start=None) -> list[dict]:
     """The angles a deep investigation should cover, as searchable queries.
 
     An issue map is not one search. "Okiya Omtatah × IMF" is a question about
@@ -129,8 +244,17 @@ def research_dimensions(principal: str, issue: str) -> list[dict]:
     and asking a search engine the whole sentence finds none of it.
     """
     left, right = decompose(principal), decompose(issue)
-    lead_left = (left["names"] or left["acronyms"] or [left["raw"]])[0]
-    lead_right = (right["names"] or right["acronyms"] or [right["raw"]])[0]
+    # The anchor — the most distinctive name — not the first capitalised
+    # span: "Kenyan Court stopping … Safaricom shares to Vodacom" asked every
+    # dimension about "Kenyan Court".
+    lead_left = (left["anchors"] or [left["raw"]])[0]
+    lead_right = (right["anchors"] or right["queries"] or [right["raw"]])[0]
+    # Years BEFORE the window, counted from it. The history dimension asked
+    # for 2019, 2020 and 2021 whatever the issue and whenever it was run.
+    from datetime import datetime as _dt
+
+    start_year = (window_start or _dt.utcnow()).year
+    earlier = [str(start_year - k) for k in (1, 2, 3)]
 
     def q(text: str) -> str:
         return re.sub(r"\s+", " ", text).strip()
@@ -159,7 +283,7 @@ def research_dimensions(principal: str, issue: str) -> list[dict]:
         {"dimension": "history",
          "why": "older material a recency-ranked search buries",
          "queries": [q(f'"{lead_left}" "{lead_right}" {probe}') for probe in
-                     ("2019", "2020", "2021", "origins", "first")]},
+                     (*earlier, "origins", "first")]},
     ]
     for entry in dimensions:
         entry["queries"] = _dedupe(entry["queries"])

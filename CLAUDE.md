@@ -386,6 +386,22 @@ source states (`evidence/upcoming.py`, no model: a calendar date after
 today in a sentence naming a hearing, sitting, ruling or deadline, cited),
 and a reaction is never a decision point.
 
+**An issue is searched by what a source prints, not by what the client
+typed.** A live map read 16 documents, all YouTube, on one of the year's
+largest business stories: the issue went to every source as one quoted
+sentence, decomposition anchored on "Kenyan Court" and let "Kenyan" alone
+count as the issue, history asked for 2019-2021 whatever the window, and
+"Kenya Government" was searched as "Hon Government". `decompose.
+search_terms` gives the anchors (distinctive names, then acronyms, a
+descriptive name only when there is nothing else) and the phrases beside
+them ("Safaricom shares", "Safaricom sale" — a noun, never a verb);
+`issue_map.issue_search_terms`, `principal_variants`, `map_identities` and
+`subject_type_for` are the map's own, so the Search report's query code is
+untouched. Every map carries `quality` (`reports/issue_quality.py`) — judge
+a change to the map by it, on the benchmark set in
+`docs/ISSUE_MAP_FOUNDATION.md`. SocialCrawl on the map is page by page
+against `ISSUE_MAP_CREDIT_BUDGET`.
+
 **A scenario's probability is arithmetic over a judgement, and the page
 recomputes it.** The client's model for the Issue Map's scenario section is
 a 2022 election paper: risk drivers (definition, impact, how each reads
@@ -984,6 +1000,7 @@ Worth setting on anything larger than a 512MB instance:
 | `LLM_MAX_CONCURRENCY` | A hard ceiling on model calls in flight across the whole process. Unset means none, which is what the paid Anthropic path wants; set it on a metered or rate-limited backend. |
 | `INGESTION_DEADLINE_SECONDS` | Ceiling on collection. Default 240. Unstarted queries are recorded as not asked; the corpus compounds, so the next run finds what this one left. |
 | `BACK_OFFICE_DEADLINE_SECONDS` | Ceiling on the work that runs after delivery (resolution, knowledge graph, claim audit). Default 900. Nobody waits on it. |
+| `ISSUE_MAP_CREDIT_BUDGET` | SocialCrawl credits one Issue Map may spend. Default 300, the Search report's ceiling. |
 | `ENABLE_SEARCH_DEMAND` / `SEARCH_DEMAND_DEADLINE_SECONDS` | What people searched for, Kenya and worldwide. On by default; uses SocialCrawl when it has credits and Google/Wikipedia keylessly when it does not. Default deadline 90s, its own. |
 
 Model backend — either Anthropic directly, or anything OpenAI-compatible:
