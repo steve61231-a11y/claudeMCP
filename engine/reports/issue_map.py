@@ -838,19 +838,37 @@ _PERSONAL_CAUSE = re.compile(
     r"|\bChildren(?:['’]s)? (?:Case|Cause|Appeal)\b|\((?:Family|Deceased|Child|Minor)s?\)")
 #: A party Kenya Law anonymised to initials ("JMA", "MNK & another").
 _INITIALS = re.compile(r"[A-Z]{1,4}(?:\s*(?:&|and)\s+(?:another|\d+ others?))?")
-#: A party that is a body, not a private person: the state, a company, an
-#: association, a public office. A petition by a citizen against a Cabinet
-#: Secretary is public; a parent suing a parent over fees is not.
+#: A party that is a public body or a public-interest one: the state, a
+#: public office, a union, an association. A petition by a citizen against
+#: a Cabinet Secretary is public; a parent suing a parent over fees is not,
+#: and nor is an employer and an employee ("Bamburi PLC v Macharia" over a
+#: school-fees allowance) — a company alone is not a public party.
 _INSTITUTION = re.compile(
     r"\b(?:Republic|Attorney General|Government|Cabinet Secretary|Principal Secretary|Ministry|County|"
-    r"Authority|Commission|Council|Board|Fund|Service|Agency|Corporation|Company|Limited|Ltd|PLC|Bank|"
-    r"Union|Association|Society|Trust|Institute|University|College|School|Hospital|Assembly|Parliament|"
+    r"Authority|Commission|Council|Board|Fund|Service|Agency|"
+    r"Union|Association|Society|Institute|University|College|School|Hospital|Assembly|Parliament|"
     r"Senate|Speaker|Clerk|Registrar|Director|Commissioner|Inspector|Treasury|Party|Coalition|Committee|"
-    r"Tribunal|Office|Department|Centre|Center|Foundation|Network|Forum|Movement|Alliance|Federation|"
-    r"Chamber|Holdings|Group|Executive|Controller|Auditor|Ombudsman|Directorate|Secretariat|Police|"
+    r"Tribunal|Office|Department|Foundation|Forum|Movement|Alliance|Federation|"
+    r"Chamber|Executive|Controller|Auditor|Ombudsman|Directorate|Secretariat|Police|"
     r"National|Kenya|Cooperative|Sacco|Church|Diocese|Mosque|President|Governor|Senator|Minister|"
     r"Chief Justice|Judge|Magistrate|Member of Parliament|Mayor|Chairperson|Chief Executive)\b"
     r"|\bH\.\s?E\.|\bHon\.")
+
+
+def _acronym_as_written(acronym: str, title: str, snippet: str) -> bool:
+    """An acronym as a source writes one: in capitals in the title (where
+    names are in title case — "Velji Dharamshi Sha" is a surname), or in
+    capitals inside prose, not inside a block of capitals where every name
+    is upper case ("VELJI DHARAMSHI SHA")."""
+    word = re.compile(rf"(?<![A-Za-z]){re.escape(acronym)}(?![A-Za-z])")
+    if word.search(title or ""):
+        return True
+    for m in word.finditer(snippet or ""):
+        around = snippet[max(0, m.start() - 80):m.end() + 80]
+        letters = [c for c in around if c.isalpha()]
+        if letters and sum(c.islower() for c in letters) / len(letters) >= 0.5:
+            return True
+    return False
 
 
 def _is_institution(party: str) -> bool:
@@ -907,12 +925,13 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
         if not about(words):
             return "does not name the issue"
         acronym = about.acronym_only(words)
-        if acronym and (any(_INITIALS.fullmatch(p) for p in record.get("parties") or [])
-                        or not record.get("parties")):
-            return "names the acronym alone, where it may be a party's initials"
         parties = record.get("parties") or []
+        if acronym and (any(_INITIALS.fullmatch(p) for p in parties) or not parties
+                        or not _acronym_as_written(acronym, title, record.get("snippet") or "")):
+            return "names the acronym alone, as initials or part of a name"
         if record.get("kind") == "judgment" and parties and not about(title) \
-                and not any(_is_institution(p) for p in parties):
+                and not any(_is_institution(p) for p in parties) \
+                and not any(relevance.mentions_any(p, identities) for p in parties):
             return "a dispute between private parties that mentions the issue"
         return None
 

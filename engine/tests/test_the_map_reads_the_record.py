@@ -256,6 +256,13 @@ def _card(title, snippet, uri="/akn/ke/judgment/kehc/2025/1/eng@2025-01-10"):
      "[2025] KECMT 6 (KLR)", "Company, Super Shares Limited", "issue"),
     ("the IMF loan", "Okoiti & 8 others v H. E. (Former) President Uhuru Muigai Kenyatta & 33 others "
      "(Petition E216 of 2025) [2025] KEHC 9055 (KLR)", "loans from the IMF were contracted", None),
+    # The second live run: a surname, and an employer and an employee.
+    ("SHA", "MX Frys Limited v Velji Dharamshi Sha & 3 others [2025] KEHC 1236 (KLR)",
+     "APPELLANT -V E R S U S – VELJI DHARAMSHI SHA", "initials"),
+    ("school fees", "Bamburi PLC v Macharia (Employment and Labour Relations Cause E753 of 2022) [2025] KEELRC 1715 "
+     "(KLR)", "the school fees allowance was withdrawn", "private"),
+    ("SHA", "Kenya Medical Association v Cabinet Secretary for Health (Petition E5 of 2025) [2025] KEHC 2 (KLR)",
+     "the transition from NHIF to SHA was unlawful", None),
 ])
 def test_a_court_card_stays_only_as_the_record_of_the_issue(monkeypatch, issue, title, snippet, reason):
     """Each set-aside from the first live run, by its own reason — and the

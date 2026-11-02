@@ -74,7 +74,7 @@ def test_a_speaker_and_a_lender_role_are_steps_and_counted():
     records = [_speech("Hon. Jane Wanjiru (Nairobi County, UDA)"), _speech("Hon. John Mbadi (Suba South, ODM)"),
                _project("MINISTRY OF HEALTH")]
     out = paths.build(records, "Jane Wanjiru", ["Jane Wanjiru"], "SHA")
-    assert out["counts"] == {"court": 0, "parliament": 1, "lender": 0}
+    assert out["counts"] == {"court": 0, "parliament": 1, "lender": 0, "rulings": 0}
     assert out["paths"][0]["steps"][0]["record"]["business"] == "PETITIONS"
     out = paths.build(records, "Ministry of Health", ["Ministry of Health"], "SHA")
     assert out["counts"]["lender"] == 1 and out["paths"][0]["steps"][0]["relation"] == "implementing agency of"
@@ -113,3 +113,19 @@ def test_the_map_carries_the_path_and_never_stores_the_raw_records():
     assert 'out["connection_paths"] = _connection_paths(' in src, "a thin map may still have a record tying them"
     page = (Path(__file__).resolve().parents[2] / "web" / "pulse_app.html").read_text()
     assert "renderConnectionPaths(m.connection_paths,m)" in page
+
+
+def test_one_case_is_one_step_however_many_rulings_it_has():
+    """A live map said "a party to 4 court cases" over four rulings in one
+    consolidated petition."""
+    rulings = [_case(t, snippet="sale of Safaricom shares", date=d) for t, d in [
+        ("Gachoka & 3 others v Cabinet Secretary, National Treasury & Economic Planning & 11 others (Petition E051 "
+         "of 2026 & E836 & E831 of 2025 (Consolidated)) [2026] KEHC 8409 (KLR)", datetime(2026, 6, 9)),
+        ("Gachoka & 3 others v Cabinet Secretary, National Treasury and Economic Planning & 11 others (Petition "
+         "E051, E836 & E831 of 2026 (Consolidated)) [2026] KEHC 13493 (KLR)", datetime(2026, 9, 15))]]
+    out = paths.build(rulings, "Kenya Government", ["Kenya Government"], "Safaricom shares sale")
+    assert out["counts"]["court"] == 1 and out["counts"]["rulings"] == 2
+    step = out["paths"][0]
+    assert step["steps"][0]["to"] == "Petition E051 of 2026"
+    assert [r["citation"] for r in step["rulings"]] == ["[2026] KEHC 13493 (KLR)", "[2026] KEHC 8409 (KLR)"]
+    assert out["lead"] == "On the record, Kenya Government is a party to 1 court case on it (2 rulings)."

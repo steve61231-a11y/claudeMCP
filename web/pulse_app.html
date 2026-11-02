@@ -6241,9 +6241,13 @@
       const printed=s0.as_printed?`<div style="font-size:13px;margin-top:6px">As printed: “${esc(s0.as_printed)}”`+
         (s0.basis&&s0.basis!=='named'?` <span class="pill amber" style="margin-left:6px">via ${esc(s0.basis)}</span>`:'')+'</div>':'';
       const words=(p.steps.find(st=>st.words)||{}).words;
+      // One case, however many rulings: each ruling opens its own record.
+      const rl=(p.rulings||[]).filter(x=>x&&x.date);
+      const rulings=rl.length>1?`<div style="font-size:13px;margin-top:6px">${fmt(rl.length)} rulings: `+
+        rl.map(x=>x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(ukDate(x.date))}</a>`:esc(ukDate(x.date))).join(' · ')+'</div>':'';
       row.innerHTML=`<div style="line-height:2">${chain}</div>
         <div class="muted" style="font-size:12.5px;margin-top:4px">${where}${r.url?` · <a href="${esc(r.url)}" target="_blank" rel="noopener">Open the record</a>`:''}</div>
-        ${printed}${words?`<div class="muted" style="font-size:13px;margin-top:6px">“${esc(words)}”</div>`:''}`;
+        ${printed}${rulings}${words?`<div class="muted" style="font-size:13px;margin-top:6px">“${esc(words)}”</div>`:''}`;
       c.appendChild(row);
     });
     if((cp.paths_total||0)>ps.length)c.appendChild(el('div','muted chart-note',
@@ -6884,6 +6888,20 @@
           {statement:'Patient advocates alleged that Amani Mfano knew Afya Mfano facilities were charging registered members.',status:'alleged',independent_sources:1,first_seen:'2026-07-09',
             sources:[{publisher:'Mfano Voice',url:'https://mfano-voice.example/advocates',published_at:'2026-07-09',quote:'knew the facilities were charging registered members'}]}],
         timeline:[]},
+      // Fictional, in the shape evidence/paths.py builds: one case, two
+      // rulings, a role the record states; every link is .example.
+      connection_paths:{state:'measured',principal:'Amani Mfano (fictional)',issue:'Afya Mfano',paths_total:1,
+        counts:{court:1,parliament:0,lender:0,rulings:2},reach:{court:3,parliament:2,lender:0},sources_failed:[],
+        lead:'On the record, Amani Mfano (fictional) is a party to 1 court case on it (2 rulings).',
+        paths:[{kind:'court',role:'answered',date:'2026-08-14',
+          steps:[{from:'Amani Mfano (fictional)',relation:'named as respondent in',to:'Petition E000 of 2026',
+                  as_printed:'Governor, Mfano County & 2 others',basis:'named',
+                  record:{kind:'judgment',id:'Petition E000 of 2026',court:'High Court',date:'2026-08-14',url:'https://records.example/petition-e000-ruling-2'}},
+                 {from:'Petition E000 of 2026',relation:'concerns',to:'Afya Mfano',
+                  record:{kind:'judgment',id:'Petition E000 of 2026',date:'2026-08-14',url:'https://records.example/petition-e000-ruling-2'},
+                  words:'the petitioners say registered members of Afya Mfano were charged at county facilities'}],
+          rulings:[{date:'2026-08-14',url:'https://records.example/petition-e000-ruling-2'},{date:'2026-07-21',url:'https://records.example/petition-e000-ruling-1'}]}],
+        next:[{date:'2026-11-18',event:'Mention before the High Court — Petition E000 of 2026',publisher:'Cause list',url:'https://records.example/cause-list'}]},
       // Fictional scenarios, in the shape reports/scenarios.py builds: each
       // path's figure is the product of its branches (60×70=42, 60×30=18).
       scenarios:{state:'modelled',

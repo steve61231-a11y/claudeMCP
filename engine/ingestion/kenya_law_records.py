@@ -48,9 +48,15 @@ _TITLE = re.compile(r'<h5 class="card-title">\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)
 _SPANS = re.compile(r'<span class="me-3">\s*(.*?)\s*</span>', re.S)
 _SNIPPET = re.compile(r'<div class="ms-3 snippet text-muted">(.*?)</div>|<span>\s*(\[\.\.\.\].*?)</span>', re.S)
 _URI = re.compile(r"^/akn/ke/([A-Za-z]+)/(?:([a-z0-9-]+)/)?")
-#: "(Constitutional Petition E015 of 2022)", "(Civil Appeal 12 of 2021)".
+#: "(Constitutional Petition E015 of 2022)", "(Civil Appeal 12 of 2021)",
+#: and a consolidated cause with its own bracket inside: "(Petition E051 of
+#: 2026 & E836 & E831 of 2025 (Consolidated))" — which the first pattern
+#: missed, so the page showed a whole title where a case number belonged.
 _CASE_NO = re.compile(r"\(((?:(?:[A-Z][A-Za-z]*|and|of|&)\s+){0,7}(?:Petition|Appeal|Application|Suit|Cause|Case|"
-                      r"Reference|Revision|Complaint|Claim|Judicial Review|Miscellaneous)[^()]*?\d{4})\)")
+                      r"Reference|Revision|Complaint|Claim|Judicial Review|Miscellaneous)\b"
+                      r"(?:[^()]|\(Consolidated[^()]*\))*?\d{4}(?:\s*\(Consolidated\))?)\)")
+_CASE_KEY = re.compile(r"\b(Petition|Appeal|Application|Suit|Cause|Case|Reference|Revision|Complaint|Claim|"
+                       r"Judicial Review|Miscellaneous)\b(?:\s+No\.?)?\s+([A-Z]{0,3}\s?\d+)[^()]*?\bof\s+(\d{4})")
 _DATE = re.compile(r"\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|"
                    r"November|December)\s+(\d{4})\b")
 
@@ -118,6 +124,25 @@ def sides(title: str) -> dict[str, list[str]]:
 def case_number(title: str) -> str | None:
     m = _CASE_NO.search(title or "")
     return " ".join(m.group(1).split()) if m else None
+
+
+def citation(title: str) -> str | None:
+    """The neutral citation — "[2026] KEHC 8409 (KLR)" — which names one
+    ruling where the case number names the whole cause."""
+    m = re.search(r"\[\d{4}\]\s+[A-Z]{2,8}\s+\d+\s+\(KLR\)", title or "")
+    return m.group(0) if m else None
+
+
+def case_key(number: str | None, court_code: str | None = None) -> str | None:
+    """One case however many rulings it has: "Petition E051 of 2026", from
+    "Petition E051 of 2026 & E836 & E831 of 2025 (Consolidated)" and from
+    "Petition E051, E836 & E831 of 2026 (Consolidated)" alike. A live map
+    counted one consolidated petition's four rulings as four cases."""
+    m = _CASE_KEY.search(number or "")
+    if not m:
+        return None
+    key = f"{m.group(1)} {m.group(2).replace(' ', '')} of {m.group(3)}"
+    return f"{key} ({court_code})" if court_code else key
 
 
 def parse(results_html: str) -> list[dict]:
@@ -191,5 +216,7 @@ def as_mention(record: dict) -> IngestedMention:
                      "title": record["title"], "court": record.get("court"),
                      "parties": record.get("parties") or [], "sides": sides(record["title"]),
                      "case_number": record.get("case_number"),
+                     "case_key": case_key(record.get("case_number"), record.get("court_code")),
+                     "citation": citation(record["title"]),
                      "court_code": record.get("court_code"), "date_estimated": record.get("date") is None},
     )

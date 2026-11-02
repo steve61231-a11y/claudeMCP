@@ -88,10 +88,20 @@ def _iso(value) -> str | None:
     return value.date().isoformat() if hasattr(value, "date") else str(value)[:10]
 
 
+def _case_label(raw: dict) -> str:
+    """The case as a reader cites it: its number, else the ruling's
+    citation, else the opening of its title — never a whole title."""
+    from engine.ingestion import kenya_law_records
+
+    key = kenya_law_records.case_key(raw.get("case_number"))
+    return key or raw.get("case_number") or raw.get("citation") or _excerpt(raw.get("title"), 80) or "a court record"
+
+
 def _court_steps(item: dict, principal: str, identities: list[str], issue: str) -> list[dict]:
     raw = _payload(item)
-    case = raw.get("case_number") or raw.get("title") or "a court record"
+    case = _case_label(raw)
     record = {"kind": item.get("source_type") or "judgment", "id": case, "title": raw.get("title"),
+              "citation": raw.get("citation"),
               "court": raw.get("court") or item.get("author_handle"), "date": _iso(item.get("posted_at")),
               "url": raw.get("url") or item.get("source_url")}
     out = []
@@ -104,8 +114,29 @@ def _court_steps(item: dict, principal: str, identities: list[str], issue: str) 
                      "basis": basis, "record": record},
                     {"from": case, "relation": "concerns", "to": issue, "record": record,
                      "words": _excerpt(item.get("text"))}],
-                    "kind": "court", "role": role, "date": record["date"]})
+                    "kind": "court", "role": role, "date": record["date"],
+                    "case": raw.get("case_key") or raw.get("url") or case})
                 break
+    return out
+
+
+def _one_per_case(paths: list[dict]) -> list[dict]:
+    """A case is one step however many rulings it has; its rulings are
+    listed under it, newest first, each opening its own record."""
+    out: list[dict] = []
+    by_case: dict[str, dict] = {}
+    for p in sorted(paths, key=lambda p: p.get("date") or "", reverse=True):
+        if p["kind"] != "court":
+            out.append(p)
+            continue
+        ruling = {k: p["steps"][0]["record"].get(k) for k in ("date", "url", "citation", "court")}
+        held = by_case.get(p["case"])
+        if held:
+            held["rulings"].append(ruling)
+            continue
+        p["rulings"] = [ruling]
+        by_case[p["case"]] = p
+        out.append(p)
     return out
 
 
@@ -155,7 +186,9 @@ def lead(counts: dict, reach: dict, principal: str) -> str:
     """The section's first line, counted from `counts` and `reach`."""
     parts = []
     if counts.get("court"):
-        parts.append(f"is a party to {_plural(counts['court'], 'court case')} on it")
+        rulings = counts.get("rulings") or counts["court"]
+        parts.append(f"is a party to {_plural(counts['court'], 'court case')} on it"
+                     + (f" ({rulings} rulings)" if rulings > counts["court"] else ""))
     if counts.get("parliament"):
         parts.append(f"spoke on it in Parliament {_plural(counts['parliament'], 'time')}")
     if counts.get("lender"):
@@ -199,8 +232,10 @@ def build(records: list[dict], principal: str, identities: list[str], issue: str
             paths += _lender_steps(item, principal, identities, issue)
     if not any(reach.values()) and len(failed) == 3:
         return {"state": "not_measured", "reason": "every record source failed: " + ", ".join(failed)}
+    paths = _one_per_case(paths)
     paths.sort(key=lambda p: p.get("date") or "", reverse=True)
     counts = {k: sum(1 for p in paths if p["kind"] == k) for k in ("court", "parliament", "lender")}
+    counts["rulings"] = sum(len(p.get("rulings") or []) for p in paths if p["kind"] == "court")
     next_steps = [a for a in (ahead or []) if a.get("date")][:3]
     return {"state": "measured", "principal": principal, "issue": issue, "paths": paths[:MAX_PATHS],
             "paths_total": len(paths), "counts": counts, "reach": reach, "next": next_steps,
