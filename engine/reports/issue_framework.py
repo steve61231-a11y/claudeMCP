@@ -575,7 +575,11 @@ def build_data_overview(payload: dict, stakeholders: list[dict], events: list[di
                 f"mentioned both terms"
                 + (" and this market" if relevance_filter.get("market_anchored") else "")
                 if relevance_filter else "not run"),
-            "claim_verification": "applied" if verification else "not run",
+            # The checks that actually ran on this map, with what each
+            # removed. "Claim verification: not run" was printed on every
+            # map: that check is the Search report's and never runs here,
+            # while the map's own checks went unmentioned.
+            **checks_applied(payload),
         },
         "limitations": limitations or ["No material limitations identified in this run."],
         "how_to_read": (
@@ -584,6 +588,30 @@ def build_data_overview(payload: dict, stakeholders: list[dict], events: list[di
             "not a forecast. Treat single-source events as unconfirmed until corroborated."
         ),
     }
+
+
+def _n(value) -> int:
+    return len(value) if isinstance(value, (list, tuple)) else int(value or 0)
+
+
+def checks_applied(payload: dict) -> dict:
+    """What was checked on this map and what each check removed — only the
+    checks that ran; one that did not is absent, never "applied"."""
+    out = {}
+    vr = payload.get("verdict_from_record") or {}
+    if vr.get("used"):
+        c = vr.get("check") or {}
+        out["answer_from_the_record"] = (f"{c.get('kept', 0)} of {c.get('written', 0)} sentence(s) kept "
+                                         "after checking each against what it cites")
+    elif vr:
+        out["answer_from_the_record"] = "not used — " + str(vr.get("reason") or "the record was too thin")
+    grounding = payload.get("grounding")
+    if grounding:
+        out["names_checked_against_sources"] = f"{_n(grounding.get('removed'))} sentence(s) removed"
+    identity = payload.get("protected_terms")
+    if identity:
+        out["identity_guard"] = f"{_n(identity.get('removed'))} sentence(s) removed"
+    return out
 
 
 def build(issue: str, principal: str, payload: dict, stakeholders: list[dict],

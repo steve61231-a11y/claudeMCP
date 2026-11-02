@@ -54,3 +54,20 @@ def test_the_map_carries_the_grades_and_the_page_stamps_them():
         assert f"fwStamp(s" in page and f"'{key}')" in page, key
     assert "stampEvidence(conn,ES.connection_record)" in page
     assert "stampEvidence(cpath,ES.connection_paths)" in page and "stampEvidence(head,ES.verdict)" in page
+
+
+def test_the_data_overview_lists_the_checks_that_ran_never_one_that_did_not():
+    """"Claim verification: not run" was printed on every map: that check is
+    the Search report's and never runs on the map, while the map's own
+    checks went unmentioned."""
+    from engine.reports import issue_framework
+
+    payload = {"verdict_from_record": {"used": True, "check": {"kept": 3, "written": 4}},
+               "grounding": {"removed": [{"sentence": "x"}]}, "protected_terms": {"removed": []}}
+    checks = issue_framework.build_data_overview(payload, [], [])["controls_applied"]
+    assert "claim_verification" not in checks
+    assert checks["answer_from_the_record"].startswith("3 of 4 sentence(s) kept")
+    assert checks["names_checked_against_sources"] == "1 sentence(s) removed"
+    assert checks["identity_guard"] == "0 sentence(s) removed"
+    bare = issue_framework.build_data_overview({}, [], [])["controls_applied"]
+    assert not {"answer_from_the_record", "names_checked_against_sources", "identity_guard"} & set(bare)

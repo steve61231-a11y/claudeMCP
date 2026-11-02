@@ -326,7 +326,12 @@ spent; wall-clock time.
   sources and about anyone, that name it and the issue — or says it is not
   named with the issue in one. The position (for / against / neutral) stays
   the analysts' reading and is labelled so: no code decides a stance from a
-  sentence. Still to do: claim verification on the map, or remove the chip.
+  sentence.
+- **Phase 3 — done.** The Data overview's "claim verification: not run",
+  printed on every map, is gone: that audit is the Search report's and never
+  ran here. In its place, the checks that DID run, each with what it
+  removed — the answer from the record, names checked against the sources,
+  the identity guard; a check that did not run is absent, never "applied".
 
 ## 5. What the founder decides
 
