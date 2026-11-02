@@ -6307,6 +6307,35 @@
     return c;
   }
 
+  /* What changed since the last map of the same pair (reports/map_changes.py),
+     counted with no model. A first map shows nothing; a comparison that
+     failed is the operator's. */
+  function renderMapChanges(ch){
+    if(!ch||ch.state==='first_map')return null;
+    if(ch.state!=='compared'){
+      const c=deepCard('Since the last map','Not compared this time');c.classList.add('op-only');
+      c.appendChild(el('div','muted',esc(ch.reason||'no reason was recorded')));return c;
+    }
+    const when=ch.previous_generated?ukDate(ch.previous_generated):'';
+    const k=ch.counts||{};
+    const any=Object.values(k).some(v=>v);
+    const c=deepCard('Since the last map',when?`Compared with the map of ${when}`:'Compared with the previous map',{open:any});
+    c.appendChild(el('div','',`<div style="font-size:15px;line-height:1.5">${esc(ch.lead||'')}</div>`));
+    const link=(u,t)=>u?`<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)}</a>`:esc(t);
+    const list=(title,rows)=>{if(!rows.length)return;
+      c.appendChild(el('div','lbl',title));
+      c.appendChild(el('ul','',`<li>${rows.join('</li><li>')}</li>`));};
+    list('New court cases',(ch.new_cases||[]).map(x=>`${esc(x.relation||'')} ${link(x.url,x.case||'')}`));
+    list('New rulings',(ch.new_rulings||[]).map(x=>`${link(x.url,x.case||'')}: ${fmt(x.rulings)} rulings, ${fmt(x.before)} before`));
+    list('New statements on the record',(ch.new_statements||[]).map(x=>`${x.status==='alleged'?'<b>Alleged:</b> ':''}${esc(x.statement||'')} <span class="muted">· ${link(x.url,x.publisher||'source')}</span>`));
+    list('New dated steps ahead',(ch.new_dated_steps||[]).map(x=>`<b>${esc(ukDate(x.date))}</b> — ${esc(x.event||'')} <span class="muted">· ${link(x.url,x.publisher||'source')}</span>`));
+    list('Dates that moved',(ch.moved_dates||[]).map(x=>`${esc(x.event||'')}: <b>${esc(ukDate(x.date))}</b>, was ${esc(ukDate(x.was))}`));
+    list('Stakeholders newly on the record',(ch.stakeholders_newly_on_record||[]).map(esc));
+    const gone=(k.cases_no_longer_found||0)+(k.statements_no_longer_found||0);
+    if(gone)c.appendChild(el('div','muted chart-note',`${fmt(k.cases_no_longer_found||0)} case(s) and ${fmt(k.statements_no_longer_found||0)} statement(s) in the last map were not found this time — a source not read this run, or a record no longer listed.`));
+    return c;
+  }
+
   /* Scenario mapping (engine/reports/scenarios.py) — the client's own model:
      risk drivers, a branching tree with a probability on every branch, and
      three scenarios. The probabilities are judgement and say so; every
@@ -6516,6 +6545,8 @@
     if(conn)out.appendChild(stampEvidence(conn,ES.connection_record));
     const cpath=renderConnectionPaths(m.connection_paths,m);
     if(cpath)out.appendChild(stampEvidence(cpath,ES.connection_paths));
+    const changes=renderMapChanges(m.changes);
+    if(changes)out.appendChild(changes);
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
         +'&issue='+encodeURIComponent(m.issue||''),

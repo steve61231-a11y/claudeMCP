@@ -1355,6 +1355,14 @@ def _run_issue_map_job(job_id: str, principal: str, issue: str, days: int,
         # free instance restarts; without this, an hour of scraping and four
         # analysts are simply gone when it does, and the client's poll 404s
         # with nothing to fall back on.
+        # What changed since the last map of this pair (reports/map_changes.py),
+        # read before this one is stored so "the last map" is the previous.
+        try:
+            from engine.reports import map_changes
+
+            payload["changes"] = map_changes.compare(_lookup_issue_map(principal, issue), payload)
+        except Exception as exc:  # noqa: BLE001 — a comparison is never worth the map
+            payload["changes"] = {"state": "not_measured", "reason": f"{type(exc).__name__}: {exc}"[:200]}
         _store_issue_map(principal, issue, payload)
         _save_progress(_subject_key(principal, issue), "issue_map", job_id=job_id,
                        status="done", stage="Complete.",

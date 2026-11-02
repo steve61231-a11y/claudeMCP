@@ -351,6 +351,14 @@ spent; wall-clock time.
   earliest; the code — never the writer — attaches that step, with its
   source, above the tree. Sequencing already reads the same steps.
   Still open in Phase 4: the Gazette's statutory deadlines.
+- **Phase 5 begun — what changed since the last map.**
+  `reports/map_changes.py` compares this map with the previous stored map of
+  the same pair, with no model: new court cases and rulings, new verified
+  statements linking them, dated steps that appeared or moved, stakeholders
+  newly on the record — and counts what was no longer found, never hiding
+  it. A first map shows nothing. Still to do in Phase 5: merge Intersection
+  detail into the Framework as "The working", and the PDF from the browser's
+  own print.
 
 ## 5. What the founder decides
 
