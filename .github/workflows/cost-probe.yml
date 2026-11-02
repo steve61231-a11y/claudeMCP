@@ -11,6 +11,7 @@ on:
     paths:
       - scripts/cost_probe.py
       - scripts/tuko_probe.py
+      - scripts/causelist_probe.py
       - .github/workflows/cost-probe.yml
 
 jobs:
@@ -30,3 +31,5 @@ jobs:
         run: python scripts/cost_probe.py
       - name: Tuko, every route a connector could use
         run: python scripts/tuko_probe.py
+      - name: Cause lists, every route to a case's next date
+        run: python scripts/causelist_probe.py
