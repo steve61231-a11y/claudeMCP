@@ -40,7 +40,7 @@ from __future__ import annotations
 import re
 
 from engine import llm
-from engine.reports import from_facts
+from engine.reports import from_facts, reply_shape
 
 MIN_FINDINGS = 3
 LEDGER_SIZE = 30
@@ -151,18 +151,18 @@ def validate_tree(nodes: list[dict]) -> tuple[list[dict], str | None]:
     for raw in nodes or []:
         if not isinstance(raw, dict):
             continue
-        nid = str(raw.get("id") or "").strip()
-        label = str(raw.get("label") or "").strip()
+        nid = reply_shape.ident(raw.get("id"))
+        label = reply_shape.text(raw.get("label"))
         if not nid or not label or nid in ids:
             return [], f"node {nid or '?'} has no id or label, or repeats an id"
         ids.add(nid)
-        kind = str(raw.get("kind") or "event").strip().lower()
-        parent = raw.get("parent")
-        parent = str(parent).strip() if parent not in (None, "", "null") else None
+        kind = (reply_shape.text(raw.get("kind")) or "event").lower()
+        parent = reply_shape.ident(raw.get("parent"))
+        parent = parent if parent not in ("", "null") else None
         clean.append({"id": nid, "parent": parent, "label": label,
                       "kind": kind if kind in KINDS else "event",
-                      "detail": str(raw.get("detail") or "").strip(),
-                      "outcome": str(raw.get("outcome") or "").strip().lower() or None,
+                      "detail": reply_shape.text(raw.get("detail")),
+                      "outcome": reply_shape.text(raw.get("outcome")).lower() or None,
                       "p": _pct(raw.get("p")) if raw.get("p") not in (None, "") else None})
     if not clean:
         return [], "no tree was written"
@@ -244,7 +244,7 @@ def scenario_probability(node_ids: list[str], tree: list[dict]) -> tuple[float |
 # ---------------------------------------------------------------------------
 
 def _ids(value) -> list[str]:
-    return [str(c).strip().upper() for c in (value or []) if str(c).strip()]
+    return [c.upper() for c in reply_shape.idents(value)]
 
 
 def _known(ids: list[str], ledger: list[dict]) -> list[str]:
@@ -263,7 +263,7 @@ _CATEGORY = {c.lower(): c for c in ("Political", "Electoral", "Institutional", "
 
 
 def _category(value) -> str:
-    text = re.sub(r"\s+", " ", str(value or "").strip())
+    text = re.sub(r"\s+", " ", reply_shape.text(value))
     return _CATEGORY.get(text.lower()) or (text[:1].upper() + text[1:] if text else "Other")
 
 
@@ -273,8 +273,8 @@ def check_drivers(raw: list, ledger: list[dict], principal: str,
     for item in raw or []:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("driver") or "").strip()
-        reading = str(item.get("reading") or "").strip()
+        name = reply_shape.text(item.get("driver"))
+        reading = reply_shape.text(item.get("reading"))
         cited = _known(_ids(item.get("facts")), ledger)
         if not name:
             continue
@@ -288,7 +288,7 @@ def check_drivers(raw: list, ledger: list[dict], principal: str,
             continue
         general = {}
         for field in ("driver", "definition", "impact"):
-            text = str(item.get(field) or "").strip()
+            text = reply_shape.text(item.get(field))
             why = _general(text, ledger, principal, numbers) if text else None
             if why:
                 removed.append({"part": f"driver {field}", "sentence": text, "reason": why,
@@ -298,7 +298,7 @@ def check_drivers(raw: list, ledger: list[dict], principal: str,
         if not general["driver"]:
             continue
         text, citations = from_facts.render([{"text": reading, "facts": cited}], ledger)
-        direction = str(item.get("direction") or "").strip().lower()
+        direction = reply_shape.text(item.get("direction")).lower()
         strength = from_facts.strength(cited, ledger)
         kept.append({"category": _category(item.get("category")), **general,
                      "reading": text, "reading_citations": citations,
@@ -313,12 +313,12 @@ def check_drivers(raw: list, ledger: list[dict], principal: str,
 def _sentences(items, ledger, principal, numbers, support_ids, part, removed, need_cites):
     """Checked sentences of one scenario part, rendered with citations."""
     out = []
-    for item in items or []:
+    for item in items if isinstance(items, list) else [items] if isinstance(items, str) else []:
         if isinstance(item, str):
             item = {"text": item}
         if not isinstance(item, dict):
             continue
-        text = str(item.get("text") or "").strip()
+        text = reply_shape.text(item.get("text"))
         if not text:
             continue
         cited = _known(_ids(item.get("facts")), ledger)
@@ -344,10 +344,10 @@ def check_scenarios(raw: list, tree: list[dict], ledger: list[dict], principal: 
     for item in raw or []:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or "").strip()
+        title = reply_shape.text(item.get("title"))
         if not title:
             continue
-        p, why = scenario_probability(item.get("nodes") or [], tree)
+        p, why = scenario_probability(reply_shape.idents(item.get("nodes")), tree)
         if why:
             removed.append({"part": "scenario", "sentence": title, "reason": "the scenario " + why})
             continue
@@ -368,7 +368,7 @@ def check_scenarios(raw: list, tree: list[dict], ledger: list[dict], principal: 
                                   "implication", lost, False)
         removed.extend(lost)
         strength = from_facts.strength(support, ledger)
-        kept.append({"title": title, "nodes": [str(x).strip() for x in item.get("nodes") or []],
+        kept.append({"title": title, "nodes": reply_shape.idents(item.get("nodes")),
                      "probability": p, "factors": factors, "outlook": outlook,
                      "implications": implications, "strength": strength,
                      "strength_label": from_facts.STRENGTH[strength], "basis": "verified_facts"})
@@ -422,25 +422,25 @@ def check_recommendations(raw: list, ledger: list[dict], principal: str,
     for item in raw or []:
         if not isinstance(item, dict):
             continue
-        action = str(item.get("action") or "").strip()
+        action = reply_shape.text(item.get("action"))
         if not action:
             continue
         cited = _known(_ids(item.get("facts")), ledger)
-        rationale = str(item.get("rationale") or "").strip()
+        rationale = reply_shape.text(item.get("rationale"))
         if not cited:
             removed.append({"part": "recommendation", "sentence": action, "reason": "cites nothing on the record"})
             continue
         why = (_general(action, ledger, principal, numbers)
-               or _general(str(item.get("who") or ""), ledger, principal, numbers)
-               or _general(str(item.get("when") or ""), ledger, principal, numbers)
+               or _general(reply_shape.text(item.get("who")), ledger, principal, numbers)
+               or _general(reply_shape.text(item.get("when")), ledger, principal, numbers)
                or (from_facts.check_assessment(rationale, cited, ledger, principal, numbers) if rationale else None))
         if why:
             removed.append({"part": "recommendation", "sentence": action, "facts": cited, "reason": why})
             continue
         text, citations = from_facts.render([{"text": rationale, "facts": cited}], ledger) if rationale else ("", [])
-        kept.append({"action": action, "who": str(item.get("who") or "").strip(),
+        kept.append({"action": action, "who": reply_shape.text(item.get("who")),
                      # A phrase ("before the hearing"), not a date — named so.
-                     "timing": str(item.get("when") or "").strip(), "rationale": text,
+                     "timing": reply_shape.text(item.get("when")), "rationale": text,
                      "rationale_citations": citations, "basis": "verified_facts"})
         if len(kept) >= MAX_RECOMMENDATIONS:
             break
@@ -494,6 +494,13 @@ def build(principal: str, issue: str, connection_record: dict | None,
     dated = dated_entries(ahead)
     ledger = ledger_for(linked, everything, record.get("patterns"), search) + dated
     reply = write(principal, issue, ledger, desired_outcome)
+    # Held to the shape it is read as (reports/reply_shape.py): a list asked
+    # for can come back as a number, and the check must judge content, not
+    # die on a type.
+    reply = {"drivers": reply_shape.dicts(reply.get("drivers")), "tree": reply_shape.dicts(reply.get("tree")),
+             "scenarios": reply_shape.dicts(reply.get("scenarios")),
+             "recommendations": reply_shape.dicts(reply.get("recommendations")),
+             "withheld": reply_shape.text(reply.get("withheld"))}
 
     drivers, removed = check_drivers(reply.get("drivers"), ledger, principal, numbers)
     tree, tree_problem = validate_tree(reply.get("tree") or [])

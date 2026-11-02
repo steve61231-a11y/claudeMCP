@@ -34,6 +34,7 @@ import json
 import re
 
 from engine import llm
+from engine.reports import reply_shape
 
 #: Fewer findings than this and a brief written only from them would be
 #: thinner than the analysts' — the caller keeps theirs and says so.
@@ -239,8 +240,15 @@ def check(sentences: list[dict], ledger: list[dict], subject: str,
           numbers: set[str] | None = None) -> tuple[list[dict], list[dict]]:
     kept, removed = [], []
     for entry in sentences:
-        text = str(entry.get("text") or "").strip()
-        cited = [str(c).strip().upper() for c in (entry.get("facts") or []) if str(c).strip()]
+        # A reply's fields can be any kind (reports/reply_shape.py): a sentence
+        # that is not text is no sentence, and citations that are not a list
+        # cite nothing — never a number iterated, never a string read letter
+        # by letter as "F", "1".
+        if not isinstance(entry, dict):
+            continue
+        text = entry.get("text").strip() if isinstance(entry.get("text"), str) else ""
+        facts_cited = entry.get("facts")
+        cited = [c.upper() for c in reply_shape.idents(facts_cited)]
         if not text:
             continue
         reason = check_sentence(text, cited, ledger, subject, numbers)

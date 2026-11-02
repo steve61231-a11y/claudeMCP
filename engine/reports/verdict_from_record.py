@@ -109,6 +109,8 @@ def write(principal: str, issue: str, ledger: list[dict]) -> list[dict]:
         max_tokens=llm.budget_for(900),
         model=llm.strong_model(),
     )
+    if not isinstance(reply, dict):
+        raise ValueError("the reply was not a JSON object")
     sentences = reply.get("sentences")
     if not isinstance(sentences, list):
         raise ValueError("sentences was not a list")

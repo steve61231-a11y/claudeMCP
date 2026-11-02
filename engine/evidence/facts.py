@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -80,6 +81,13 @@ def source_key(item: dict) -> str | None:
     inferred from source_type (see CLAUDE.md, '"article" is not a table')."""
     kind = item.get("kind")
     if kind not in ("mention", "document") or not item.get("id"):
+        return None
+    # A row's id is a UUID. Anything else ("fresh-3", an item collected this
+    # run and not stored) names no row, and storing it would fail the whole
+    # batch — one bad id must cost its own item, never the connection.
+    try:
+        uuid.UUID(str(item["id"]))
+    except ValueError:
         return None
     return f"{kind}:{item['id']}"
 

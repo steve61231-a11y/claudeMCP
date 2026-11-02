@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from engine import llm, stages
+from engine.reports import reply_shape
 
 # Shared grounding preamble — the defense against stale-training-data claims
 # (e.g. describing someone as alive/in office when they are not).
@@ -990,9 +991,9 @@ def analyze_issue_intersection(
             name, values = future.result()
             for key, value in values.items():
                 if key in ("key_actors", "timeline", "linking_narratives", "sub_issues"):
-                    result[key] = [v for v in (value or []) if isinstance(v, dict)]
+                    result[key] = reply_shape.dicts(value)
                 else:
-                    result[key] = value or ""
+                    result[key] = reply_shape.text(value)
             if on_part is not None:
                 try:
                     on_part(name, dict(result))
