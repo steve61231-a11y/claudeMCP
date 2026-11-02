@@ -344,6 +344,13 @@ spent; wall-clock time.
   Tribunal lists; none of the 30 benchmark cases listed ahead. Kenya Law
   publishes some courts' lists only, so "not found" is never "no hearing".
   A listing ahead joins the order papers as a dated next step.
+- **Phase 4 — the tree starts from the record's next date.** The scenario
+  writer was asked for "the next decision point" with nowhere to take a real
+  date from. The record's steps ahead (order papers, cause lists) are now D
+  entries in its ledger, earliest first, and the trigger is told to be the
+  earliest; the code — never the writer — attaches that step, with its
+  source, above the tree. Sequencing already reads the same steps.
+  Still open in Phase 4: the Gazette's statutory deadlines.
 
 ## 5. What the founder decides
 

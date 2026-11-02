@@ -191,3 +191,40 @@ def test_advice_names_only_who_the_record_names_and_cites_it():
     assert kept[0]["rationale_citations"]
     reasons = " | ".join(r["reason"] for r in removed)
     assert "Edwin Sifuna" in reasons and "cites nothing" in reasons
+
+
+def test_the_tree_starts_from_the_next_dated_step_the_record_states():
+    """Phase 4: the writer was asked for "the next decision point" and had
+    nowhere to take a real date from. The record's dated steps ahead (order
+    papers, cause lists) are D entries, earliest first, and the next one is
+    attached by the code — never chosen by the writer."""
+    from engine.reports import scenarios
+
+    ahead = [{"date": "2099-02-01", "event": "Second Reading of the Bill", "publisher": "Parliament of Kenya — Order Paper",
+              "url": "https://parliament.example/op.pdf", "record": "order_paper"},
+             {"date": "2099-01-12", "event": "Petition E051 of 2026 is listed before the High Court",
+              "publisher": "Kenya Law — Daily Cause List", "url": "https://records.example/cl", "record": "cause_list"}]
+    entries = scenarios.dated_entries(ahead)
+    assert [e["id"] for e in entries] == ["D1", "D2"]
+    assert entries[0]["statement"].startswith("2099-01-12: Petition E051 of 2026")
+    assert entries[0]["step"]["record"] == "cause_list"
+    assert scenarios.dated_entries([]) == []
+    assert "If there is a D entry, the trigger is the earliest D entry" in scenarios.PROMPT
+
+
+def test_a_modelled_tree_carries_the_next_dated_step_set_by_the_code(monkeypatch):
+    from engine.reports import scenarios
+
+    seen = {}
+
+    def fake(principal, issue, ledger, desired=None):
+        seen["ids"] = [e["id"] for e in ledger]
+        return _reply()
+
+    monkeypatch.setattr(scenarios, "write", fake)
+    ahead = [{"date": "2099-01-12", "event": "Petition E051 of 2026 is listed before the High Court",
+              "publisher": "Kenya Law — Daily Cause List", "url": "https://records.example/cl", "record": "cause_list"}]
+    out = scenarios.build("Okiya Omtatah", "IMF", RECORD, LINKED + OTHERS, ahead=ahead)
+    assert "D1" in seen["ids"]
+    assert out["next_dated_step"]["date"] == "2099-01-12" and out["next_dated_step"]["record"] == "cause_list"
+    assert scenarios.build("Okiya Omtatah", "IMF", RECORD, LINKED + OTHERS).get("next_dated_step") is None

@@ -813,8 +813,11 @@ def build_issue_map(
 
     # Risk drivers, the probability tree and three scenarios — the model's
     # judgement, held to the record and recomputed (reports/scenarios.py).
+    # The record's dated steps ahead (order papers, cause lists) give the
+    # tree its trigger; the writer is never left to guess the next date.
     payload["scenarios"] = _scenarios(principal, issue, payload["connection_record"],
-                                      principal_findings, desired_outcome)
+                                      principal_findings, desired_outcome,
+                                      ahead=(acquisition or {}).get("records_ahead"))
     if payload["scenarios"].get("state") == "modelled":
         # The identity rule over the scenarios too: a forecast blaming a
         # community no source named is defamatory however it is checked.
@@ -1264,7 +1267,8 @@ def our_analysis(verdict: str) -> str:
 
 
 def _scenarios(principal: str, issue: str, connection_record: dict | None,
-               principal_findings: list[dict] | None, desired_outcome: str | None) -> dict:
+               principal_findings: list[dict] | None, desired_outcome: str | None,
+               ahead: list[dict] | None = None) -> dict:
     """The scenario section, or the reason it was not modelled — a failure
     here is the operator's to read and never costs the map."""
     from engine.reports import scenarios
@@ -1273,7 +1277,7 @@ def _scenarios(principal: str, issue: str, connection_record: dict | None,
     numbers = {str(v) for v in counts.values() if isinstance(v, int)}
     try:
         out = scenarios.build(principal, issue, connection_record, principal_findings,
-                              numbers=numbers, desired_outcome=desired_outcome)
+                              numbers=numbers, desired_outcome=desired_outcome, ahead=ahead)
     except Exception as exc:  # noqa: BLE001
         stages.current().failed("issue_map:scenarios", exc)
         return scenarios.withheld(f"the scenario writer failed: {type(exc).__name__}: {exc}"[:200])

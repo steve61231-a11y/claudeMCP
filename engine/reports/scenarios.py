@@ -60,7 +60,7 @@ KINDS = {"event", "outcome", "intervening"}
 
 PROMPT = """You are the senior analyst writing the scenario mapping of an issue map: how {principal} is connected to {issue}, and how that could unfold from here. A client will plan against it.
 
-You are given a numbered ledger. F entries are findings on the verified record (each rests on words a source printed); P entries were counted across the record; S entries are what the public searched for — attention, not fact. That ledger is ALL you know. You may reason from it; you may not add a person, organisation, figure or date it does not contain.
+You are given a numbered ledger. F entries are findings on the verified record (each rests on words a source printed); P entries were counted across the record; S entries are what the public searched for — attention, not fact; D entries are dated steps ahead that a public record states (a sitting on an order paper, a hearing on a court's cause list). That ledger is ALL you know. You may reason from it; you may not add a person, organisation, figure or date it does not contain.
 
 Write three things.
 
@@ -75,7 +75,7 @@ Write three things.
    - "direction": "raises", "lowers", "mixed" or "unclear" — what it does to the risk to {principal} on this issue now
    - "facts": the ledger ids the reading rests on (at least one)
 
-2. "tree": the branching of what could happen next, as nodes. The first node is the trigger (the next decision point the ledger points to) and has no parent. Every other node has a "parent" and a "p": the percentage chance of that branch given its parent. The branches under one parent must add up to 100. A node with exactly one child that is not a choice (an intervening step) may leave that child's "p" out. Each node: "id" (n1, n2…), "parent", "label" (a few words), "kind" ("event", "outcome" or "intervening"), "detail" (optional, one sentence), "p". Every END node (a node with no children) also carries "outcome": "desired" if the desired outcome prevails on that path, "opposed" if it does not, "undetermined" if the path does not settle it. At most {max_nodes} nodes and {max_depth} levels.
+2. "tree": the branching of what could happen next, as nodes. The first node is the trigger (the next decision point the ledger points to) and has no parent. If there is a D entry, the trigger is the earliest D entry: label it as that step, with its date. Every other node has a "parent" and a "p": the percentage chance of that branch given its parent. The branches under one parent must add up to 100. A node with exactly one child that is not a choice (an intervening step) may leave that child's "p" out. Each node: "id" (n1, n2…), "parent", "label" (a few words), "kind" ("event", "outcome" or "intervening"), "detail" (optional, one sentence), "p". Every END node (a node with no children) also carries "outcome": "desired" if the desired outcome prevails on that path, "opposed" if it does not, "undetermined" if the path does not settle it. At most {max_nodes} nodes and {max_depth} levels.
 
 3. "scenarios": exactly three, the most likely, a credible alternative and an outlier. Each:
    - "title": one line
@@ -108,6 +108,27 @@ def ledger_for(connection_findings: list[dict], principal_findings: list[dict],
             ordered.append(f)
     base = from_facts.build_ledger(ordered, size=LEDGER_SIZE)
     return base + from_facts.pattern_entries(patterns, base) + from_facts.search_entries(search)
+
+
+MAX_DATED = 4
+
+
+def dated_entries(ahead: list[dict] | None) -> list[dict]:
+    """D entries: steps ahead a public record states — an order paper's
+    sitting, a cause list's hearing — earliest first. The tree's trigger
+    should be one of these; without them the writer had nowhere to take a
+    real date from, and "the next decision point" was its own guess."""
+    rows = sorted((a for a in ahead or [] if a.get("date") and a.get("event")), key=lambda a: a["date"])
+    out = []
+    for i, a in enumerate(rows[:MAX_DATED], start=1):
+        statement = f"{a['date']}: {a['event']} ({a.get('publisher') or 'a public record'})"
+        out.append({"id": f"D{i}", "statement": statement, "status": "reported", "independent_sources": 1,
+                    "first_seen": None, "dated": True,
+                    "sources": [{"quote": a.get("printed") or a["event"], "url": a.get("url"),
+                                 "publisher": a.get("publisher"), "ref": None}],
+                    "text": " ".join(x for x in (statement, a.get("printed") or "") if x),
+                    "step": {k: a.get(k) for k in ("date", "event", "publisher", "url", "record")}})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +476,8 @@ def write(principal: str, issue: str, ledger: list[dict], desired_outcome: str |
 
 def build(principal: str, issue: str, connection_record: dict | None,
           principal_findings: list[dict] | None = None, search: list[dict] | None = None,
-          numbers: set[str] | None = None, desired_outcome: str | None = None) -> dict:
+          numbers: set[str] | None = None, desired_outcome: str | None = None,
+          ahead: list[dict] | None = None) -> dict:
     """The scenario section, or `withheld(reason)` — which the page shows the
     operator and never shows the reader as "no scenarios"."""
     record = connection_record or {}
@@ -469,7 +491,8 @@ def build(principal: str, issue: str, connection_record: dict | None,
     if len({f.get('statement') for f in list(linked) + list(everything)}) < MIN_FINDINGS:
         return withheld(f"fewer than {MIN_FINDINGS} findings on the record about {principal}; "
                         "too little to model")
-    ledger = ledger_for(linked, everything, record.get("patterns"), search)
+    dated = dated_entries(ahead)
+    ledger = ledger_for(linked, everything, record.get("patterns"), search) + dated
     reply = write(principal, issue, ledger, desired_outcome)
 
     drivers, removed = check_drivers(reply.get("drivers"), ledger, principal, numbers)
@@ -515,6 +538,9 @@ def build(principal: str, issue: str, connection_record: dict | None,
             "drivers": drivers, "tree": tree, "scenarios": scenarios,
             "recommendations": recommendations, "baseline": base,
             "desired_outcome": desired_outcome,
+            # The next dated step a public record states — set here, from the
+            # record, never by the writer; the tree is read from it.
+            "next_dated_step": dated[0]["step"] if dated else None,
             "tree_withheld": tree_problem, "check": check,
             "basis": ("The probabilities are an analyst's judgement on the findings cited, not a "
                       "measurement. Each scenario's figure is the product of the branches on its "

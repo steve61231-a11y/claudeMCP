@@ -6379,6 +6379,11 @@
     const tree=scenarioTree(sc.tree);
     if(tree){
       const box=el('div','');
+      // The next dated step a public record states — the tree starts here.
+      const nx=sc.next_dated_step;
+      if(nx&&nx.date)box.appendChild(el('div','mentr is-primary',`<div class="lbl">The next dated step on the record</div>
+        <div style="font-size:14px;margin-top:4px"><b>${esc(ukDate(nx.date))}</b> — ${esc(nx.event||'')}
+        <span class="muted" style="font-size:12.5px"> · ${nx.url?`<a href="${esc(nx.url)}" target="_blank" rel="noopener">${esc(nx.publisher||'source')}</a>`:esc(nx.publisher||'')}</span></div>`));
       box.appendChild(tree);
       box.appendChild(el('div','muted chart-note',`Each branch is a judgement on the findings cited; each path's figure is the product of its branches, recomputed by the engine. Colour follows the scenario a path belongs to: <span style="color:var(--pos)">most likely</span>, <span style="color:var(--amber)">credible alternative</span>, <span style="color:var(--sky2)">outlier</span>. Dashed lines are intervening steps.`));
       parts.tree=box;
