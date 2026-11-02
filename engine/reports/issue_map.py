@@ -876,6 +876,10 @@ def build_issue_map(
     return payload
 
 
+#: Distinct court cases per map whose dates are looked up in the cause lists.
+MAX_CASES_LISTED = 5
+
+
 #: Causes that are a family's or an estate's, never the record of a public
 #: issue — however often their snippets say "school fees" or "Safaricom".
 _PERSONAL_CAUSE = re.compile(
@@ -998,10 +1002,36 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
                 else:
                     found.append(r)
         unique = {r["url"]: r for r in found}
+        # Each case's dates in the court's own cause lists (Phase 4): a
+        # listing ahead is the next decision point, from the record.
+        ahead, asked, cases = [], 0, {}
+        for r in unique.values():
+            key = kenya_law_records.case_key(r.get("case_number"), r.get("court_code"))
+            if key:
+                cases.setdefault(key, r)
+        today = datetime.utcnow().date().isoformat()
+        for key, r in list(cases.items())[:MAX_CASES_LISTED]:
+            found_dates, why = kenya_law_records.listings(r.get("case_number") or "", r.get("court_code"),
+                                                          r.get("parties") or [])
+            asked += 1
+            if why and not found_dates:
+                notes.append(f"cause lists for {kenya_law_records.case_key(r.get('case_number'))}: {why}")
+            for other in unique.values():
+                if kenya_law_records.case_key(other.get("case_number"), other.get("court_code")) == key:
+                    other["listings"] = found_dates
+            label = kenya_law_records.case_key(r.get("case_number")) or r.get("title", "")[:60]
+            for listing in found_dates:
+                if listing["date"] >= today:
+                    ahead.append({"date": listing["date"],
+                                  "event": f"{label} is listed before the {r.get('court') or 'court'}",
+                                  "publisher": "Kenya Law — Daily Cause List", "url": listing["url"],
+                                  "printed": listing.get("snippet"), "basis": "stated_in_source",
+                                  "record": "cause_list"})
         report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique),
                                "set_aside_off_issue": sum(aside.values()), "set_aside": aside,
-                               "notes": notes[:4]}
-        return [kenya_law_records.as_mention(r) for r in unique.values()], []
+                               "cases_checked_in_cause_lists": asked, "listings_ahead": len(ahead),
+                               "notes": notes[:6]}
+        return [kenya_law_records.as_mention(r) for r in unique.values()], ahead
 
     def parliament():
         sub: dict = {}

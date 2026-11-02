@@ -6276,9 +6276,17 @@
       const rl=(p.rulings||[]).filter(x=>x&&x.date);
       const rulings=rl.length>1?`<div style="font-size:13px;margin-top:6px">${fmt(rl.length)} rulings: `+
         rl.map(x=>x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(ukDate(x.date))}</a>`:esc(ukDate(x.date))).join(' · ')+'</div>':'';
+      // The case's dates in the court's own cause lists — the next one first.
+      const now=new Date(), today=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');
+      const ls=(p.listings||[]).filter(x=>x&&x.date);
+      const ahead=ls.filter(x=>x.date>=today), before=ls.filter(x=>x.date<today);
+      const lk=x=>x.url?`<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(ukDate(x.date))}</a>`:esc(ukDate(x.date));
+      const listed=ls.length?`<div style="font-size:13px;margin-top:6px">${ahead.length
+          ?`<span class="pill pos">Next in the cause list</span> ${lk(ahead[0])}`
+          :''}${before.length?`<span class="muted"> ${ahead.length?' · ':''}Listed before: ${before.slice(-3).map(lk).join(', ')}</span>`:''}</div>`:'';
       row.innerHTML=`<div style="line-height:2">${chain}</div>
         <div class="muted" style="font-size:12.5px;margin-top:4px">${where}${r.url?` · <a href="${esc(r.url)}" target="_blank" rel="noopener">Open the record</a>`:''}</div>
-        ${printed}${rulings}${words?`<div class="muted" style="font-size:13px;margin-top:6px">“${esc(words)}”</div>`:''}`;
+        ${printed}${rulings}${listed}${words?`<div class="muted" style="font-size:13px;margin-top:6px">“${esc(words)}”</div>`:''}`;
       c.appendChild(row);
     });
     if((cp.paths_total||0)>ps.length)c.appendChild(el('div','muted chart-note',

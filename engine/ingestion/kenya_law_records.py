@@ -218,5 +218,86 @@ def as_mention(record: dict) -> IngestedMention:
                      "case_number": record.get("case_number"),
                      "case_key": case_key(record.get("case_number"), record.get("court_code")),
                      "citation": citation(record["title"]),
-                     "court_code": record.get("court_code"), "date_estimated": record.get("date") is None},
+                     "court_code": record.get("court_code"), "listings": record.get("listings") or [],
+                     "date_estimated": record.get("date") is None},
     )
+
+
+# ---------------------------------------------------------------------------
+# A case's dates in the cause lists (docs/ISSUE_MAP_FOUNDATION.md Phase 4)
+# ---------------------------------------------------------------------------
+#
+# Observed (scripts/causelist_probe.py, 2 Nov 2026): Kenya Law indexes the
+# courts' daily cause lists as documents —
+# /akn/ke/doc/cause-list-daily/<court>/<date>/… — including lists for dates
+# ahead; a list's own page and its source file answer 202 (a JavaScript
+# challenge), and the search API has no filter for them, but a search for a
+# case number with "cause list" returns their cards, each with the list's
+# date in its URI and the listing in its snippet. The same probe found the
+# danger: "E051 of 2026 cause list" returned an HIV and AIDS Tribunal list
+# carrying "HATC/E051/2026" — a different case in a different court. A wrong
+# hearing date in a client's file is worse than none, so a listing counts
+# only when the list is the SAME court's, prints the same number and year,
+# and names the case's first party.
+
+_LIST_URI = re.compile(r"^/akn/ke/doc/(cause-list[a-z-]*|decongestion-causelist)/([a-z0-9-]+)/(\d{4}-\d{2}-\d{2})/")
+
+
+def _number_parts(case_key_text: str) -> tuple[str, str] | None:
+    m = re.search(r"\b([A-Z]{0,3}\s?\d+)\s+of\s+(\d{4})", case_key_text or "")
+    return (m.group(1).replace(" ", ""), m.group(2)) if m else None
+
+
+def _lists_number(snippet: str, number: str, year: str) -> bool:
+    """The listing prints this number and year, in the forms the lists use:
+    "E051 of 2026", "E051/2026", "PET/E051/2026", "E051 / 2026"."""
+    n = re.escape(number)
+    return bool(re.search(rf"(?<![A-Za-z0-9]){n}\s*(?:/|of)\s*{year}\b", snippet, re.I))
+
+
+def _first_party_word(parties: list[str]) -> str | None:
+    """The first party's distinctive word — "Gachoka" from "Gachoka & 3
+    others". Initials and offices are no help in matching a listing."""
+    for word in re.findall(r"[A-Za-z][A-Za-z'’-]{3,}", (parties or [""])[0]):
+        if word.lower() not in {"others", "another", "republic", "cabinet", "secretary", "the", "and",
+                                "attorney", "general", "county", "government", "national", "kenya"}:
+            return word
+    return None
+
+
+def listings(case_number_text: str, court_code: str | None, parties: list[str]) -> tuple[list[dict], str | None]:
+    """(the dates this case is listed, why-nothing). Only listings that pass
+    all three tests: same court, same number and year, first party named."""
+    parts = _number_parts(case_number_text)
+    party = _first_party_word(parties)
+    if not parts or not court_code or not party:
+        return [], "the case number, court or a party to match on is missing"
+    number, year = parts
+    try:
+        response = http.get(SEARCH, params={"search": f"{number} of {year} {party} cause list", "page": 1},
+                            timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        return [], f"{type(exc).__name__}: {exc}"[:200]
+    if response.status_code != 200:
+        return [], f"HTTP {response.status_code}"
+    try:
+        html = (response.json() or {}).get("results_html") or ""
+    except ValueError:
+        return [], "the answer was not JSON — the contract has changed"
+    out, seen = [], set()
+    for card in _CARD.findall(html):
+        m = _TITLE.search(card)
+        uri = _LIST_URI.match(m.group(1)) if m else None
+        if not uri or uri.group(2) != court_code:
+            continue
+        snip = _SNIPPET.search(card)
+        snippet = _text((snip.group(1) or snip.group(2)) if snip else "")
+        if not _lists_number(snippet, number, year) or party.lower() not in snippet.lower():
+            continue
+        day = uri.group(3)
+        if day in seen:
+            continue
+        seen.add(day)
+        out.append({"date": day, "list": _text(m.group(2)), "url": BASE + m.group(1).split("#")[0],
+                    "snippet": snippet[:400]})
+    return sorted(out, key=lambda x: x["date"]), None

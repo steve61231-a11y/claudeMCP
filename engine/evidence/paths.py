@@ -115,7 +115,9 @@ def _court_steps(item: dict, principal: str, identities: list[str], issue: str) 
                     {"from": case, "relation": "concerns", "to": issue, "record": record,
                      "words": _excerpt(item.get("text"))}],
                     "kind": "court", "role": role, "date": record["date"],
-                    "case": raw.get("case_key") or raw.get("url") or case})
+                    "case": raw.get("case_key") or raw.get("url") or case,
+                    # The case's dates in the court's own cause lists.
+                    "listings": raw.get("listings") or []})
                 break
     return out
 

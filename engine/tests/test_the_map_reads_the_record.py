@@ -137,6 +137,7 @@ def test_the_map_routes_the_records_by_issue_and_one_source_down_costs_only_itse
     sha_card = CARD.replace("National Health <mark>Insurance</mark> Fund Management", "Social Health Authority (SHA)")
     monkeypatch.setattr(kenya_law_records, "search",
                         lambda q: (kenya_law_records.parse(sha_card) + kenya_law_records.parse(CARD)[:1], 3, None))
+    monkeypatch.setattr(kenya_law_records, "listings", lambda *a: ([], None))
     monkeypatch.setattr(parliament_records, "fetch",
                         lambda about, ws, we, report: (_ for _ in ()).throw(RuntimeError("parliament down")))
     called = []
@@ -269,6 +270,7 @@ def test_a_court_card_stays_only_as_the_record_of_the_issue(monkeypatch, issue, 
     record that belongs, kept."""
     monkeypatch.setattr(issue_map.settings, "enable_issue_map_records", True)
     monkeypatch.setattr(kenya_law_records, "search", lambda q: (kenya_law_records.parse(_card(title, snippet)), 1, None))
+    monkeypatch.setattr(kenya_law_records, "listings", lambda *a: ([], None))
     monkeypatch.setattr(parliament_records, "fetch", lambda about, ws, we, report: ([], []))
     monkeypatch.setattr(world_bank_records, "projects", lambda t: [])
     monkeypatch.setattr(world_bank_records, "documents", lambda t: [])
@@ -288,3 +290,61 @@ def test_world_bank_titles_lose_the_apis_line_breaks(monkeypatch):
                "docty": "Board Report", "docdt": "2022-01-01T00:00:00Z"}}}))
     assert world_bank_records.documents("IMF")[0]["text"] == \
         "Board Report — Kenya - Joint World Bank-IMF Debt Sustainability Analysis"
+
+
+
+# --- the case's dates, from the court's own cause lists (Phase 4) ------------
+
+def _list_card(uri, title, snippet):
+    return (f'<li class="mb-4 hit "><div class="card"><div class="card-body"><h5 class="card-title">'
+            f'<a class="h5" href="{uri}">{title}</a></h5><div class="ms-3 snippet text-muted">{snippet}</div>'
+            f'</div></div></li>')
+
+
+def test_a_listing_counts_only_in_the_same_court_with_the_same_number_and_party(monkeypatch):
+    """The probe found "E051 of 2026 cause list" returning an HIV and AIDS
+    Tribunal list carrying "HATC/E051/2026" — a different case. A wrong
+    hearing date in a client's file is worse than none."""
+    html = "".join([
+        _list_card("/akn/ke/doc/cause-list-daily/kehat/2099-01-10/1/eng@2099-01-10",
+                   "HIV and AIDS Tribunal – Daily Cause List", "HATC/ E051 / 2026 J.A VS A.O"),
+        _list_card("/akn/ke/doc/cause-list-daily/kehc/2099-01-12/1/eng@2099-01-12",
+                   "High Court – Daily Cause List", "HCCHRPET/E051/2026 GACHOKA &amp; 3 OTHERS VS CS TREASURY"),
+        _list_card("/akn/ke/doc/cause-list-daily/kehc/2099-01-13/1/eng@2099-01-13",
+                   "High Court – Daily Cause List", "HCCHRPET/E051/2026 OMONDI VS KPLC"),
+        _list_card("/akn/ke/doc/cause-list-daily/kehc/2026-06-01/1/eng@2026-06-01",
+                   "High Court – Daily Cause List", "Petition E051 of 2026 Gachoka v Cabinet Secretary"),
+    ])
+    asked = {}
+    monkeypatch.setattr(kenya_law_records.http, "get",
+                        lambda url, params=None, **k: asked.update(params or {}) or Resp(200, {"results_html": html}))
+    found, why = kenya_law_records.listings("Petition E051 of 2026", "kehc", ["Gachoka & 3 others"])
+    assert why is None and asked["search"] == "E051 of 2026 Gachoka cause list"
+    assert [x["date"] for x in found] == ["2026-06-01", "2099-01-12"], \
+        "the tribunal's list (other court) and OMONDI (other party) are not this case"
+
+
+def test_a_listing_ahead_is_the_next_dated_step_and_travels_with_the_path(monkeypatch):
+    monkeypatch.setattr(issue_map.settings, "enable_issue_map_records", True)
+    title = ("Gachoka & 3 others v Cabinet Secretary, National Treasury & 11 others "
+             "(Petition E051 of 2026) [2026] KEHC 8409 (KLR)")
+    card = _card(title, "sale of Safaricom shares", uri="/akn/ke/judgment/kehc/2026/8409/eng@2026-06-09")
+    monkeypatch.setattr(kenya_law_records, "search", lambda q: (kenya_law_records.parse(card), 1, None))
+    monkeypatch.setattr(kenya_law_records, "listings", lambda *a: ([
+        {"date": "2026-06-01", "url": "https://new.kenyalaw.org/akn/ke/doc/cause-list-daily/kehc/2026-06-01/1"},
+        {"date": "2099-01-12", "url": "https://new.kenyalaw.org/akn/ke/doc/cause-list-daily/kehc/2099-01-12/1"}], None))
+    monkeypatch.setattr(parliament_records, "fetch", lambda about, ws, we, report: ([], []))
+    monkeypatch.setattr(world_bank_records, "projects", lambda t: [])
+    monkeypatch.setattr(world_bank_records, "documents", lambda t: [])
+    report: dict = {}
+    mentions, ahead = issue_map.acquire_records("Kenya Government", "Safaricom shares sale", None,
+                                                datetime(2026, 8, 1), datetime(2026, 10, 31),
+                                                ["Kenya Government"], report)
+    assert [a["date"] for a in ahead] == ["2099-01-12"], "a past listing is history, not a next step"
+    assert ahead[0]["record"] == "cause_list" and "Petition E051 of 2026" in ahead[0]["event"]
+    assert report["kenya_law"]["listings_ahead"] == 1
+    from engine.evidence import paths
+
+    out = paths.build(mentions, "Kenya Government", ["Kenya Government"], "Safaricom shares sale", ahead=ahead)
+    assert [x["date"] for x in out["paths"][0]["listings"]] == ["2026-06-01", "2099-01-12"]
+    assert out["next"][0]["date"] == "2099-01-12"
