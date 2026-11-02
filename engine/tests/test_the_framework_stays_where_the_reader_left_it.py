@@ -146,24 +146,25 @@ def test_a_new_subject_starts_at_the_top(run):
 
 
 #: The Issue Map redraws as each analyst lands, and its framework arrives
-#: late. A reader who has not picked a tab is moved to the framework when it
-#: lands — it is the deliverable — and one who has picked a tab is left on it.
+#: late. Until it lands the intersection detail is the page; when it lands it
+#: goes on top and the detail moves beneath it as "The working" — and a
+#: reader who had opened the working finds it still open after a redraw.
 AN_ISSUE_MAP_RUN = """(m) => {
   const Z = window.ZENITH, seen = {};
-  const tab = (out, label) => [...out.querySelectorAll('button')]
-      .find(b => b.textContent.includes(label));
+  const working = out => out.querySelector('details.the-working');
 
   const idle = document.createElement('div'); document.body.appendChild(idle);
   Z.renderIssue(idle, Object.assign({}, m, {issue_framework: null}));
   seen.idleBefore = idle.dataset.mode;
   Z.renderIssue(idle, Object.assign({}, m, {issue_framework: {}}));
   seen.idleAfter = idle.dataset.mode;
+  seen.workingClosedByDefault = !!working(idle) && !working(idle).open;
 
   const reader = document.createElement('div'); document.body.appendChild(reader);
   Z.renderIssue(reader, Object.assign({}, m, {issue_framework: {}}));
-  tab(reader, 'Intersection detail').click();
+  working(reader).open = true;
   Z.renderIssue(reader, Object.assign({}, m, {issue_framework: {}}));
-  seen.chosenAfter = reader.dataset.mode;
+  seen.stillOpen = working(reader).open;
   return seen;
 }"""
 
@@ -189,4 +190,5 @@ def test_the_issue_map_moves_an_idle_reader_and_keeps_a_choice():
     assert not errors, errors
     assert seen["idleBefore"] == "detail"
     assert seen["idleAfter"] == "framework", "the deliverable landed and the reader was not shown it"
-    assert seen["chosenAfter"] == "detail", "a redraw overrode the reader's choice"
+    assert seen["workingClosedByDefault"]
+    assert seen["stillOpen"], "a redraw folded the working the reader had opened"

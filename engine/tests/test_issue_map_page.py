@@ -238,7 +238,7 @@ def test_a_graph_too_thin_to_read_is_not_drawn(mapped):
         page.fill("#pr", "Okiya Omtatah")
         page.fill("#is", "International Monetary Fund (IMF)")
         page.click("#mrun")
-        page.wait_for_selector("text=Intersection detail", timeout=15000)
+        page.wait_for_selector("text=Too little connected material", timeout=15000)
         page.wait_for_timeout(500)
         body = page.inner_text("body").lower()
         assert "too little connected material" in body

@@ -356,9 +356,14 @@ spent; wall-clock time.
   the same pair, with no model: new court cases and rulings, new verified
   statements linking them, dated steps that appeared or moved, stakeholders
   newly on the record — and counts what was no longer found, never hiding
-  it. A first map shows nothing. Still to do in Phase 5: merge Intersection
-  detail into the Framework as "The working", and the PDF from the browser's
-  own print.
+  it. A first map shows nothing.
+- **Phase 5 done — one deliverable.** The two tabs are gone: the framework
+  leads and the intersection detail sits beneath it as "The working" —
+  folded on screen, open on paper and on its own pages, its layers renamed
+  (the analysts' reading, the case, method and sources). The framework's
+  graph filters the working's sections, so the page carries one graph.
+  "Save as PDF" prints the page itself — no Chromium on the server; the
+  old `/api/issue-map/download` stays for a deployment that has one.
 
 ## 5. What the founder decides
 

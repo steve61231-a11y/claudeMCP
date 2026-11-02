@@ -145,12 +145,12 @@ def test_the_page_opens_the_map_with_the_connection_and_keeps_failures_for_the_o
     assert "c.classList.add('op-only')" in body
     assert "recordRow(f)" in body
     issue = html[html.index("function renderIssue(out,m){"):]
-    assert issue.index("renderConnection(m.connection_record,m)") < issue.index("const modes=[]"), \
-        "the connection is the map's first answer, above the tabs"
+    assert issue.index("renderConnection(m.connection_record,m)") < issue.index("renderIssueFramework(host"), \
+        "the connection is the map's first answer, above the framework"
     head = issue[:6000]
     assert "No direct link stated — both named in" in head and "No direct link stated — no source names both" in head, \
         "the founder's nuance: which absence it is, in words"
-    assert "renderSearchDemand" not in issue[:issue.index("const modes=[]")], "no search section on the map"
+    assert "renderSearchDemand" not in issue[:issue.index("renderIssueFramework(host")], "no search section on the map"
 
 
 LONG_ISSUE = "Kenyan Court stopping the Kenyan government's sale of its Safaricom shares to Vodacom"

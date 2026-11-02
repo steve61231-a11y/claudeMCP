@@ -353,6 +353,15 @@ run's questions, in `investigation_leads` with a `search: ` prefix so the
 investigator — which writes the same column after delivery — replaces only
 its own kind, and `pending_leads` strips the prefix for every reader.
 
+**A map is one deliverable, and the last map is its baseline.** The map
+had two tabs, and the page kept only the open one, so a printed map was
+whichever tab was showing. The framework now leads and the intersection
+detail is "The working" beneath it (folded on screen, open on paper); the
+PDF is the browser's own print of that page. Every finished map is stored,
+so `reports/map_changes.py` compares it with the previous map of the pair
+with no model — new cases and rulings, new verified statements, dated steps
+that appeared or moved — and counts what is no longer found, never hiding it.
+
 **The Issue Map's connection is a claim, so it stands on the record.**
 The map answers "how is this person connected to this issue?" with a
 verdict a model wrote over a digest — in a client's file, "X is tied to

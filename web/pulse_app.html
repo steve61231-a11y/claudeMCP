@@ -456,6 +456,11 @@
     content:attr(data-mode-label);display:block;font-size:15px;
     font-weight:700;margin:0 0 10px}
 
+  /* The Issue Map's working begins its own pages, under its zone band; the
+     fold's "Open the working" is a screen control with nothing to open. */
+  #zenith .zone:has(+ .the-working){break-before:page;page-break-before:always}
+  #zenith details.the-working > summary{display:none!important}
+
   /* The zone bands become the document's top-level headings. */
   #zenith .zone{margin:18px 0 8px;break-after:avoid;page-break-after:avoid}
   #zenith .zone-n{color:#111!important;font-weight:700}
@@ -4229,7 +4234,18 @@
 
   /** Re-lay the issue map into the same three zones as the report.
       Called after `intersectionDetail` has built everything. */
-  function layerIssueMap(host){
+  //: The fold under the Issue Framework that holds the intersection detail.
+  //: Its summary is the key `readerState` keeps an open fold by, so it is a
+  //: constant: a redraw must find the same words to reopen it.
+  const WORKING_TITLE='Open the working';
+  function workingZone(){
+    const z=el('div','zone');
+    z.innerHTML='<span class="zone-n">The working</span>'
+      +'<span class="zone-t">The analysis the framework was built from</span><span class="zone-rule"></span>';
+    return z;
+  }
+
+  function layerIssueMap(host,nested){
     const answer=[],theCase=[],working=[];
     Array.from(host.children).forEach(card=>{
       const lbl=card.querySelector&&card.querySelector('.lbl');
@@ -4239,16 +4255,20 @@
       else answer.push(card);
     });
     host.innerHTML='';
+    // Nested under the framework, the layers are the working's own parts,
+    // and the graph that filters them is the framework's, above.
     if(answer.length){
-      zone(host,'01','The answer','What the record says about this pair');
+      zone(host,'01',nested?'The analysts\' reading':'The answer',
+           nested?'What the analysts concluded from the documents':'What the record says about this pair');
       answer.forEach(c=>host.appendChild(c));
     }
     if(theCase.length){
-      zone(host,'02','The case','How the connection is made — filtered by the graph below');
+      zone(host,'02','The case',nested?'How the connection is made — filtered by the graph in the framework above'
+                                       :'How the connection is made — filtered by the graph below');
       theCase.forEach(c=>host.appendChild(c));
     }
     if(working.length){
-      zone(host,'03','The working','How this was built: what was read and what failed');
+      zone(host,'03',nested?'Method and sources':'The working','How this was built: what was read and what failed');
       working.forEach(c=>host.appendChild(foldSection(c)||c));
     }
     labelSections(host);
@@ -5749,8 +5769,9 @@
     return card;
   }
 
-  function intersectionDetail(host,m){
+  function intersectionDetail(host,m,opts){
     const it=m.intersection||{};
+    opts=opts||{};
     // Before the verdict, not after it. A map's entire claim is a
     // connection between two named things, so a name from nowhere in that
     // sentence has to be flagged above the sentence.
@@ -5760,7 +5781,7 @@
     // where the answer should be. It is built here (so its listeners are
     // registered before the sections that follow subscribe to them) and
     // appended at the bottom, under everything it filters.
-    const graphCard=issueGraphCard(m.issue_graph);
+    const graphCard=opts.graph===false?null:issueGraphCard(m.issue_graph);
     if(m.research_plan&&m.research_plan.length){
       const rp=el('div','card');
       rp.innerHTML=`<div class="lbl">How this was researched</div>
@@ -6076,6 +6097,19 @@
       a note and then rendering into the same element silently destroyed the
       note — which is why a stored map from an old run appeared with nothing
       saying it was old. The map gets its own box beneath the note instead. */
+  /** The map's PDF: the browser prints the page it has already rendered.
+      The title names the file the browser offers to save, and is put back. */
+  function printIssueMap(m,msg){
+    const was=document.title;
+    document.title=((m.principal||'issue')+' x '+(m.issue||'map')+' - issue map')
+      .replace(/[^a-z0-9 ]+/gi,' ').replace(/\s+/g,' ').trim();
+    const back=()=>{document.title=was;window.removeEventListener('afterprint',back);};
+    window.addEventListener('afterprint',back);
+    if(msg){msg.textContent='In the print window, choose “Save as PDF” as the destination.';
+            setTimeout(()=>{msg.textContent='';},10000);}
+    try{window.print();}catch(e){back();if(msg)msg.textContent='Printing is not available here: '+e.message;}
+  }
+
   function renderIssueUnder(out,note,payload){
     out.innerHTML='';
     if(note)out.appendChild(note);
@@ -6532,7 +6566,7 @@
         return '<span class="chip">Analysed '+fmt(cv.mentions_analyzed)+' of '+fmt(cv.mentions_total)+'</span>';
       })()}</div>
       <div class="row" style="margin-top:12px;align-items:center">
-        <button class="btn ghost" id="dlIssuePdf">Download PDF</button>
+        <button class="btn ghost" id="dlIssuePdf">Save as PDF</button>
         <span class="muted" id="dlIssueMsg" style="font-size:12.5px"></span>
       </div>`;
     out.appendChild(head);
@@ -6547,40 +6581,36 @@
     if(cpath)out.appendChild(stampEvidence(cpath,ES.connection_paths));
     const changes=renderMapChanges(m.changes);
     if(changes)out.appendChild(changes);
-    $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
-      '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
-        +'&issue='+encodeURIComponent(m.issue||''),
-      ((m.principal||'issue')+'-x-'+(m.issue||'map')).replace(/[^a-z0-9]+/gi,'-').toLowerCase(),
-      $('#dlIssuePdf',head), $('#dlIssueMsg',head));
+    // The PDF is the browser's own print of this page (Phase 5): what prints
+    // IS the map, every fold open on paper, with no Chromium on the server.
+    $('#dlIssuePdf',head).onclick=()=>printIssueMap(m,$('#dlIssueMsg',head));
 
-    // The framework is the client deliverable; the intersection detail is the
-    // analysis it was built from. Both are produced on every run, so both are
-    // reachable — one click apart, rather than one of them thrown away.
-    const modes=[];
-    if(m.issue_framework)modes.push(['framework','Issue Framework',host=>renderIssueFramework(host,m.issue_framework,m)]);
-    modes.push(['detail','Intersection detail',host=>{
-      intersectionDetail(host,m); layerIssueMap(host);
-    }]);
-
-    const bar=el('div','row');bar.style.margin='14px 0 4px';
+    // One deliverable (docs/ISSUE_MAP_FOUNDATION.md, Phase 5). The framework
+    // is what the client reads; the intersection detail is the analysis it
+    // was built from — method, sources, what was set aside — and sits
+    // beneath it as "The working", folded on screen and open on paper, so
+    // the printed map is the whole map rather than whichever tab was open.
+    // Until the framework lands the detail is all there is, so it is shown
+    // flat; when the framework arrives it moves above, and a reader who had
+    // opened the working finds it still open (the fold's summary is stable).
     const host=el('div','grid fade');host.style.marginTop='12px';
-    out.appendChild(bar);out.appendChild(host);
-    const buttons={};
-    const show=id=>{
-      host.innerHTML='';
-      modes.forEach(([mid])=>{buttons[mid].className='btn'+(mid===id?'':' ghost');});
-      modes.find(mo=>mo[0]===id)[2](host);
-      out.dataset.mode=id;
-    };
-    modes.forEach(([id,label])=>{
-      const b=el('button','btn ghost',esc(label));
-      b.onclick=()=>{out.dataset.chosen='1';show(id);};
-      buttons[id]=b;bar.appendChild(b);
-    });
-    // The framework is the default and arrives late; a reader who has not
-    // picked a tab is moved to it when it lands, one who has is left alone.
-    const keep=kept&&kept.chosen&&modes.some(mo=>mo[0]===kept.mode);
-    show(keep?kept.mode:modes[0][0]);
+    out.appendChild(host);
+    if(m.issue_framework){
+      renderIssueFramework(host,m.issue_framework,m);
+      out.dataset.mode='framework';
+      host.appendChild(workingZone());
+      const fold=foldBlock(WORKING_TITLE,'how this map was built: the analysts\' reading, '
+        +'method, sources and what was set aside');
+      fold.classList.add('the-working');
+      const inner=el('div','grid');inner.style.marginTop='10px';
+      // The framework drew the graph; the working's sections filter on it.
+      intersectionDetail(inner,m,{graph:false}); layerIssueMap(inner,true);
+      fold.appendChild(inner);
+      host.appendChild(fold);
+    }else{
+      intersectionDetail(host,m); layerIssueMap(host);
+      out.dataset.mode='detail';
+    }
     if(kept)host.classList.remove('fade');
     restoreReaderState(out, kept);
   }
