@@ -236,7 +236,45 @@ def _pdf(url: str) -> str:
     return f"HTTP {r.status_code} · {len(r.content)} bytes · starts {head!r} · {r.headers.get('content-type')}{extra}"
 
 
+#: Round four: the exact contracts the connectors are written against.
+ROUND4 = [
+    ("KL search JSON keys + first result HTML",
+     "https://new.kenyalaw.org/search/api/documents/?search=insurance%20levy"),
+    ("KL search, cause lists?",
+     "https://new.kenyalaw.org/search/api/documents/?search=insurance&nature=Cause%20List"),
+    ("KL search, page 2", "https://new.kenyalaw.org/search/api/documents/?search=insurance&page=2"),
+    ("Senate Hansard listing", "https://www.parliament.go.ke/the-senate/house-business/hansard"),
+    ("NA Hansard listing page 2",
+     "https://www.parliament.go.ke/the-national-assembly/house-business/hansard?page=1"),
+    ("Senate order papers", "https://www.parliament.go.ke/the-senate/house-business/order-paper"),
+]
+
+
+def _round4(url: str) -> str:
+    import json
+    import re
+
+    try:
+        r = requests.get(url, headers={"User-Agent": ENGINE_UA}, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        return f"error: {type(exc).__name__}"
+    try:
+        data = json.loads(r.text)
+        keys = {k: (type(v).__name__, (len(v) if hasattr(v, "__len__") else v)) for k, v in data.items()}
+        html = data.get("results_html") or ""
+        first = html[:2200]
+        facets = data.get("facets")
+        return (f"HTTP {r.status_code} · keys={keys} · facets={str(facets)[:700]} · "
+                f"first result HTML: {' '.join(first.split())}")
+    except ValueError:
+        docs = re.findall(r'href="([^"]+\.pdf)"', r.text, re.I)
+        pager = re.findall(r'href="([^"]*\?page=\d+)"', r.text)[:4]
+        return f"HTTP {r.status_code} · pdfs={len(docs)} first={docs[:3]} pager={pager}"
+
+
 def main() -> int:
+    for label, url in ROUND4:
+        print(f"ROUND4 {label}: {_round4(url)}", file=sys.stderr)
     for label, url in CHROME_SNIPPETS:
         print(f"ROUND3 {label}: {_chrome_snippet(url)}", file=sys.stderr)
     print(f"ROUND3 {PDF_PROBE[0]}: {_pdf(PDF_PROBE[1])}", file=sys.stderr)

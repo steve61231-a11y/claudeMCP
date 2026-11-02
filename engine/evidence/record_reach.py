@@ -27,7 +27,10 @@ HOSTS = {
     "kenya_law_gazettes": "https://new.kenyalaw.org/gazettes/",
     "parliament_order_papers": "https://www.parliament.go.ke/the-national-assembly/house-business/order-paper",
     "world_bank": "https://search.worldbank.org/api/v2/projects?format=json&countrycode_exact=KE&rows=1",
-    "wikidata": "https://query.wikidata.org/sparql?format=json&query=ASK%7B%7D",
+    "kenya_law_search": "https://new.kenyalaw.org/search/api/documents/?search=health%20insurance",
+    # A query whose answer is longer than the 50-byte floor: ASK{} answers
+    # in 30 bytes, so a working Wikidata read as unreachable.
+    "wikidata": "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fh%20WHERE%20%7Bwd%3AQ114%20wdt%3AP35%20%3Fh%7D",
 }
 
 TTL_SECONDS = 6 * 3600
