@@ -18,6 +18,10 @@ on:
       - "engine/ingestion/**"
       - "engine/evidence/search_sources.py"
       - "scripts/source_probe.py"
+      - "scripts/record_probe.py"
+      - "engine/reports/issue_map.py"
+      - "engine/reports/issue_match.py"
+      - "engine/evidence/paths.py"
       - ".github/workflows/source-probe.yml"
   workflow_dispatch: {}
 
