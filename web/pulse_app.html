@@ -2548,6 +2548,10 @@
     const it=m.intersection||{};
     if(!fw){out.appendChild(noteCard('Issue framework','Not present in this report.'));return;}
     resetSections();
+    // Each section says what it rests on (engine/reports/issue_evidence_status.py):
+    // on the record, partly, counted, or the analysts' reading.
+    const fwStamp=(card,key)=>{if(!card||card.dataset.stamped)return;card.dataset.stamped='1';
+      stampEvidence(card,(m.evidence_status||{})[key]);};
 
     // INPUT 1
     const i1=el('div','card glow');
@@ -2590,6 +2594,7 @@
         <span class="chip">${bg.controls.events_excluded_by_cutoff} excluded by ${bg.controls.year_cutoff}yr cut-off</span>`));
     }
     s1.appendChild(tl);
+    fwStamp(s1,'background');
     out.appendChild(s1);
 
     // 2 Main contours
@@ -2646,6 +2651,7 @@
       s2.appendChild(el('div','muted chart-note op-only',
         `Set aside as the press rather than stakeholders: ${it.media_set_aside.map(x=>esc(x.name)+' ('+esc(x.reason)+')').join(', ')}.`));
     }
+    fwStamp(s2,'stakeholders');
     out.appendChild(s2);
 
     // 2 Stakeholder networks (visualisation + hover profiles)
@@ -2665,6 +2671,7 @@
     if(graph){
       graph.style.cssText='margin:10px 0 0;padding:0;border:0;background:none';
       s2b.appendChild(graph);
+      fwStamp(s2b,'stakeholders');
       out.appendChild(s2b);
     }
     const viz=sn.visualisation||{nodes:[],edges:[]};
@@ -2688,7 +2695,7 @@
         alertProfile(p);
       },
     }));
-    if(!graph)out.appendChild(s2b);
+    if(!graph){fwStamp(s2b,'stakeholders');out.appendChild(s2b);}
 
     // INPUT 2
     const i2=el('div','card');
@@ -2759,6 +2766,7 @@
       s4.appendChild(el('div','lbl','Best engagement approaches'));
       s4.appendChild(el('ul','muted','<li>'+sr.best_engagement_approaches.map(esc).join('</li><li>')+'</li>'));
     }
+    fwStamp(s4,'recommendations');
     out.appendChild(s4);
 
     // 5 Sequencing
@@ -2785,6 +2793,7 @@
          <div class="muted" style="font-size:12px">before ${esc(w.before||'')} — ${esc(w.rationale||'')}</div>`)));
     }
     if(sq.note)s5.appendChild(el('div','muted chart-note',esc(sq.note)));
+    fwStamp(s5,'sequencing');
     out.appendChild(s5);
 
     // 6 Data overview
@@ -2811,6 +2820,7 @@
       s6.appendChild(el('div','lbl','How to read this report'));
       s6.appendChild(el('div','muted',esc(dov.how_to_read)));
     }
+    fwStamp(s6,'data_overview');
     out.appendChild(s6);
   }
 
@@ -6466,10 +6476,12 @@
     // The connection, on the record — counted, no model writing it — and
     // what the public searched for the pair. Above the tabs, because it is
     // the map's first answer and it does not depend on which tab is open.
+    const ES=m.evidence_status||{};
+    stampEvidence(head,ES.verdict);
     const conn=renderConnection(m.connection_record,m);
-    if(conn)out.appendChild(conn);
+    if(conn)out.appendChild(stampEvidence(conn,ES.connection_record));
     const cpath=renderConnectionPaths(m.connection_paths,m);
-    if(cpath)out.appendChild(cpath);
+    if(cpath)out.appendChild(stampEvidence(cpath,ES.connection_paths));
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
         +'&issue='+encodeURIComponent(m.issue||''),

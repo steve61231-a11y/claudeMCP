@@ -301,6 +301,22 @@ spent; wall-clock time.
     record, a Hansard entry or a tender naming the principal. Waiting on a
     live map.
 
+- **Phase 2 — the connection path (2 Nov 2026).** `evidence/paths.py`: typed,
+  sourced steps the records state — party to a case (sides from the title,
+  one step per case however many rulings), speaker in the House, a lender's
+  borrower or agency — with the office standing for a government or a
+  ministry said as the basis. Records from earlier maps of the same
+  principal join when they name this issue. On the page as "The record that
+  ties them", in the graph as teal record lines, and in `issue_quality`.
+  Live: Kenya Government × Safaricom share sale — respondent in Petition
+  E051 of 2026 (4 rulings); National Treasury × housing levy — respondent
+  in Petition E181 of 2023. Found on the way: co-mention lines were drawn
+  solid, like stated links; now dotted.
+- **Phase 3 begun — every section says what it rests on.**
+  `reports/issue_evidence_status.py` grades the verdict, the connection,
+  the path and each framework section (on the record / partly / counted /
+  the analysts' reading), stamped under each heading.
+
 ## 5. What the founder decides
 
 - **OpenRouter credits** — every model-written part of the map stops

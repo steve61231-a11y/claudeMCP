@@ -847,6 +847,11 @@ def build_issue_map(
     # spiderweb this is explicitly not.
     _publish_graph(principal, issue, analysis, payload["issue_framework"],
                    mentions, payload, publish)
+    # What each section rests on, stamped on the section (Phase 3).
+    from engine.reports import issue_evidence_status
+
+    payload["evidence_status"] = issue_evidence_status.assess(payload)
+    publish("evidence_status", payload["evidence_status"])
     # Measured, not believed — Phase 0 of docs/ISSUE_MAP_FOUNDATION.md.
     from engine.reports import issue_quality
 
