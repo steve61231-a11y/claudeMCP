@@ -42,4 +42,4 @@ jobs:
         # stacks, which nothing in the record connectors imports.
         run: grep -vE "^(spacy|hdbscan|scikit-learn|scrapling|yt-dlp|trafilatura|sentence-transformers)" engine/requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt python-dotenv
       - name: Run the record connectors
-        run: PYTHONPATH=. python scripts/record_probe.py
+        run: PYTHONPATH=. python scripts/record_probe.py --layout && PYTHONPATH=. python scripts/record_probe.py

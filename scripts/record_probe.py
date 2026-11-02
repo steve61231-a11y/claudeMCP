@@ -49,5 +49,35 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and "--layout" not in sys.argv:
     raise SystemExit(main())
+
+
+def layout() -> None:
+    """The page furniture of one Hansard as pypdf extracts it — headers,
+    footers, headings — so the cleanup is written against what is printed."""
+    import re
+
+    from engine.ingestion import http, parliament_records
+
+    response = http.get(parliament_records.LISTINGS[0], timeout=30)
+    docs = [d for d in parliament_records.documents(response.text, parliament_records.LISTINGS[0])
+            if d["kind"] == "hansard" and d["date"]]
+    doc = sorted(docs, key=lambda d: d["date"], reverse=True)[0]
+    text = parliament_records.pdf_text(doc["url"])
+    lines = text.split("\n")
+    print(f"\n=== LAYOUT {doc['name']} · {len(lines)} lines", file=sys.stderr)
+    for line in lines[:40]:
+        print(f"   | {line[:160]!r}", file=sys.stderr)
+    for needle in ("certified copy", "DEBATES", "Disclaimer"):
+        for m in list(re.finditer(re.escape(needle), text))[:3]:
+            print(f"   [{needle}] {text[max(0, m.start() - 220):m.end() + 160]!r}", file=sys.stderr)
+    caps = [line.strip() for line in lines if line.strip() and not re.search(r"[a-z]", line)
+            and len(line.strip()) > 6]
+    print(f"   all-caps lines: {len(caps)}", file=sys.stderr)
+    for line in caps[:30]:
+        print(f"   ^ {line[:160]!r}", file=sys.stderr)
+
+
+if __name__ == "__main__" and "--layout" in sys.argv:
+    layout()
