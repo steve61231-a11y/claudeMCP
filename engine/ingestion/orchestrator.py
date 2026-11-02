@@ -343,6 +343,15 @@ def plan_run(
             tasks.append(IngestionTask(
                 run_id=run.id, connector="google_news", platform="news", endpoint="rss",
                 query=f'"{politician.name}" after:{start.isoformat()} before:{end.isoformat()}'))
+        # Kenyan newsrooms asked by name (KENYAN_NEWSROOM_SITES — Tuko by
+        # default), so a newsroom that writes often about the subject is not
+        # crowded out of the general results by other outlets.
+        from engine.config import newsroom_sites
+
+        for site in newsroom_sites():
+            tasks.append(IngestionTask(
+                run_id=run.id, connector="google_news", platform="news", endpoint="rss",
+                query=f'site:{site} "{politician.name}"'))
 
     # Reddit refuses every keyless request from a cloud server ("403
     # Blocked", measured from Railway and from GitHub), so without app

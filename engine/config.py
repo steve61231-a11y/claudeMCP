@@ -369,6 +369,17 @@ class Settings(BaseSettings):
     enable_kenya_gazette: bool = True   # kenyalaw.org — appointments, revocations
     enable_kenya_law: bool = True       # kenyalaw.org — judgments and rulings
     enable_google_news: bool = True   # Google News RSS (Nation/Standard/Citizen/Star)
+    # Kenyan newsrooms asked BY NAME, as well as in Google News's general
+    # results (comma-separated domains). One general query returns Google's
+    # hundred best matches across every outlet, so a newsroom that writes
+    # often about a subject can be crowded out of it. Tuko is the largest
+    # Kenyan newsroom in the corpus (3,317 items on 2 Nov 2026) and answers
+    # a `site:tuko.co.ke` query with 100 stories a month on a public figure
+    # (scripts/tuko_probe.py); its robots.txt allows article pages, and its
+    # own search page returns the same links whatever is asked, so the
+    # newsroom is asked through Google News, and each story is then read in
+    # full from tuko.co.ke by the article enricher. Empty = none.
+    kenyan_newsroom_sites: str = "tuko.co.ke"
     enable_reddit: bool = True        # Reddit public JSON search (+ r/Kenya)
     # Reddit refuses keyless requests from cloud servers ("403 Blocked") — it
     # worked from a laptop and never from Railway. A free "script" app at
@@ -462,3 +473,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def newsroom_sites() -> list[str]:
+    """`KENYAN_NEWSROOM_SITES` as a list of bare domains."""
+    return [d.strip().lower().removeprefix("www.") for d in (settings.kenyan_newsroom_sites or "").split(",")
+            if d.strip()]

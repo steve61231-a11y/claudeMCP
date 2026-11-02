@@ -115,6 +115,20 @@ def _google_news_intersection(identity: str, issue_term: str, ws: datetime, we: 
     )
 
 
+#: Pair queries asked of each Kenyan newsroom by name, beside the issue alone.
+NEWSROOM_PAIR_BUDGET = 2
+
+
+def _newsroom_intersection(site: str, identity: str, issue_term: str, ws: datetime,
+                           we: datetime) -> list[IngestedMention]:
+    """One Kenyan newsroom's own coverage of the pair (or of the issue alone,
+    with no identity), through Google News restricted to the site."""
+    from engine.ingestion.google_news_rss_connector import GoogleNewsRssConnector
+
+    both = f'"{identity}" "{issue_term}"' if identity else f'"{issue_term}"'
+    return GoogleNewsRssConnector().fetch(identity or issue_term, [], ws, we, query=f"site:{site} {both}")
+
+
 def _reddit_intersection(identity: str, issue_term: str, ws: datetime, we: datetime) -> list[IngestedMention]:
     """Reddit search takes the query verbatim; quoted phrases separated by a
     space are an AND of both phrases."""
@@ -281,6 +295,16 @@ def acquire_intersection(
         _sweep("gdelt", _gdelt_intersection)
     if settings.enable_google_news:
         _sweep("google_news", _google_news_intersection)
+        # Kenyan newsrooms asked by name (KENYAN_NEWSROOM_SITES): the pair,
+        # and the issue alone, inside each newsroom's own coverage.
+        from engine.config import newsroom_sites
+
+        for site in newsroom_sites():
+            for identity, term in _pairs(identities, issue_terms, NEWSROOM_PAIR_BUDGET) + [("", issue_terms[0])]:
+                try:
+                    _add(_newsroom_intersection(site, identity, term, ws, we))
+                except Exception as exc:  # noqa: BLE001 — one newsroom down costs only itself
+                    stages.current().failed(f"issue_map:newsroom:{site}", exc)
     if settings.enable_reddit:
         _sweep("reddit", _reddit_intersection)
     if settings.enable_youtube:

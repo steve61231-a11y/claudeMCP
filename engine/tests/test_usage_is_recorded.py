@@ -15,13 +15,13 @@ def test_openai_style_usage_is_recorded(monkeypatch):
     input_tokens / output_tokens. Nothing read the former, so every paid
     OpenRouter call recorded zero."""
     seen = {}
-    monkeypatch.setattr(llm, "_persist_usage", lambda i, o: seen.update(inp=i, out=o))
+    monkeypatch.setattr(llm, "_persist_usage", lambda i, o, **_: seen.update(inp=i, out=o))
     llm._record_openai_usage({"usage": {"prompt_tokens": 1200, "completion_tokens": 340}})
     assert seen == {"inp": 1200, "out": 340}
 
 
 def test_a_reply_with_no_usage_block_is_not_an_error(monkeypatch):
-    monkeypatch.setattr(llm, "_persist_usage", lambda i, o: None)
+    monkeypatch.setattr(llm, "_persist_usage", lambda i, o, **_: None)
     llm._record_openai_usage({})
     llm._record_openai_usage({"usage": None})
 
@@ -36,7 +36,7 @@ def test_accounting_never_breaks_a_call(monkeypatch):
 def test_zero_tokens_are_not_written(monkeypatch):
     """An empty rollup row is noise in the only record of what was spent."""
     calls = []
-    monkeypatch.setattr(llm, "_persist_usage", lambda i, o: calls.append((i, o)))
+    monkeypatch.setattr(llm, "_persist_usage", lambda i, o, **_: calls.append((i, o)))
     llm._record_openai_usage({"usage": {"prompt_tokens": 0, "completion_tokens": 0}})
     assert calls == [(0, 0)], "the guard belongs in _persist_usage, not the caller"
 

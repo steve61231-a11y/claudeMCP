@@ -1045,6 +1045,20 @@ LLM_PRICE_IN=0.75        # per million tokens; drives the real spend figure
 LLM_PRICE_OUT=3.75       # in Mission Control. Set them to your model's rates.
 ```
 
+**Production can run on DeepSeek's strongest model** (founder, 2 Nov 2026):
+an openai_compatible model whose id starts with an entry in
+`LLM_PRODUCTION_MODELS` (default `deepseek/deepseek-v4-pro`) is not stamped
+test-grade. Each tier is priced at its own rate (`LLM_BULK_PRICE_IN/OUT`)
+and `llm_usage` keeps the bulk tier's share, because Pro's output costs ~17x
+Flash's. Measured spend: `scripts/cost_probe.py` (workflow `cost-probe`).
+
+**Kenyan newsrooms are asked by name.** `KENYAN_NEWSROOM_SITES` (default
+`tuko.co.ke`) adds a `site:` Google News query per subject in the Search
+report and per pair in the Issue Map, so a newsroom that writes often about
+a subject is not crowded out of Google's hundred general results. Tuko's
+own search page returns the same links whatever is asked
+(`scripts/tuko_probe.py`), so do not build on it.
+
 **Only `LLM_PROVIDER=anthropic` produces production-grade reports.** Everything
 else is stamped "Test-grade — not for a client" in the UI, deliberately, because
 the prompts and anti-hallucination guarantees are tuned against that model. If
