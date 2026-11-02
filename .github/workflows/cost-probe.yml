@@ -12,6 +12,7 @@ on:
       - scripts/cost_probe.py
       - scripts/tuko_probe.py
       - scripts/causelist_probe.py
+      - scripts/gazette_probe.py
       - .github/workflows/cost-probe.yml
 
 jobs:
@@ -33,3 +34,5 @@ jobs:
         run: python scripts/tuko_probe.py
       - name: Cause lists, every route to a case's next date
         run: python scripts/causelist_probe.py
+      - name: Gazette, statutory deadlines
+        run: python scripts/gazette_probe.py
