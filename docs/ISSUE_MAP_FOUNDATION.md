@@ -350,7 +350,19 @@ spent; wall-clock time.
   entries in its ledger, earliest first, and the trigger is told to be the
   earliest; the code — never the writer — attaches that step, with its
   source, above the tree. Sequencing already reads the same steps.
-  Still open in Phase 4: the Gazette's statutory deadlines.
+- **Phase 4 — the Gazette's deadlines, measured and not shipped.**
+  Kenya Law's search filters to Gazette issues (`nature=Gazette`, newest
+  first, held to a date), but each card shows only the passages around the
+  search terms, and the issue itself is refused to a server on kenyalaw.org
+  and on gazettes.africa (`scripts/gazette_probe.py`). A reader holding a
+  deadline to one passage that names the issue was built and run on eight
+  public issues over a year of Gazettes: 87 passages named the issue, one
+  carried deadline words, and that one was a water notice whose office
+  abbreviation is "SHA". A reader that measured no true deadline and one
+  false one was removed rather than shipped; "0 deadlines ahead" would have
+  read as a finding. The route that would work is the full text through a
+  licensed Laws.Africa content API — a founder decision (section 5).
+  Phase 4 otherwise stands: cause lists and order papers.
 - **Phase 5 begun — what changed since the last map.**
   `reports/map_changes.py` compares this map with the previous stored map of
   the same pair, with no model: new court cases and rulings, new verified
@@ -373,4 +385,7 @@ spent; wall-clock time.
   again, and `deploy.yml` verifies the live commit.
 - **OpenSanctions** — the PEP data needs a commercial licence; worth it or
   not.
+- **Laws.Africa content API** — the Gazette's full text (and with it the
+  statutory deadlines, appointments and notices in full) is refused to a
+  server; a licensed API key is the route. Price to be asked.
 - **Approval of the phases**, in this order or another.

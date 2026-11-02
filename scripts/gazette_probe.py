@@ -1,4 +1,14 @@
-"""Round 2. Round 1 found: `nature=Gazette` restricts Kenya Law's search to
+"""Result (round 4, run through `scripts/record_probe.py` with the reader
+it would have fed, 2 Nov 2026): over eight public issues and a year of
+Gazette issues, the passages a search card shows named the issue 87 times
+and carried deadline words ONCE — and that once was a Water Resources
+Authority notice whose office abbreviation is "SHA". A notice states its
+deadline further down than the passage around the issue's name, and the
+notice itself is refused to a server on both hosts. So the Issue Map does
+not read Gazette deadlines; the route that would is the full text, through
+a licensed Laws.Africa content API. Kept as the record of why.
+
+Round 2. Round 1 found: `nature=Gazette` restricts Kenya Law's search to
 Gazette issues (doc_type= returns nothing); a card is a whole ISSUE with
 short "Page N : [...]" snippets; results are ranked over all years; the
 issue pages answer HTTP 202 with no body (the JavaScript challenge). So

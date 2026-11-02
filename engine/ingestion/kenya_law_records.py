@@ -17,8 +17,10 @@ URI (`/akn/ke/judgment/kehc/2024/8429/eng@2024-07-10` — the type, the court
 and the date are in it), an italic alternative title, the date and the
 court in `span.me-3`, and a snippet of the source's own words with the
 search terms in `<mark>`. `format=json` is REFUSED (400) — the endpoint
-answers JSON by default — and `nature=` filters nothing; the probe found
-both. The document pages themselves sit behind a JavaScript challenge, so
+answers JSON by default — and `nature=` filters nothing for cases; the
+probe found both. For the Gazette it does filter (`nature=Gazette`, with
+`ordering=-date` and `date__gte=`), but a Gazette card shows only the
+passages around the search terms (`scripts/gazette_probe.py`). The document pages themselves sit behind a JavaScript challenge, so
 the record is the card: title, parties, case number, court, date, snippet.
 
 Nothing is inferred. Parties are read from the title's "A v B" form only;
