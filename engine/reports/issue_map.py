@@ -1246,7 +1246,7 @@ def _publish_graph(principal, issue, analysis, framework, mentions, payload, pub
     a view that fails is a missing view, not a failed investigation."""
     try:
         payload["issue_graph"] = issue_graph.build(
-            principal, issue, analysis, framework, mentions)
+            principal, issue, analysis, framework, mentions, paths=payload.get("connection_paths"))
         publish("issue_graph", payload["issue_graph"])
     except Exception as exc:  # noqa: BLE001
         stages.current().failed("issue_graph", exc)

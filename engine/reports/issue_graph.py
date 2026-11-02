@@ -22,11 +22,12 @@ import re
 CONFIDENCE_STATED = "stated"      # a source says so in as many words
 CONFIDENCE_COOCCUR = "co-occurs"  # they appear together, repeatedly
 CONFIDENCE_INFERRED = "inferred"  # the analyst drew the link
+CONFIDENCE_RECORD = "on the record"  # a public record states the role
 
 NODE_COLOURS = {
     "principal": "#7dd3fc", "issue": "#fbbf24", "sub_issue": "#fcd34d",
     "person": "#c4b5fd", "organization": "#86efac", "event": "#f9a8d4",
-    "narrative": "#fb7185", "source": "#94a3b8",
+    "narrative": "#fb7185", "source": "#94a3b8", "record": "#2dd4bf",
 }
 
 
@@ -145,7 +146,8 @@ def _evidence_rows(items, limit: int = 4) -> list[dict]:
 
 
 def build(principal: str, issue: str, analysis: dict,
-          framework: dict | None = None, corpus: list[dict] | None = None) -> dict:
+          framework: dict | None = None, corpus: list[dict] | None = None,
+          paths: dict | None = None) -> dict:
     """Assemble the graph from what the investigation actually produced."""
     graph = _Graph()
     analysis = analysis or {}
@@ -153,6 +155,28 @@ def build(principal: str, issue: str, analysis: dict,
     principal_id = graph.node("principal", principal, role="principal")
     issue_id = graph.node("issue", issue, role="issue")
     graph.edge(principal_id, issue_id, "is mapped against", CONFIDENCE_INFERRED)
+
+    # The evidence path (evidence/paths.py): a court case, a sitting, a
+    # lender's project, each a node of its own between principal and issue,
+    # each line resting on the record that states the role.
+    for path in ((paths or {}).get("paths") or []) if (paths or {}).get("state") == "measured" else []:
+        steps = path.get("steps") or []
+        if not steps:
+            continue
+        first = steps[0]
+        record = first.get("record") or {}
+        evidence = [{"text": first.get("as_printed") or "", "url": record.get("url"),
+                     "platform": record.get("court") or record.get("kind"), "ref": None,
+                     "date": record.get("date")}]
+        if len(steps) == 1:
+            graph.edge(principal_id, issue_id, first.get("relation") or "on the record",
+                       CONFIDENCE_RECORD, evidence)
+            continue
+        record_id = graph.node("record", first.get("to") or record.get("id") or "a record")
+        graph.attach_evidence(record_id, evidence)
+        graph.edge(principal_id, record_id, first.get("relation") or "named in", CONFIDENCE_RECORD, evidence)
+        graph.edge(record_id, issue_id, "concerns", CONFIDENCE_RECORD,
+                   [{**evidence[0], "text": steps[1].get("words") or evidence[0]["text"]}])
 
     # People and organisations the analyst named, each linked to whichever half
     # of the intersection it was named in relation to.

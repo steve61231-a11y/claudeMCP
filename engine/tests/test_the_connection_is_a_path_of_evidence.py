@@ -154,3 +154,22 @@ def test_records_from_earlier_maps_join_the_path_when_they_name_this_issue(db_se
     out = paths.build(found, "Ministry of Health", ["Ministry of Health"], "SHA")
     assert out["counts"]["court"] == 1
     assert issue_map._stored_records(db_session, subject.id, "SHA", None, {"https://records.example/0"}) == []
+
+
+def test_the_graph_draws_the_record_path_and_never_a_co_mention_as_a_connection():
+    """The plan: "a dotted co-mentioned line is never drawn as a connection".
+    The page dashed only inferred lines, so a co-occurrence was drawn solid,
+    exactly like a source stating the link."""
+    from pathlib import Path
+
+    from engine.reports import issue_graph
+
+    case = _case("Abdille v Ministry of Health & 3 others (Petition E078 of 2025) [2025] KEELRC 2027 (KLR)")
+    cp = paths.build([case], "Ministry of Health", ["Ministry of Health"], "SHA")
+    g = issue_graph.build("Ministry of Health", "SHA", {}, None, [], paths=cp)
+    record_edges = [e for e in g["edges"] if e["confidence"] == issue_graph.CONFIDENCE_RECORD]
+    assert {e["relation"] for e in record_edges} == {"named as respondent in", "concerns"}
+    assert all(e["evidence"][0]["url"] for e in record_edges), "every record line opens its record"
+    assert any(n["type"] == "record" and n["label"] == "Petition E078 of 2025" for n in g["nodes"])
+    page = (Path(__file__).resolve().parents[2] / "web" / "pulse_app.html").read_text()
+    assert "e.confidence==='co-occurs'?'stroke-dasharray=" in page

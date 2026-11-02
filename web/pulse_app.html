@@ -5577,10 +5577,12 @@
           stats.isolated?` · ${fmt(stats.isolated)} not yet connected to anything`:''}.
         Click a node to filter everything below to it. Scroll to zoom, drag to pan.</div>
       <div class="muted" style="font-size:12px;margin-top:6px">
-        <b style="color:var(--ink)">Solid line</b> — a source says these two are connected.
-        <b style="color:var(--ink);margin-left:8px">Dotted line</b> — they co-occur in the
-        record but nothing states the link. Hover any line for the relationship and its
-        evidence.</div>`));
+        <b style="color:#2dd4bf">Teal line</b> — a public record states the role (a party to a case,
+        a speaker in Parliament, a lender's agency).
+        <b style="color:var(--ink);margin-left:8px">Solid line</b> — a source says these two are connected.
+        <b style="color:var(--ink);margin-left:8px">Dotted line</b> — they are named together, but
+        nothing states a link. <b style="color:var(--ink);margin-left:8px">Dashed line</b> — our
+        analysts' reading. Hover any line for the relationship and its evidence.</div>`));
 
     // Type filters. An investigation with sixty sources and four people is
     // unreadable until you can turn the sources off.
@@ -5649,10 +5651,17 @@
       edges.forEach(e=>{
         const a=pos[e.source],b=pos[e.target];if(!a||!b)return;
         const lit=!sel||(near.has(e.source)&&near.has(e.target));
-        const dash=e.confidence==='inferred'?'stroke-dasharray="5 4"':'';
+        // Each kind of link drawn as what it is: a co-mention is never drawn
+        // like a stated connection. A record line is the firmest — a public
+        // record states the role — and is drawn in its own colour.
+        const rec=e.confidence==='on the record';
+        const dash=e.confidence==='inferred'?'stroke-dasharray="6 4"'
+          :e.confidence==='co-occurs'?'stroke-dasharray="1.5 3.5"':'';
+        const ink=rec?(lit?'rgba(45,212,191,.95)':'rgba(45,212,191,.18)')
+          :(lit?'rgba(148,163,184,.75)':'rgba(148,163,184,.12)');
         parts.push(`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" ${dash}
-          stroke="${lit?'rgba(148,163,184,.75)':'rgba(148,163,184,.12)'}"
-          stroke-width="${Math.min(4,1+(e.weight||1)*0.5)}"><title>${esc(e.relation)} · ${esc(e.confidence)}</title></line>`);
+          stroke="${ink}" stroke-linecap="round"
+          stroke-width="${rec?3:Math.min(4,1+(e.weight||1)*0.5)}"><title>${esc(e.relation)} · ${esc(e.confidence)}</title></line>`);
       });
       nodes.forEach(n=>{
         const p=pos[n.id];if(!p)return;
