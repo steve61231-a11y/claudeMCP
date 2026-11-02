@@ -405,17 +405,13 @@ def issue_search_terms(issue: str, aliases: list[str] | None = None) -> list[str
     """What the sources are asked for on the issue's side. The typed issue
     went to every source as one quoted phrase; written as a sentence it
     matched nothing anywhere, and a live map on one of the year's largest
-    business stories read 16 documents, every kept one from YouTube. Now:
-    the searchable terms decomposition finds (`decompose.search_terms`),
-    then the operator's aliases, which are names and kept as typed."""
-    terms = decompose.decompose(issue)["queries"] + [a for a in aliases or [] if a]
-    seen, out = set(), []
-    for t in terms:
-        key = " ".join(t.lower().split())
-        if key and key not in seen:
-            seen.add(key)
-            out.append(t)
-    return out or [issue]
+    business stories read 16 documents, every kept one from YouTube. Now
+    the issue's profile (`reports/issue_profile.py`): its searchable terms,
+    what it is also called (SHA is the Social Health Authority), and the
+    operator's aliases."""
+    from engine.reports import issue_profile
+
+    return issue_profile.profile(issue, aliases)["search_terms"] or [issue]
 
 
 def map_identities(subject, principal: str) -> list[str]:
@@ -752,8 +748,19 @@ def build_issue_map(
 
     # The map's first answer, counted from the verified record: every
     # statement that names both the principal and the issue.
-    payload["connection_record"] = _finish_connection(connection_job, principal, issue,
-                                                      issue_aliases, mentions)
+    from engine.reports import issue_profile
+
+    the_issue = issue_profile.profile(issue, issue_aliases)
+    # What the issue is, kept with the map: its kinds, what it is also
+    # called, the bodies that decide it, and which records it is made on.
+    payload["issue_profile"] = {k: the_issue[k] for k in
+                                ("kinds", "expansions", "institutions", "records", "search_terms")}
+    # A statement about the "Social Health Authority" is about SHA: the
+    # connection matches on everything the issue is called.
+    payload["connection_record"] = _finish_connection(
+        connection_job, principal, issue,
+        [*(issue_aliases or []), *the_issue["expansions"],
+         *[a for a in the_issue["anchors"] if " " in a]], mentions)
     principal_findings = payload["connection_record"].pop("_principal_findings", None)
     publish("connection_record", payload["connection_record"])
 
@@ -1081,12 +1088,16 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # person inside it; demanding the whole phrase discarded an interview
         # headlined "Okiya Omtatah: The Truth Behind Kenya's Debt and the IMF
         # Fall-out" for not mentioning the principal.
-        principal_parts = decompose.decompose(principal)
-        issue_parts = decompose.decompose(issue)
-        match_identities = relevance.merge_terms(identities, principal_parts["identities"])
-        match_issue_terms = relevance.merge_terms(issue_terms, issue_parts["identities"])
+        from engine.reports import issue_profile
 
-        dimensions = decompose.research_dimensions(principal, issue, window_start=ws)
+        principal_parts = decompose.decompose(principal)
+        match_identities = relevance.merge_terms(identities, principal_parts["identities"])
+        match_issue_terms = relevance.merge_terms(issue_terms,
+                                                  issue_profile.profile(issue, issue_aliases)["identities"])
+
+        dimensions = decompose.research_dimensions(
+            principal, issue, window_start=ws,
+            institutions=issue_profile.profile(issue, issue_aliases)["institutions"])
         dimension_queries = [q for d in dimensions for q in d["queries"]]
         if relevance.needs_market_anchor(principal, issue):
             dimension_queries = [relevance.anchor_query(q) for q in dimension_queries]

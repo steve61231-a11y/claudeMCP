@@ -26,7 +26,9 @@ def test_a_sentence_is_never_searched_as_typed():
 def test_a_short_issue_is_still_searched_as_typed_first():
     assert issue_map.issue_search_terms("Finance Bill 2024")[0] == "Finance Bill 2024"
     assert issue_map.issue_search_terms("SHA", ["Social Health Authority"]) == ["SHA", "Social Health Authority"]
-    assert issue_map.issue_search_terms("Adani deal at JKIA") == ["Adani deal at JKIA", "Adani", "JKIA"]
+    assert issue_map.issue_search_terms("SHA") == ["SHA", "Social Health Authority"], "expanded without being told"
+    assert issue_map.issue_search_terms("Adani deal at JKIA")[:3] == ["Adani deal at JKIA", "Adani", "JKIA"]
+    assert "Jomo Kenyatta International Airport" in issue_map.issue_search_terms("Adani deal at JKIA")
 
 
 def test_no_demonym_or_descriptive_name_stands_for_the_issue_beside_a_real_one():

@@ -120,9 +120,9 @@ def mentions_any(text: str, terms) -> bool:
 
 
 def mentions_issue(text: str, issue_terms) -> bool:
-    """`mentions_any`, plus the rule for an issue written out as a sentence:
-    a document names it when it carries most of the sentence's distinctive
-    words (`connection.about_issue`). The phrase whole never appears — no
+    """`mentions_any`, plus the rule for an issue of several words: a
+    document names it when it carries its distinctive words — all of them
+    for a short issue, most of them for a sentence (`connection.about_issue`). The phrase whole never appears — no
     source writes "Kenyan Court stopping the Kenyan government's sale of its
     Safaricom shares to Vodacom" — so on substring alone every document was
     "about the principal" and none "names both", and the map said the
@@ -131,7 +131,13 @@ def mentions_issue(text: str, issue_terms) -> bool:
         return True
     from engine.evidence import connection
 
-    return any(connection.is_sentence(t) and connection.about_issue(text, t) for t in issue_terms)
+    # The same rule for any issue of two or more distinctive words: a
+    # document about a "strike" by "teachers" is about the teachers'
+    # strike whether or not it prints the two words side by side. One
+    # distinctive word is never enough ("county allocations" is not
+    # "allocations").
+    return any(len(connection.distinctive_words(t)) >= 2 and connection.about_issue(text, t)
+               for t in issue_terms)
 
 
 #: Which pool a document landed in, and what an analyst may do with it.

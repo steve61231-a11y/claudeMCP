@@ -58,6 +58,11 @@ def _needed(n: int) -> int:
     return max(SENTENCE_MIN, -(-int(n * SENTENCE_SHARE * 10) // 10))
 
 
+def distinctive_words(issue: str) -> set[str]:
+    parts = re.findall(r"[a-z0-9]+", facts._fold(issue or ""))
+    return {_stem(w) for w in parts if len(w) >= 4 and w not in _GENERIC and _stem(w) not in _GENERIC}
+
+
 def is_sentence(issue: str) -> bool:
     """An issue with more distinctive words than a name has."""
     parts = re.findall(r"[a-z0-9]+", facts._fold(issue or ""))
