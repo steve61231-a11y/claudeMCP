@@ -245,7 +245,11 @@ def content_phrases(text: str) -> list[str]:
         if len(run) >= 2:
             out.append(" ".join(run))
         tail = run[-2:]
-        if len(run) >= 3 and all(w[:1].islower() and len(w) > 2 for w in tail):
+        # "university funding model" -> "funding model" is still the issue;
+        # "Safaricom shares sale" -> "shares sale" is every share sale in the
+        # country. A run with a name in it is searched with its name.
+        if (len(run) >= 3 and all(w[:1].islower() and len(w) > 2 for w in tail)
+                and not any(w[:1].isupper() for w in run)):
             out.append(" ".join(tail))
     return _dedupe(out)
 

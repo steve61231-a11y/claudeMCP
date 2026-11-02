@@ -39,14 +39,20 @@ LISTINGS = (
 MAX_HANSARDS = 8
 MAX_ORDER_PAPERS = 6
 MAX_TURNS_PER_SITTING = 6
-MAX_TURN_CHARS = 2500
 MAX_PDF_BYTES = 15_000_000
 
 _PDF = re.compile(r'href="([^"]+\.pdf)"', re.I)
-#: A speaker's label at the start of a turn, as the Hansard prints it.
+#: A speaker's label at the start of a turn, as the Hansard prints it: a
+#: title, a NAME (capitalised words only — an honorific in brackets
+#: allowed), an optional constituency and party in brackets, a colon. The
+#: first pattern ran to any colon on the line, and a live run attributed a
+#: speech to "Hon. Temporary Speaker, I wish to be remembered for one thin".
+_NAME = r"(?:\((?:Dr|Prof|Eng|Amb|Capt|Gen|Rtd|CPA|Ms|Mrs|Mr|Arch|Maj)\.?\)\s+)?(?:[A-Z][\w’'.-]*\s+){0,5}[A-Z][\w’'.-]*"
 _SPEAKER = re.compile(
-    r"(?:^|\n)\s*((?:Hon\.|Sen\.)\s+[A-Z][^:\n]{1,90}?|The (?:Temporary |Deputy )?Speaker[^:\n]{0,60}?"
-    r"|The (?:Temporary )?Chairperson[^:\n]{0,60}?)\s*:\s", re.M)
+    rf"(?:^|\n)[ \t]*((?:Hon\.|Sen\.)\s+{_NAME}(?:\s*\([^()\n]{{2,90}}\))?"
+    rf"|The (?:Temporary |Deputy )?Speaker(?:\s*\([^()\n]{{2,90}}\))?"
+    rf"|The (?:Temporary )?Chairperson(?:\s*\([^()\n]{{2,90}}\))?)\s*:\s", re.M)
+MAX_PASSAGE_CHARS = 2500
 
 
 def _name(url: str) -> str:
@@ -96,6 +102,26 @@ def turns(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def passage(said: str, about) -> str | None:
+    """The part of a speech that is about the issue: each sentence that
+    names it with the sentence either side, in order, as printed. A turn
+    of twenty minutes that mentions the issue once is not a speech about
+    it, and keeping it whole put a member's remarks on Standing Orders
+    under an SHA map."""
+    sentences = re.split(r"(?<=[.!?])\s+", said)
+    hits = [i for i, sentence in enumerate(sentences) if about(sentence)]
+    if not hits:
+        return None
+    keep = sorted({j for i in hits for j in (i - 1, i, i + 1) if 0 <= j < len(sentences)})
+    out, last = [], None
+    for j in keep:
+        if last is not None and j != last + 1:
+            out.append("[…]")
+        out.append(sentences[j])
+        last = j
+    return " ".join(out)[:MAX_PASSAGE_CHARS]
+
+
 def agenda_items(text: str) -> list[str]:
     """An order paper's items: its numbered lines, joined across the PDF's
     line breaks."""
@@ -134,11 +160,12 @@ def fetch(about, ws: datetime, we: datetime, report: dict | None = None) -> tupl
         report["hansards_read"] = report.get("hansards_read", 0) + 1
         kept = 0
         for speaker, said in turns(text):
-            if not about(said):
+            words = passage(said, about)
+            if not words:
                 continue
             mentions.append(IngestedMention(
                 platform="parliament.go.ke", source_type="hansard", author_handle=speaker,
-                text=said[:MAX_TURN_CHARS],
+                text=words,
                 posted_at=datetime.combine(doc["date"], datetime.min.time()), engagement={},
                 raw_payload={"url": doc["url"], "record": "primary", "source": "hansard",
                              "sitting": doc["date"].isoformat(), "document": doc["name"],

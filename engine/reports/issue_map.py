@@ -856,18 +856,43 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
     def about(text: str) -> bool:
         return relevance.mentions_issue(text, match_terms)
 
+    names = relevance.merge_terms(the_issue["identities"], the_issue["institutions"], identities)
+    distinctive = [t for t in the_issue["identities"]
+                   if t.isupper() or len(t.split()) >= 2 or t in the_issue["anchors"]]
+
+    def on_issue(record: dict) -> bool:
+        """A search engine ranks on any word; a record stays only when its
+        TITLE names the issue, a body that decides it or the principal, or
+        its own words name the issue distinctively. A live run returned an
+        estate case for "school fees" and "Levi House Construction" for
+        "Housing levy". Family and succession causes are never the record
+        of a public issue."""
+        title = record.get("title") or ""
+        if re.search(r"\b(Succession Cause|Divorce|Matrimonial|Children Case|\(Family\))", title):
+            return False
+        if relevance.mentions_any(title, names) or relevance.mentions_issue(title, match_terms):
+            return True
+        return relevance.mentions_any(record.get("snippet") or "", distinctive)
+
     def kenya_law():
         queries = list(dict.fromkeys([*terms[:3], f"{identities[0]} {terms[0]}" if identities else terms[0]]))
-        found, notes = [], []
+        found, notes, off = [], [], 0
         for query in queries[:4]:
             records, count, why = kenya_law_records.search(query)
             if why:
                 notes.append(f"“{query}”: {why}")
-            # Ten years back, the framework's own cut-off: an old case is
-            # history, kept with its real date, never moved into the window.
-            found += [r for r in records if r["date"] is None or r["date"] >= cutoff]
+            for r in records:
+                # Ten years back, the framework's own cut-off: an old case is
+                # history, kept with its real date, never moved into the window.
+                if r["date"] is not None and r["date"] < cutoff:
+                    continue
+                if on_issue(r):
+                    found.append(r)
+                else:
+                    off += 1
         unique = {r["url"]: r for r in found}
-        report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique), "notes": notes[:4]}
+        report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique),
+                               "set_aside_off_issue": off, "notes": notes[:4]}
         return [kenya_law_records.as_mention(r) for r in unique.values()], []
 
     def parliament():
@@ -880,15 +905,24 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
         if "world_bank" not in the_issue["records"]:
             report["world_bank"] = {"skipped": "not a money, energy, transport or international issue"}
             return [], []
-        out, notes = [], []
+        out, notes, off = [], [], 0
         for term in terms[:2]:
             for fetch in (world_bank_records.projects, world_bank_records.documents):
                 try:
-                    out += fetch(term)
+                    for item in fetch(term):
+                        # The same two rules as the court record: ten years,
+                        # and the item's own words name the issue — a live
+                        # run returned a 1964 tea project for "Housing levy".
+                        recent = item["raw_payload"].get("date_estimated") or item["posted_at"] >= cutoff
+                        if recent and relevance.mentions_issue(item["text"], match_terms):
+                            out.append(item)
+                        else:
+                            off += 1
                 except Exception as exc:  # noqa: BLE001
                     notes.append(f"{fetch.__name__} “{term}”: {type(exc).__name__}")
-        report["world_bank"] = {"items": len(out), "notes": notes}
-        return out, []
+        unique = list({(m["raw_payload"].get("url") or m["text"]): m for m in out}.values())
+        report["world_bank"] = {"items": len(unique), "set_aside": off, "notes": notes}
+        return unique, []
 
     publish("stage", "Reading the record — court cases, Parliament, the lenders…")
     mentions: list[IngestedMention] = []
