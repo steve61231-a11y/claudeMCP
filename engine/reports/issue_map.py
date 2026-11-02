@@ -881,9 +881,6 @@ def build_issue_map(
 
 #: Distinct court cases per map whose dates are looked up in the cause lists.
 MAX_CASES_LISTED = 5
-#: How far back a Gazette notice may be and still set a deadline ahead:
-#: most run 14 to 60 days from publication, some 90.
-GAZETTE_LOOKBACK_DAYS = 120
 
 
 #: Causes that are a family's or an estate's, never the record of a public
@@ -1074,37 +1071,12 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
         report["world_bank"] = {"items": len(unique), "set_aside": off, "notes": notes}
         return unique, []
 
-    def gazette():
-        """Statutory deadlines ahead, from the passages of recent Gazette
-        issues that name the issue (`evidence/gazette_deadlines.py`)."""
-        from engine.evidence import gazette_deadlines
-
-        since = (datetime.utcnow() - timedelta(days=GAZETTE_LOOKBACK_DAYS)).date().isoformat()
-        cards, notes = [], []
-        for term in terms[:2]:
-            records, _count, why = kenya_law_records.search(
-                term, params={"nature": "Gazette", "ordering": "-date", "date__gte": since})
-            if why:
-                notes.append(f"“{term}”: {why}")
-            cards += [r for r in records if r.get("kind") == "gazette"]
-        unique = list({c["url"]: c for c in cards}.values())
-        ahead = gazette_deadlines.read(unique, about)
-        report["gazette"] = {"issues_read": len(unique), "since": since, "deadlines_ahead": len(ahead),
-                             # The issue itself is refused to a server: only the
-                             # passages a search card shows are read.
-                             "coverage": "the passages Kenya Law's search shows of each Gazette issue; "
-                                         "the full notices cannot be read from a server, so a deadline "
-                                         "not in a passage is not seen",
-                             "notes": notes}
-        return [], ahead
-
     publish("stage", "Reading the record — court cases, Parliament, the lenders…")
     mentions: list[IngestedMention] = []
     ahead: list[dict] = []
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         jobs = {name: pool.submit(carry(fn)) for name, fn in
-                (("kenya_law", kenya_law), ("parliament", parliament), ("world_bank", world_bank),
-                 ("gazette", gazette))}
+                (("kenya_law", kenya_law), ("parliament", parliament), ("world_bank", world_bank))}
         for name, job in jobs.items():
             try:
                 found, later = job.result(timeout=240)
