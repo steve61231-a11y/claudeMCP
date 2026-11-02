@@ -90,8 +90,49 @@ def round_two() -> None:
             print(f"   GET {url}: {type(exc).__name__}: {exc}"[:200])
 
 
+def round_three() -> None:
+    """Round 2 found `ordering=-date` and `date__gte=` work, the issue pages
+    are challenged on kenyalaw.org, and gazettes.africa (the same platform)
+    answers. Does it serve an issue's PDF, and what does a deadline look like
+    in the text?"""
+    import io
+
+    from pypdf import PdfReader
+
+    ga = "https://gazettes.africa"
+    for host in (ga, BASE):
+        try:
+            r = requests.get(host + "/search/api/documents/", headers=UA, timeout=30,
+                             params={"search": "Social Health Authority", "nature": "Gazette", "ordering": "-date"})
+            print(f"--- {host} search API: HTTP {r.status_code}, {r.headers.get('content-type','')}, "
+                  f"count {r.json().get('count') if 'json' in r.headers.get('content-type','') else '-'}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"--- {host} search API: {type(exc).__name__}: {exc}"[:200])
+    _, _, rows = cards("public participation", {"nature": "Gazette", "ordering": "-date"})
+    for uri, _ in rows[:2]:
+        for path in (uri, uri + "/source.pdf", uri + "/source"):
+            try:
+                r = requests.get(ga + path, headers=UA, timeout=60)
+                ctype = r.headers.get("content-type", "")
+                print(f"   GET gazettes.africa{path}: HTTP {r.status_code}, {ctype}, {len(r.content)} bytes")
+                if r.status_code == 200 and "pdf" in ctype:
+                    reader = PdfReader(io.BytesIO(r.content))
+                    text = " ".join((p.extract_text() or "") for p in reader.pages)
+                    text = re.sub(r"\s+", " ", text)
+                    hits = [m.start() for m in DEADLINE.finditer(text)]
+                    print(f"     {len(reader.pages)} pages, {len(text)} chars, {len(hits)} deadline phrases, "
+                          f"{len(re.findall('GAZETTE NOTICE NO', text, re.I))} notices")
+                    for at in hits[:4]:
+                        print(f"     … {text[max(0, at - 160):at + 120]} …")
+                    break
+                if r.status_code == 200 and "html" in ctype:
+                    print(f"     {flat(r.text)[:200]}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"   GET gazettes.africa{path}: {type(exc).__name__}: {exc}"[:200])
+
+
 def main() -> int:
-    round_two()
+    round_three()
     return 0
 
 
