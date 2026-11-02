@@ -100,10 +100,16 @@ def _no_search_demand_network():
     ever. The whole suite hung at test 67 with nothing on screen."""
     from engine.config import settings
 
+    from engine.evidence import record_reach
+
     before = settings.enable_search_demand
+    reach_before = record_reach.ENABLED
     settings.enable_search_demand = False
+    # The record-host reach check behind /api/health, the same way.
+    record_reach.ENABLED = False
     yield
     settings.enable_search_demand = before
+    record_reach.ENABLED = reach_before
 
 
 #: Settings flags that turn a SOURCE on, as opposed to an analysis stage.

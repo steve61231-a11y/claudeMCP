@@ -75,6 +75,11 @@ jobs:
           # read.
           model=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); l=d.get("llm") or {}; print("backend=%s model=%s bulk_model=%s production_grade=%s key_present=%s" % (l.get("provider") or l.get("backend"), l.get("model"), l.get("bulk_model"), l.get("production_grade", l.get("production")), l.get("key_present")))' 2>/dev/null || echo "the llm section could not be read")
           echo "::notice title=Model backend::${model}"
+          # Which primary-record hosts the LIVE server reaches (public hosts,
+          # no subject) — Railway's address is not GitHub's, and Kenya Law
+          # refused Railway before. See engine/evidence/record_reach.py.
+          reach=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin).get("record_reach") or {}; h=d.get("hosts") or {}; print(d.get("state"), " ".join("%s=%s" % (k, (v.get("status") if v.get("ok") else "NO(%s)" % (v.get("status") or v.get("error","")[:40]))) for k, v in h.items()))' 2>/dev/null || echo "record_reach could not be read")
+          echo "::notice title=Record hosts from the live server::${reach}"
           live=$(printf '%s' "$parsed" | cut -d" " -f1)
           built=$(printf '%s' "$parsed" | cut -d" " -f2)
           has_detail=$(printf '%s' "$parsed" | cut -d" " -f3)

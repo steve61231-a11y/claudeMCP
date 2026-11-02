@@ -79,6 +79,25 @@ RECORD_PROBES = [
      "https://www.parliament.go.ke/the-national-assembly/house-business/hansard", ENGINE_UA),
 ]
 
+#: Read further: a snippet of the body, for the contracts the shape alone
+#: does not settle — how a list filters and orders, what a cause list holds
+#: inside, what an order paper links. Public topics only.
+SNIPPET_PROBES = [
+    ("Mzalendo entries, search=", "https://info.mzalendo.com/api/v0.1/hansard/entries/?format=json&search=health"),
+    ("Mzalendo entries, newest", "https://info.mzalendo.com/api/v0.1/hansard/entries/?format=json&ordering=-id"),
+    ("Mzalendo sittings, newest",
+     "https://info.mzalendo.com/api/v0.1/hansard/sittings/?format=json&ordering=-start_date"),
+    ("Mzalendo entries browsable", "https://info.mzalendo.com/api/v0.1/hansard/entries/?format=api"),
+    ("Kenya Law search API (400 body)",
+     "https://new.kenyalaw.org/search/api/documents/?search=health%20insurance&format=json"),
+    ("Kenya Law search API, q=", "https://new.kenyalaw.org/search/api/documents/?q=health%20insurance"),
+    ("A High Court cause list",
+     "https://new.kenyalaw.org/akn/ke/doc/cause-list-daily/kehc/2026-09-16/1/eng@2026-09-16"),
+    ("Gazettes 2026", "https://new.kenyalaw.org/gazettes/2026"),
+    ("Parliament order papers (document links)",
+     "https://www.parliament.go.ke/the-national-assembly/house-business/order-paper"),
+]
+
 WALL_MARKERS = ("just a moment", "cf-browser-verification", "cf_chl_opt",
                 "attention required! | cloudflare", "access denied",
                 "enable javascript and cookies to continue", "blocked")
@@ -147,7 +166,26 @@ def _shape(url: str, ua: str) -> str:
     return f"JSON {keys(data)}"[:1500]
 
 
+def _snippet(url: str) -> str:
+    import re
+
+    try:
+        r = requests.get(url, headers={"User-Agent": ENGINE_UA}, timeout=25)
+    except Exception as exc:  # noqa: BLE001
+        return f"error: {type(exc).__name__}"
+    body = r.text or ""
+    docs = re.findall(r'href="([^"]+\.(?:pdf|docx?))"', body, re.I)[:6]
+    akn = sorted(set(re.findall(r'href="(/akn/[^"]+)"', body)))[:8]
+    text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", body, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    start = max(0, text.lower().find("cause list") - 50) if "cause-list" in url else 0
+    return (f"HTTP {r.status_code} · docs={docs} akn={akn} · text: {text[start:start + 900]}")
+
+
 def main() -> int:
+    for label, url in SNIPPET_PROBES:
+        print(f"SNIPPET {label}: {_snippet(url)}", file=sys.stderr)
     for label, url, ua in RECORD_PROBES:
         plain = _plain(url, ua)
         shape = _shape(url, ua) if plain.startswith("HTTP 2") else ""

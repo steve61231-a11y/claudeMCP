@@ -1231,6 +1231,15 @@ def _memory_snapshot() -> dict:
         return {"error": f"{type(exc).__name__}"}
 
 
+def _record_reach() -> dict:
+    from engine.evidence import record_reach
+
+    try:
+        return record_reach.reach()
+    except Exception as exc:  # noqa: BLE001 — a health check must answer
+        return {"state": "error", "error": type(exc).__name__}
+
+
 def _admit_or_refuse() -> None:
     """Refuse NEW work near the memory limit (engine/memory.py): a 503 the
     page shows in words, rather than a crash that takes every run in
@@ -2429,6 +2438,10 @@ def health():
         # Resident memory now and at its peak, against the container's
         # limit — Railway says only "ran out of memory" after the crash.
         "memory": _memory_snapshot(),
+        # Whether THIS server reaches the primary-record hosts the Issue Map
+        # reads (Hansard, Kenya Law, Parliament…) — public hosts, no
+        # subject named, measured in the background (evidence/record_reach.py).
+        "record_reach": _record_reach(),
         # Did the last deploy's migration actually run? See `_schema_state`.
         "schema": schema,
         "uptime_seconds": int(time.time() - _PROCESS_START),
