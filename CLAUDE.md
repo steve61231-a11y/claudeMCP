@@ -430,6 +430,17 @@ Hansard's page header, disclaimer and headings are the Hansard's, never the
 member's: headings become the business a speech was made under, and under a
 heading naming the issue the whole contribution is kept.
 
+**The map's answer is written from the record.** The verdict at the top of
+an Issue Map was a model's sentence over a digest, unchecked — the line a
+client repeats. `reports/verdict_from_record.py` hands the writer a ledger of
+verified findings naming both (F) and roles a public record states (R, from
+`evidence/paths.py`), and `from_facts.check` removes any sentence saying more
+than what it cites; being a respondent is not wrongdoing, and the prompt and
+the check both hold that. Too little on the record, and the analysts' verdict
+leads, stamped as their reading; when the record's answer leads, theirs sits
+beneath it under "Our analysts' reading". Every map section is graded
+(`reports/issue_evidence_status.py`) in the Search report's vocabulary.
+
 **A scenario's probability is arithmetic over a judgement, and the page
 recomputes it.** The client's model for the Issue Map's scenario section is
 a 2022 election paper: risk drivers (definition, impact, how each reads
@@ -1059,10 +1070,11 @@ a subject is not crowded out of Google's hundred general results. Tuko's
 own search page returns the same links whatever is asked
 (`scripts/tuko_probe.py`), so do not build on it.
 
-**Only `LLM_PROVIDER=anthropic` produces production-grade reports.** Everything
-else is stamped "Test-grade — not for a client" in the UI, deliberately, because
-the prompts and anti-hallucination guarantees are tuned against that model. If
-you are selling a report, run it on Anthropic.
+**Production-grade means Anthropic, or a model listed in
+`LLM_PRODUCTION_MODELS`.** Everything else is stamped "Test-grade — not for a
+client" in the UI, deliberately. The deterministic guards (quote verification,
+`check_sentence`, protected terms, grounding) run on every backend; the stamp
+says whether the model behind the prose is one the founder has chosen to sell.
 
 Free primary-record sources, on by default and needing no key:
 `ENABLE_KENYA_GAZETTE`, `ENABLE_KENYA_LAW` (both kenyalaw.org, paced at 2s).

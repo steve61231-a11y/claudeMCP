@@ -804,6 +804,11 @@ def build_issue_map(
     # case, speaker in the House, a lender's agency — each step sourced.
     payload["connection_paths"] = _connection_paths(record_items, principal, issue, acquisition)
     publish("connection_paths", payload["connection_paths"])
+    # The map's answer, written from the record and checked with no model
+    # (reports/verdict_from_record.py). Too little on the record, and the
+    # analysts' verdict stays in place, labelled as their reading.
+    payload["verdict_from_record"] = _verdict_from_record(principal, issue, payload)
+    publish("verdict_from_record", payload["verdict_from_record"])
 
     # Risk drivers, the probability tree and three scenarios — the model's
     # judgement, held to the record and recomputed (reports/scenarios.py).
@@ -1105,6 +1110,17 @@ def _stored_records(db, subject_id: str, issue: str, issue_aliases, seen_urls: s
         out.append({"source_type": row.source_type, "author_handle": row.author_handle, "text": row.text,
                     "posted_at": row.posted_at, "engagement": {}, "raw_payload": {**raw, "from_store": True}})
     return out
+
+
+def _verdict_from_record(principal: str, issue: str, payload: dict) -> dict:
+    try:
+        from engine.reports import verdict_from_record
+
+        return verdict_from_record.verdict(principal, issue, payload.get("connection_record") or {},
+                                           payload.get("connection_paths") or {})
+    except Exception as exc:  # noqa: BLE001 — the analysts' verdict stands, labelled
+        stages.current().failed("issue_map:verdict_from_record", exc)
+        return {"used": False, "reason": f"{type(exc).__name__}: {exc}"[:200]}
 
 
 def _connection_paths(record_items: list, principal: str, issue: str, acquisition: dict | None) -> dict:

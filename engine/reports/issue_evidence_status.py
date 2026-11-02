@@ -43,6 +43,11 @@ def connection_paths(payload: dict) -> dict:
 
 
 def verdict(payload: dict) -> dict:
+    vr = payload.get("verdict_from_record") or {}
+    if vr.get("used"):
+        kept = int((vr.get("check") or {}).get("kept") or 0)
+        return _grade("record", f"written from the record; {_plural(kept, 'sentence')}, each checked "
+                                "against what it cites")
     return _grade("analyst", "our analysts' reading of the documents; the record's count stands beside it")
 
 

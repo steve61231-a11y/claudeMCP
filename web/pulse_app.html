@@ -6443,7 +6443,16 @@
 
     const head=el('div','card glow');
     head.innerHTML=`<div class="eyebrow">${esc(m.principal)} × ${esc(m.issue)}</div>
-      <div class="hero-one" style="margin-top:10px;font-size:17px;line-height:1.55;font-weight:500">${esc((m.intersection||{}).verdict||'')}</div>
+      ${(()=>{
+        // The answer written from the record and checked (verdict_from_record)
+        // leads; the analysts' verdict then sits beneath it as their reading.
+        // Without it, the analysts' verdict leads, stamped as their reading.
+        const vr=m.verdict_from_record||{}, av=(m.intersection||{}).verdict||'';
+        if(!vr.used||!vr.text)return `<div class="hero-one" style="margin-top:10px;font-size:17px;line-height:1.55;font-weight:500">${esc(av)}</div>`;
+        return `<div class="hero-one" style="margin-top:10px;font-size:17px;line-height:1.55;font-weight:500">${linkifyRefs(esc(vr.text),vr.citations)}</div>`
+          +(av?`<details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:13px">Our analysts' reading</summary>
+            <div style="font-size:14.5px;line-height:1.55;margin-top:6px">${esc(av)}</div></details>`:'');
+      })()}
       ${(()=>{
         // The verdict is the analyst's reading. Beside it, what the record
         // counts — so a verdict the record does not support never stands

@@ -316,6 +316,13 @@ spent; wall-clock time.
   `reports/issue_evidence_status.py` grades the verdict, the connection,
   the path and each framework section (on the record / partly / counted /
   the analysts' reading), stamped under each heading.
+- **Phase 3 — the answer from the record.** `reports/verdict_from_record.py`
+  writes the map's opening answer from verified findings naming both and the
+  roles public records state, each sentence checked with no model
+  (`from_facts.check`); the analysts' verdict stays beneath it as their
+  reading, or leads, labelled, when the record is too thin. Still to do in
+  Phase 3: involvement and tension (the stakeholder positions) from the
+  record.
 
 ## 5. What the founder decides
 
