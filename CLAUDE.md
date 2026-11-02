@@ -39,6 +39,11 @@ about sources that failed.
 
 If you change something here, keep that rule. It is the product.
 
+**The Issue Map's plan is `docs/ISSUE_MAP_FOUNDATION.md`** (2 Nov 2026):
+why maps came back thin (the issue was searched as one quoted sentence), the
+records a connection is actually made on, and the phases. Work on the map
+must not touch the Search report.
+
 **The plan in force is `docs/FOUNDATION.md`** (22 Oct 2026): what was
 measured to be wrong, why the reports got worse as features were added, and
 the phased rebuild around a verified fact store. Read it before adding a

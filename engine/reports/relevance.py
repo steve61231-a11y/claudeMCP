@@ -31,7 +31,8 @@ import re
 MARKET_TERMS = (
     "kenya", "kenyan", "nairobi", "mombasa", "kisumu", "nakuru", "eldoret",
     "bungoma", "kakamega", "machakos", "kiambu", "meru", "nyeri", "kitale",
-    "county assembly", "ke.", ".co.ke", "east africa", "nyanza", "rift valley",
+    "county assembly", "co ke", "go ke", "or ke", "ac ke", "east africa", "nyanza", "rift valley",
+    "kenyans",
 )
 
 # Places whose presence is strong evidence the item is NOT about our market.
@@ -109,8 +110,13 @@ def merge_terms(*groups) -> list[str]:
 
 
 def mentions_any(text: str, terms) -> bool:
-    haystack = _norm(text)
-    return any(_norm(t) and _norm(t) in haystack for t in terms)
+    """Whole words only. A substring test let "ke." (normalised to "ke")
+    match inside "keeps" and "make", so a New Jersey senate story passed the
+    Kenya check and reached a Kenyan map as background; "Meru" matched
+    inside other words the same way. A domain is matched as its words —
+    "nation.co.ke" normalises to "nation co ke", which "co ke" meets."""
+    haystack = f" {_norm(text)} "
+    return any(_norm(t) and f" {_norm(t)} " in haystack for t in terms)
 
 
 def mentions_issue(text: str, issue_terms) -> bool:
@@ -128,44 +134,10 @@ def mentions_issue(text: str, issue_terms) -> bool:
     return any(connection.is_sentence(t) and connection.about_issue(text, t) for t in issue_terms)
 
 
-def score_document(document: dict, identities, issue_terms,
-                   require_market: bool) -> tuple[bool, str]:
-    """Keep or drop, with the reason. Never raises.
-
-    The bar is deliberately mechanical: BOTH halves of the intersection must
-    appear in the text, and when the intersection is built from generic terms
-    the item must also place itself in our market. An analyst cannot say
-    anything about "senate × forestry in Kenya" from an article that never
-    mentions Kenya — no prompt fixes that, and paying a model to read it is
-    money spent to be told nothing.
-    """
-    text = " ".join(str(document.get(k) or "") for k in ("text", "title", "body"))
-    text += " " + str(document.get("source_url") or "")
-    if not text.strip():
-        return False, "empty document"
-
-    if not mentions_any(text, identities):
-        return False, "does not mention the principal"
-    if not mentions_issue(text, issue_terms):
-        return False, "does not mention the issue"
-    if require_market and not mentions_any(text, MARKET_TERMS):
-        foreign = [m for m in FOREIGN_MARKERS if _norm(m) in _norm(text)]
-        return False, (f"not about this market ({foreign[0]})" if foreign
-                       else "not about this market")
-    return True, "on topic"
-
-
 #: Which pool a document landed in, and what an analyst may do with it.
 POOL_CORE = "core"                # mentions both halves — the intersection itself
 POOL_PRINCIPAL = "principal_side"  # the principal, on other things
 POOL_ISSUE = "issue_side"          # the issue, without them in it
-POOL_OFF = "off_topic"
-
-POOL_MEANING = {
-    POOL_CORE: "mentions both the principal and the issue",
-    POOL_PRINCIPAL: "about the principal — their record, allies and other fights",
-    POOL_ISSUE: "about the issue — its history and the other people in it",
-}
 
 
 def partition_corpus(corpus: list[dict], identities, issue_terms,
@@ -221,31 +193,6 @@ def partition_corpus(corpus: list[dict], identities, issue_terms,
         "kept": kept,
         "dropped": len(corpus) - kept,
         "pools": {name: len(items) for name, items in pools.items()},
-        "reasons": reasons,
-        "examples": examples,
-        "market_anchored": require_market,
-    }
-
-
-def filter_corpus(corpus: list[dict], identities, issue_terms,
-                  require_market: bool) -> tuple[list[dict], dict]:
-    """Split a corpus into what an analyst can actually use, and why the rest
-    could not be used. Returns (kept, report)."""
-    kept: list[dict] = []
-    reasons: dict[str, int] = {}
-    examples: dict[str, str] = {}
-    for document in corpus:
-        ok, reason = score_document(document, identities, issue_terms, require_market)
-        if ok:
-            kept.append(document)
-            continue
-        reasons[reason] = reasons.get(reason, 0) + 1
-        if reason not in examples:
-            examples[reason] = (str(document.get("text") or document.get("title") or ""))[:120]
-    return kept, {
-        "examined": len(corpus),
-        "kept": len(kept),
-        "dropped": len(corpus) - len(kept),
         "reasons": reasons,
         "examples": examples,
         "market_anchored": require_market,

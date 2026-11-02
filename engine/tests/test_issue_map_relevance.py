@@ -59,7 +59,12 @@ def test_anchoring_adds_the_market_once():
 # --- the filter itself -------------------------------------------------------
 
 def _filter(docs, market=True):
-    return relevance.filter_corpus(docs, ["senate"], ["forestry", "forest"], market)
+    """The intersection as the live map sorts it: the `core` pool, which
+    names both halves. (These rules were pinned against `filter_corpus`,
+    which the map stopped calling when it moved to pools; they now run
+    against the code that runs.)"""
+    pools, report = relevance.partition_corpus(docs, ["senate"], ["forestry", "forest"], market)
+    return pools[relevance.POOL_CORE], report
 
 
 def test_the_kenyan_item_survives():
@@ -87,10 +92,10 @@ def test_an_item_mentioning_only_one_half_is_dropped():
 def test_market_anchoring_is_skipped_for_a_named_principal():
     """With a distinctive principal we must not require the market word: an
     article can be about Gachagua and forestry without saying "Kenya"."""
-    kept, _ = relevance.filter_corpus(
+    pools, _ = relevance.partition_corpus(
         [_doc("Rigathi Gachagua criticised the forestry evictions.")],
         ["Rigathi Gachagua"], ["forestry"], require_market=False)
-    assert len(kept) == 1
+    assert len(pools[relevance.POOL_CORE]) == 1
 
 
 def test_an_empty_document_is_dropped_without_raising():
