@@ -17,9 +17,12 @@ and order papers ("ORDER PAPER FOR THURSDAY, 22ND OCTOBER 2026.pdf") — and
 and the order papers ahead; the full archive (Parliament's library) is a
 later connector, said rather than implied.
 
-What it returns is the source's own words: a speech is the speaker's turn as
-printed, under the speaker's name as printed, dated by the sitting; an
-agenda item is the order paper's line. Nothing is summarised here.
+What it returns is the source's own words: a speech is the part of the
+speaker's turn on the issue (the whole turn when the business it was made
+under names the issue), under the speaker's name as printed, dated by the
+sitting, with that business kept beside it; an agenda item is the order
+paper's line. Page furniture and headings are the Hansard's, not the
+member's, and are never quoted as theirs. Nothing is summarised here.
 """
 
 from __future__ import annotations
@@ -90,15 +93,88 @@ def pdf_text(url: str) -> str:
     return "\n".join((page.extract_text() or "") for page in PdfReader(io.BytesIO(response.content)).pages)
 
 
-def turns(text: str) -> list[tuple[str, str]]:
-    """(speaker as printed, what they said) for every turn in a Hansard."""
-    marks = list(_SPEAKER.finditer(text or ""))
-    out = []
+#: Page furniture as pypdf extracts it (scripts/record_probe.py --layout,
+#: 2 Nov 2026): every page opens "22nd October 2026  National Assembly
+#: Debates  1" and a two-line disclaimer. Left in, the disclaimer was kept
+#: as the sentence before a member's remarks on the housing levy.
+_PAGE_HEADER = re.compile(r"^[^\n]*\b(?:National Assembly|Senate) Debates[ \t]+\d+[ \t]*$", re.M | re.I)
+_DISCLAIMER = re.compile(r"\s+".join(
+    "Disclaimer: The electronic version of the Official Hansard Report is for information purposes only. "
+    "A certified copy of this Report can be obtained from the Hansard Editor.".split()
+).replace(r"purposes\s+only", r"purposes\s*only").replace(".", r"\."), re.I)
+
+
+def clean(text: str) -> str:
+    """The Hansard without its page furniture."""
+    return _PAGE_HEADER.sub("", _DISCLAIMER.sub(" ", text or ""))
+
+
+_JOIN_END = frozenset("THE OF TO FOR AND IN ON BY & A AN".split())
+#: A line that opens with one of these finishes the heading above it — a
+#: Bill's title wrapped before "BILL" or "(AMENDMENT)".
+_JOIN_START = frozenset("FOR TO OF AND ON BY & BILL BILL, ACT REGULATIONS RULES (AMENDMENT) AMENDMENT".split())
+
+
+def _is_heading(line: str) -> bool:
+    """An order-of-business heading: a line in capitals, made of words
+    ("PETITIONS", "DISPARITIES IN TEA PRICING…"), not a reference number
+    quoted in a speech ("NEPAD/KFW 2015 69 052/FW1/KEN/005")."""
+    stripped = line.strip()
+    # A heading never ends a sentence: "IEBC." or "208(8)." alone on a
+    # line is the tail of a speech the PDF wrapped.
+    if not stripped or re.search(r"[a-z]", stripped) or stripped[-1] in ".,;:":
+        return False
+    letters = sum(c.isalpha() for c in stripped)
+    visible = sum(not c.isspace() for c in stripped)
+    return bool(re.search(r"[A-Z]{3,}", stripped)) and letters >= 4 and letters / max(visible, 1) >= 0.7
+
+
+def turns(text: str) -> list[tuple[str, str, str | None]]:
+    """(speaker as printed, what they said, the business it was said
+    under) for every turn in a Hansard. A heading is the Hansard's, not
+    the member's: it is taken out of the speech and becomes the business
+    for what follows — "PUBLIC DISCLOSURE OF KENYA'S GOVERNANCE AND
+    CORRUPTION DIAGNOSTIC REPORT BY IMF" was printed inside the Speaker's
+    remarks."""
+    text = clean(text)
+    marks = list(_SPEAKER.finditer(text))
+    business: str | None = None
+
+    def walk(segment: str, speaker: str | None, out: list) -> None:
+        nonlocal business
+        lines, pending_heading = [], []
+        for line in segment.split("\n"):
+            if _is_heading(line):
+                if lines and speaker:
+                    said = " ".join(" ".join(lines).split())
+                    if len(said) > 40:
+                        out.append((speaker, said, business))
+                    lines = []
+                line = " ".join(line.split())
+                # One heading over two lines ("DELEGATION FROM THE" /
+                # "PARLIAMENT OF MALAWI") is joined; two headings in a row
+                # ("PRAYERS" / "COMMUNICATIONS FROM THE CHAIR") are not.
+                if pending_heading and (pending_heading[-1].split()[-1] in _JOIN_END
+                                        or line.split()[0] in _JOIN_START or line.startswith("(")):
+                    pending_heading[-1] += " " + line
+                else:
+                    pending_heading.append(line)
+                continue
+            if pending_heading:
+                business = pending_heading[-1]
+                pending_heading = []
+            lines.append(line)
+        if pending_heading:
+            business = pending_heading[-1]
+        said = " ".join(" ".join(lines).split())
+        if speaker and len(said) > 40:
+            out.append((speaker, said, business))
+
+    out: list[tuple[str, str, str | None]] = []
+    walk(text[:marks[0].start()] if marks else text, None, out)
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        said = " ".join(text[m.end():end].split())
-        if len(said) > 40:
-            out.append((" ".join(m.group(1).split()), said))
+        walk(text[m.end():end], " ".join(m.group(1).split()), out)
     return out
 
 
@@ -120,6 +196,15 @@ def passage(said: str, about) -> str | None:
         out.append(sentences[j])
         last = j
     return " ".join(out)[:MAX_PASSAGE_CHARS]
+
+
+def opening(said: str) -> str:
+    """A whole contribution, to the ceiling, cut at a sentence."""
+    if len(said) <= MAX_PASSAGE_CHARS:
+        return said
+    cut = said[:MAX_PASSAGE_CHARS]
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    return (cut[:end + 1] if end > MAX_PASSAGE_CHARS // 2 else cut) + " […]"
 
 
 def agenda_items(text: str) -> list[str]:
@@ -159,8 +244,11 @@ def fetch(about, ws: datetime, we: datetime, report: dict | None = None) -> tupl
             continue
         report["hansards_read"] = report.get("hansards_read", 0) + 1
         kept = 0
-        for speaker, said in turns(text):
-            words = passage(said, about)
+        for speaker, said, business in turns(text):
+            # Under a heading that names the issue, the whole contribution
+            # is on it — a member debating THE AFFORDABLE HOUSING BILL says
+            # "this Bill", not its name. Otherwise only what names it.
+            words = (opening(said) if business and about(business) else None) or passage(said, about)
             if not words:
                 continue
             mentions.append(IngestedMention(
@@ -169,7 +257,7 @@ def fetch(about, ws: datetime, we: datetime, report: dict | None = None) -> tupl
                 posted_at=datetime.combine(doc["date"], datetime.min.time()), engagement={},
                 raw_payload={"url": doc["url"], "record": "primary", "source": "hansard",
                              "sitting": doc["date"].isoformat(), "document": doc["name"],
-                             "date_estimated": False}))
+                             "business": business, "date_estimated": False}))
             kept += 1
             if kept >= MAX_TURNS_PER_SITTING:
                 break

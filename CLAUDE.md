@@ -402,6 +402,34 @@ a change to the map by it, on the benchmark set in
 `docs/ISSUE_MAP_FOUNDATION.md`. SocialCrawl on the map is page by page
 against `ISSUE_MAP_CREDIT_BUDGET`.
 
+**An issue is its name AND what is said about it.** The map matched an
+issue on its name alone, because the name was one of the terms a document
+could carry: a live run put "let them emulate Safaricom" under the
+Safaricom share sale and the Rironi-Mau Summit ROAD under Mau forest
+evictions, and every document naming Safaricom and the government was
+counted as the intersection. `reports/issue_match.py` is the one rule for
+the pools, the connection and the records — a phrase naming the issue
+whole; or every name (an acronym or its expansion) WITH one of the other
+words as sources write them ("sale" is also "sold", "divest"); or, with no
+name in the issue, every distinctive word. Never pass a bare name to
+`connection.about_issue` as an alias: an alias names the issue whole.
+
+**The record is read where the connection is made, and set aside by
+reason.** `issue_map.acquire_records` reads Kenya Law's search API (cards:
+parties, case number, court, date — the document pages are behind a
+JavaScript challenge), the window's Hansards from parliament.go.ke (PDFs;
+Mzalendo was ruled out: it ignores search and stops in July 2025) and, for
+money issues, the World Bank. Each was written against a contract the probe
+OBSERVED (`scripts/source_probe.py`), the live server reports its own reach
+(`/api/health` → `record_reach`), and `scripts/record_probe.py` runs the
+real thing on six issue kinds from GitHub on every ingestion change. A court
+card stays only as the record of THE issue: a family, child or estate cause,
+a dispute between private parties, and an acronym that may be a party's
+initials ("JMA v SHA") are each set aside and counted under their reason. A
+Hansard's page header, disclaimer and headings are the Hansard's, never the
+member's: headings become the business a speech was made under, and under a
+heading naming the issue the whole contribution is kept.
+
 **A scenario's probability is arithmetic over a judgement, and the page
 recomputes it.** The client's model for the Issue Map's scenario section is
 a 2022 election paper: risk drivers (definition, impact, how each reads

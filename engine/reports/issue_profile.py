@@ -103,8 +103,8 @@ ACRONYMS: dict[str, tuple[str, ...]] = {
 #: the folded issue text; each value was checked against how the press
 #: names the thing.
 PHRASES: dict[str, tuple[str, ...]] = {
-    "housing levy": ("Affordable Housing Levy", "Affordable Housing Programme"),
-    "affordable housing": ("Affordable Housing Levy", "Affordable Housing Programme"),
+    "housing levy": ("Affordable Housing Levy", "Affordable Housing Programme", "Affordable Housing Act"),
+    "affordable housing": ("Affordable Housing Levy", "Affordable Housing Programme", "Affordable Housing Act"),
     "haiti mission": ("Multinational Security Support", "Kenyan police in Haiti"),
     "haiti deployment": ("Multinational Security Support", "Kenyan police in Haiti"),
     "university funding model": ("new university funding model", "higher education funding model"),

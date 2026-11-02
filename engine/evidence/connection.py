@@ -71,29 +71,15 @@ def is_sentence(issue: str) -> bool:
 
 
 def about_issue(statement: str, issue: str, aliases: list[str] | None = None) -> bool:
-    """Whether a statement names the issue: its exact phrase, an alias, or
-    its distinctive words — all of them for a short name, most of them for
-    an issue written out as a sentence. A short name ("IMF") must match as a
-    whole word, never inside another."""
-    folded = facts._fold(statement)
-    words = set(re.findall(r"[a-z0-9]+", folded))
-    stems = {_stem(w) for w in words}
-    for phrase in issue_phrases(issue, aliases):
-        p = facts._fold(phrase).strip()
-        parts = re.findall(r"[a-z0-9]+", p)
-        if not parts:
-            continue
-        if len(parts) == 1:
-            if parts[0] in words:
-                return True
-            continue
-        if p in folded:
-            return True
-        distinctive = list(dict.fromkeys(_stem(w) for w in parts
-                                         if len(w) >= 4 and _stem(w) not in _GENERIC and w not in _GENERIC))
-        if distinctive and sum(1 for w in distinctive if w in stems) >= _needed(len(distinctive)):
-            return True
-    return False
+    """Whether a statement names the issue — the map's one rule
+    (`reports/issue_match.py`): a phrase that names it whole, or its names
+    with what is said about them ("Safaricom" with a sale, never Safaricom
+    alone), or, for an issue with no name in it, its distinctive words; most
+    of them for an issue typed as a sentence. A short name ("IMF") matches
+    only as a whole word."""
+    from engine.reports import issue_match
+
+    return issue_match.of(issue, aliases).names(statement)
 
 
 def build(findings: list[dict], principal: str, issue: str,

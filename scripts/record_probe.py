@@ -46,7 +46,29 @@ def main() -> int:
                       file=sys.stderr)
         for a in ahead[:3]:
             print(f"   - AHEAD {a['date']}: {a['event'][:160]}", file=sys.stderr)
+        from engine.evidence import paths
+
+        found = paths.build(mentions, principal, issue_map.principal_variants(principal), issue,
+                            ahead=ahead, sources=report)
+        print(f"   PATHS: {found.get('lead') or found.get('reason')}", file=sys.stderr)
+        for p in found.get("paths", [])[:4]:
+            s0 = p["steps"][0]
+            print(f"     · {s0['from']} — {s0['relation']} → {s0['to']} | as printed: {s0.get('as_printed')!r}"
+                  f" | via {s0.get('basis')} | {s0['record'].get('date')}", file=sys.stderr)
+    _lender_fields()
     return 0
+
+
+def _lender_fields() -> None:
+    """The World Bank project fields as the API sends them, so the roles a
+    path rests on are read under the keys that exist."""
+    from engine.ingestion import http, world_bank_records
+
+    response = http.get(world_bank_records.PROJECTS, params={"format": "json", "countrycode_exact": "KE",
+                                                              "qterm": "health", "rows": 2}, timeout=30)
+    for pid, p in list(((response.json() or {}).get("projects") or {}).items())[:2]:
+        print(f"\n=== WB {pid} keys: {sorted(p)[:60]}", file=sys.stderr)
+        print(f"   borrower={p.get('borrower')!r} impagency={p.get('impagency')!r}", file=sys.stderr)
 
 
 if __name__ == "__main__" and "--layout" not in sys.argv:

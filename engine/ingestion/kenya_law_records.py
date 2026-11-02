@@ -67,16 +67,51 @@ def parties(title: str) -> list[str]:
     """The parties of an "A v B" title, as printed — "& 4 others" kept as
     words, interested parties after ";" listed in their own right. A title
     with no "v" has none."""
-    head = re.split(r"\s+\(|\s+\[", title, maxsplit=1)[0]
+    # The parties end where the case number or the citation begins — not at
+    # the first bracket, which cut "H. E. (Former) President Uhuru Muigai
+    # Kenyatta" to "H. E." and made a former president a private person.
+    number = _CASE_NO.search(title or "")
+    head = (title[:number.start()] if number else title or "")
+    head = re.split(r"\s+\[|\s+\((?:Ruling|Judgment|KLR)\)", head, maxsplit=1)[0]
     if " v " not in head:
         return []
     out: list[str] = []
     for side in head.split(" v ", 1):
         for part in side.split(";"):
             name = re.sub(r"\s*\((?:Interested Part(?:y|ies)|Respondent|Petitioner|Applicant)s?\)\s*$",
-                          "", part.strip(), flags=re.I).strip(" ,")
+                          "", part.strip(), flags=re.I)
+            name = re.sub(r"\s*\((?:Suing|Sued|On behalf|Being)[^()]*\)", "", name, flags=re.I).strip(" ,")
             if name:
                 out.append(name)
+    return out
+
+
+def sides(title: str) -> dict[str, list[str]]:
+    """Who is on which side, as the title prints it: the party or parties
+    before " v " brought the matter; those after it answer it; those after
+    a ";" marked "(Interested Party/Parties)" are interested parties. A
+    title with no " v " ("In re …", a Bill, a Gazette) has no sides."""
+    number = _CASE_NO.search(title or "")
+    head = (title[:number.start()] if number else title or "")
+    head = re.split(r"\s+\[|\s+\((?:Ruling|Judgment|KLR)\)", head, maxsplit=1)[0]
+    if " v " not in head:
+        return {}
+    left, right = head.split(" v ", 1)
+    out: dict[str, list[str]] = {"brought": [], "answered": [], "interested": []}
+
+    def tidy(part: str) -> str:
+        part = re.sub(r"\s*\((?:Suing|Sued|On behalf|Being)[^()]*\)", "", part, flags=re.I)
+        return part.strip(" ,;")
+
+    for part in left.split(";"):
+        if tidy(part):
+            out["brought"].append(tidy(part))
+    for i, part in enumerate(right.split(";")):
+        interested = re.search(r"\(Interested Part(?:y|ies)\)\s*$", part, re.I)
+        name = tidy(re.sub(r"\s*\((?:Interested Part(?:y|ies)|Respondent|Petitioner|Applicant)s?\)\s*$",
+                           "", part, flags=re.I))
+        if name:
+            out["interested" if interested or i > 0 else "answered"].append(name)
     return out
 
 
@@ -153,6 +188,8 @@ def as_mention(record: dict) -> IngestedMention:
         text=". ".join(bits)[:4000], posted_at=record.get("date") or datetime.utcnow(),
         engagement={},
         raw_payload={"url": record["url"], "record": "primary", "source": "kenya_law_search",
-                     "parties": record.get("parties") or [], "case_number": record.get("case_number"),
+                     "title": record["title"], "court": record.get("court"),
+                     "parties": record.get("parties") or [], "sides": sides(record["title"]),
+                     "case_number": record.get("case_number"),
                      "court_code": record.get("court_code"), "date_estimated": record.get("date") is None},
     )

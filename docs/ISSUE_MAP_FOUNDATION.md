@@ -257,15 +257,56 @@ spent; wall-clock time.
     into the window (the Search report's 21 Oct defect); `_as_corpus`
     dropped `date_estimated` and the full-text flag; the identity guard's
     removals were streamed but never stored with the map.
-  - *Measured on the benchmark set:* waiting on OpenRouter credits and the
-    Railway deploy. The figures go here when they exist.
+  - *Measured on the benchmark set:* waiting on OpenRouter credits. The
+    figures go here when they exist.
+
+- **Phase 1 — the records are read (2 Nov 2026).** What the probes found
+  changed the plan, and the change is recorded rather than smoothed over:
+  - **No mirror was needed.** The live server measures its own reach
+    (`evidence/record_reach.py`, `/api/health` → `record_reach`) and on
+    2 Nov reached every record host, Kenya Law's new search API included.
+    The refusal that motivated the mirror was the OLD Kenya Law site.
+  - **Ruled out by the probe:** Mzalendo (ignores `search` and `ordering`;
+    newest sitting July 2025), ICIJ (a JavaScript challenge), PPIP (a
+    single-page app with no API we could see). Kenya Law's cause lists and
+    document pages sit behind a JavaScript challenge too, so the court
+    record is the search card.
+  - **Built, each against a contract the probe observed:**
+    `ingestion/kenya_law_records.py` (the search API's cards: parties as
+    printed, case number, court, date, the source's own snippet);
+    `ingestion/parliament_records.py` (the Hansards of the window, read as
+    PDFs, each speech the part of the member's turn on the issue under
+    the member's name as printed, with the order of business it was made
+    under; order papers ahead as dated next steps);
+    `ingestion/world_bank_records.py` (projects and documents, for money,
+    energy, transport and international issues). `issue_map.acquire_records`
+    runs them in parallel; one source down costs only itself, and every
+    set-aside is counted with its reason.
+  - **Run for real, on six issues of six kinds** (SHA, school fees, the
+    housing levy, Mau forest evictions, the IMF loan, the Safaricom share
+    sale — `scripts/record_probe.py` in `source-probe.yml`): every issue
+    reached Kenya Law and Parliament; 8 Hansards read per issue, 1-8
+    speeches on each. The first run's defects were general, and fixed as
+    rules, not cases: a speaker label that ran to a colon in the speech;
+    whole turns kept for one sentence; page furniture quoted as a member;
+    family, estate and private disputes; party initials read as acronyms
+    ("JMA v SHA"); World Bank items from 1964.
+  - **An issue is its name AND what is said about it**
+    (`reports/issue_match.py`). The run showed the map matched an issue
+    on its name alone — "emulate Safaricom" under the share sale, the
+    Mau Summit ROAD under Mau forest evictions. One rule now decides "about
+    the issue" for the pools, the connection and the records, and a
+    document naming only the name is set aside under its own reason.
+  - *Done when* (from section 3): three benchmark maps carry a court
+    record, a Hansard entry or a tender naming the principal. Waiting on a
+    live map.
 
 ## 5. What the founder decides
 
 - **OpenRouter credits** — every model-written part of the map stops
   without them (the 14/14 failed passes on 1 Nov were exactly this).
-- **Railway** — reconnect Settings → Source, or replace `RAILWAY_TOKEN`.
-  Nothing pushed since 24 Oct is live until then.
+- **Railway** — resolved 2 Nov: the native GitHub connection deploys
+  again, and `deploy.yml` verifies the live commit.
 - **OpenSanctions** — the PEP data needs a commercial licence; worth it or
   not.
 - **Approval of the phases**, in this order or another.

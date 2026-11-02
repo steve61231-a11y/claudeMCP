@@ -129,6 +129,8 @@ def headline(read: dict, support: dict, record: dict) -> str:
             bits.append(f"{read['video_share']:g}% video")
     bits.append(f"{read['pools']['core']} naming both")
     bits.append(f"{record.get('findings_total', 0)} verified statement(s) linking them")
+    if (record.get("paths") or {}).get("state") == "measured":
+        bits.append(f"{record['paths']['total']} step(s) on the record tying them")
     if support["record_share"] is not None:
         bits.append(f"{support['record_share']:g}% of the page on the record")
     return "; ".join(bits) + "."
@@ -148,6 +150,11 @@ def assess(payload: dict, corpus: list[dict]) -> dict:
                   "dated_next_steps": len([x for x in ((payload.get("issue_framework") or {})
                                                        .get("sequencing") or {}).get("engagement_timeline") or []
                                            if x.get("source") == "stated"])}
+        # The evidence path (evidence/paths.py): roles the records state.
+        cp = payload.get("connection_paths") or {}
+        record["paths"] = {"state": cp.get("state"), "total": cp.get("paths_total", 0),
+                           "by_kind": cp.get("counts"), "records_read": cp.get("reach"),
+                           "sources_failed": cp.get("sources_failed")}
         acq = payload.get("acquisition") or {}
         social = acq.get("social_tier") or {}
         return {"measured": True, "kind": "issue_map", "version": VERSION,

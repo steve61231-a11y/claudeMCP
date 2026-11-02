@@ -47,17 +47,27 @@ def projects(term: str) -> list[IngestedMention]:
         if not isinstance(p, dict) or not p.get("project_name"):
             continue
         amount = p.get("totalamt") or p.get("totalcommamt")
-        bits = [f"World Bank project {pid}: {p['project_name']}"]
+        bits = [f"World Bank project {pid}: {' '.join(str(p['project_name']).split())}"]
         if amount:
             bits.append(f"commitment US${amount}")
         if p.get("status"):
             bits.append(f"status {p['status']}")
         when = _date(p.get("boardapprovaldate"))
+        # Who borrows and who carries the project out, as the Bank records
+        # them — the roles a connection path can rest on. Absent, absent.
+        borrower = " ".join(str(p.get("borrower") or "").split()) or None
+        agency = " ".join(str(p.get("impagency") or "").split()) or None
+        if agency:
+            bits.append(f"implementing agency {agency}")
+        if borrower:
+            bits.append(f"borrower {borrower}")
         out.append(IngestedMention(
             platform="worldbank.org", source_type="report", author_handle="World Bank",
             text=". ".join(bits), posted_at=when or datetime.utcnow(), engagement={},
             raw_payload={"url": p.get("url") or f"https://projects.worldbank.org/en/projects-operations/project-detail/{pid}",
-                         "record": "international", "source": "world_bank_projects",
+                         "record": "international", "source": "world_bank_projects", "project_id": pid,
+                         "project": " ".join(str(p["project_name"]).split()),
+                         "borrower": borrower, "implementing_agency": agency,
                          "date_estimated": when is None}))
     return out
 
@@ -73,7 +83,8 @@ def documents(term: str) -> list[IngestedMention]:
         when = _date(d.get("docdt"))
         out.append(IngestedMention(
             platform="worldbank.org", source_type="report", author_handle="World Bank",
-            text=" ".join(str(x) for x in (d.get("docty"), "—", d["display_title"]) if x),
+            # Titles arrive with the API's own line breaks and indentation.
+            text=" ".join(" ".join(str(x) for x in (d.get("docty"), "—", d["display_title"]) if x).split()),
             posted_at=when or datetime.utcnow(), engagement={},
             raw_payload={"url": d.get("url") or d.get("pdfurl"), "record": "international",
                          "source": "world_bank_documents", "date_estimated": when is None}))

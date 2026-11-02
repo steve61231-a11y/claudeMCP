@@ -147,7 +147,7 @@ POOL_ISSUE = "issue_side"          # the issue, without them in it
 
 
 def partition_corpus(corpus: list[dict], identities, issue_terms,
-                     require_market: bool) -> tuple[dict, dict]:
+                     require_market: bool, issue_test=None) -> tuple[dict, dict]:
     """Sort a corpus into what each half of the question can be answered from.
 
     The old gate was a hard AND: a document had to name the principal AND the
@@ -175,9 +175,13 @@ def partition_corpus(corpus: list[dict], identities, issue_terms,
             continue
 
         has_principal = mentions_any(text, identities)
-        has_issue = mentions_issue(text, issue_terms)
+        # The map passes its issue's own rule (`issue_match`): Safaricom
+        # alone is not the Safaricom share sale.
+        has_issue = issue_test(text) if issue_test else mentions_issue(text, issue_terms)
         if not has_principal and not has_issue:
-            reason = "mentions neither the principal nor the issue"
+            head_only = getattr(issue_test, "head_only", None)
+            reason = ("names the issue's name without the issue" if head_only and head_only(text)
+                      else "mentions neither the principal nor the issue")
         elif require_market and not mentions_any(text, MARKET_TERMS):
             foreign = [m for m in FOREIGN_MARKERS if _norm(m) in _norm(text)]
             reason = (f"not about this market ({foreign[0]})" if foreign

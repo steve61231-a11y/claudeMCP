@@ -6211,6 +6211,59 @@
     return c;
   }
 
+  /* The connection as a path of evidence (engine/evidence/paths.py): the
+     roles the records STATE — who brought a case and who answered it, who
+     spoke in the House, who borrows or carries out a lender's project —
+     each step opening the record it rests on. No model draws a step. */
+  function renderConnectionPaths(cp,m){
+    if(!cp)return null;
+    if(cp.state!=='measured'){
+      const c=deepCard('The record that ties them','Not read this time');
+      c.classList.add('op-only');
+      c.appendChild(el('div','muted',esc(cp.reason||'no reason was recorded')));
+      return c;
+    }
+    const ps=(cp.paths||[]).filter(p=>p&&(p.steps||[]).length);
+    const c=deepCard('The record that ties them',
+      'Roles the records state — party to a case, speaker in the House, a lender’s agency — each step opening its record',
+      {open:!!ps.length});
+    const lead=el('div','');
+    lead.innerHTML=`<div style="font-size:15.5px;line-height:1.5">${esc(cp.lead||'')}</div>`;
+    if(!ps.length)lead.firstChild.style.color='var(--amber)';
+    c.appendChild(lead);
+    const node=t=>`<span class="chip" style="font-weight:600">${esc(t||'')}</span>`;
+    ps.forEach(p=>{
+      const row=el('div','mentr is-primary');
+      const chain=p.steps.map((st,i)=>(i===0?node(st.from):'')+
+        ` <span class="muted" style="font-size:13px">— ${esc(st.relation)} →</span> `+node(st.to)).join('');
+      const s0=p.steps[0], r=s0.record||{};
+      const where=[r.court,r.date?ukDate(r.date):null,r.business?`under “${r.business}”`:null].filter(Boolean).map(esc).join(' · ');
+      const printed=s0.as_printed?`<div style="font-size:13px;margin-top:6px">As printed: “${esc(s0.as_printed)}”`+
+        (s0.basis&&s0.basis!=='named'?` <span class="pill amber" style="margin-left:6px">via ${esc(s0.basis)}</span>`:'')+'</div>':'';
+      const words=(p.steps.find(st=>st.words)||{}).words;
+      row.innerHTML=`<div style="line-height:2">${chain}</div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px">${where}${r.url?` · <a href="${esc(r.url)}" target="_blank" rel="noopener">Open the record</a>`:''}</div>
+        ${printed}${words?`<div class="muted" style="font-size:13px;margin-top:6px">“${esc(words)}”</div>`:''}`;
+      c.appendChild(row);
+    });
+    if((cp.paths_total||0)>ps.length)c.appendChild(el('div','muted chart-note',
+      `The ${ps.length} most recent of ${cp.paths_total}.`));
+    const nx=(cp.next||[]).filter(a=>a&&a.date);
+    if(nx.length){
+      const box=el('div','mentr');box.style.cssText='border-left:3px solid var(--sky2)';
+      box.innerHTML='<div class="lbl" style="margin-bottom:6px">Next on the record</div>'+
+        nx.map(a=>`<div style="font-size:14px;margin-top:6px"><b>${esc(ukDate(a.date))}</b> — ${esc(a.event||'')}
+          <span class="muted" style="font-size:12.5px"> · ${a.url?`<a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.publisher||'source')}</a>`:esc(a.publisher||'')}</span></div>`).join('');
+      c.appendChild(box);
+    }
+    const rc=cp.reach||{};
+    c.appendChild(el('div','muted chart-note',
+      `Read for this map: ${fmt(rc.court||0)} court record${rc.court===1?'':'s'}, ${fmt(rc.parliament||0)} Hansard speech${rc.parliament===1?'':'es'} and ${fmt(rc.lender||0)} lender record${rc.lender===1?'':'s'} on the issue.`));
+    if((cp.sources_failed||[]).length)c.appendChild(el('div','muted chart-note op-only',
+      'Could not be read this time: '+esc(cp.sources_failed.join(', '))));
+    return c;
+  }
+
   /* Scenario mapping (engine/reports/scenarios.py) — the client's own model:
      risk drivers, a branching tree with a probability on every branch, and
      three scenarios. The probabilities are judgement and say so; every
@@ -6402,6 +6455,8 @@
     // the map's first answer and it does not depend on which tab is open.
     const conn=renderConnection(m.connection_record,m);
     if(conn)out.appendChild(conn);
+    const cpath=renderConnectionPaths(m.connection_paths,m);
+    if(cpath)out.appendChild(cpath);
     $('#dlIssuePdf',head).onclick=()=>downloadReportFile(
       '/api/issue-map/download?principal='+encodeURIComponent(m.principal||'')
         +'&issue='+encodeURIComponent(m.issue||''),

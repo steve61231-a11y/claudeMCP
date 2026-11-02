@@ -589,6 +589,8 @@ def build_issue_map(
     if mentions is None:
         mentions, acquisition = _acquire_and_store(principal, issue, ws, we,
                                                    issue_aliases, publish)
+    # The records as read, in memory only — never stored raw with the map.
+    record_items = acquisition.pop("record_items", None) or []
 
     label = f"{principal} × {issue}"
 
@@ -623,6 +625,8 @@ def build_issue_map(
         }
         publish("stage", "Nothing on topic — stopping before analysis.")
         out = _nothing_on_topic(principal, issue, ws, we, mentions, acquisition, report)
+        # The press may not connect them where a court record does.
+        out["connection_paths"] = _connection_paths(record_items, principal, issue, acquisition)
         from engine.reports import issue_quality
 
         # The thin map is the one most worth measuring.
@@ -765,13 +769,17 @@ def build_issue_map(
     payload["issue_profile"] = {k: the_issue[k] for k in
                                 ("kinds", "expansions", "institutions", "records", "search_terms")}
     # A statement about the "Social Health Authority" is about SHA: the
-    # connection matches on everything the issue is called.
+    # connection matches on everything the issue is called — and on a name
+    # only WITH what is said about it (reports/issue_match.py), so a bare
+    # name is never passed here as if it were the issue.
     payload["connection_record"] = _finish_connection(
-        connection_job, principal, issue,
-        [*(issue_aliases or []), *the_issue["expansions"],
-         *[a for a in the_issue["anchors"] if " " in a]], mentions)
+        connection_job, principal, issue, list(issue_aliases or []), mentions)
     principal_findings = payload["connection_record"].pop("_principal_findings", None)
     publish("connection_record", payload["connection_record"])
+    # The connection as a path: the roles the records state — party to a
+    # case, speaker in the House, a lender's agency — each step sourced.
+    payload["connection_paths"] = _connection_paths(record_items, principal, issue, acquisition)
+    publish("connection_paths", payload["connection_paths"])
 
     # Risk drivers, the probability tree and three scenarios — the model's
     # judgement, held to the record and recomputed (reports/scenarios.py).
@@ -823,6 +831,36 @@ def build_issue_map(
     return payload
 
 
+#: Causes that are a family's or an estate's, never the record of a public
+#: issue — however often their snippets say "school fees" or "Safaricom".
+_PERSONAL_CAUSE = re.compile(
+    r"\b(?:Succession|Divorce|Matrimonial|Adoption|Custody|Guardianship)\b|\bEstate of\b"
+    r"|\bChildren(?:['’]s)? (?:Case|Cause|Appeal)\b|\((?:Family|Deceased|Child|Minor)s?\)")
+#: A party Kenya Law anonymised to initials ("JMA", "MNK & another").
+_INITIALS = re.compile(r"[A-Z]{1,4}(?:\s*(?:&|and)\s+(?:another|\d+ others?))?")
+#: A party that is a body, not a private person: the state, a company, an
+#: association, a public office. A petition by a citizen against a Cabinet
+#: Secretary is public; a parent suing a parent over fees is not.
+_INSTITUTION = re.compile(
+    r"\b(?:Republic|Attorney General|Government|Cabinet Secretary|Principal Secretary|Ministry|County|"
+    r"Authority|Commission|Council|Board|Fund|Service|Agency|Corporation|Company|Limited|Ltd|PLC|Bank|"
+    r"Union|Association|Society|Trust|Institute|University|College|School|Hospital|Assembly|Parliament|"
+    r"Senate|Speaker|Clerk|Registrar|Director|Commissioner|Inspector|Treasury|Party|Coalition|Committee|"
+    r"Tribunal|Office|Department|Centre|Center|Foundation|Network|Forum|Movement|Alliance|Federation|"
+    r"Chamber|Holdings|Group|Executive|Controller|Auditor|Ombudsman|Directorate|Secretariat|Police|"
+    r"National|Kenya|Cooperative|Sacco|Church|Diocese|Mosque|President|Governor|Senator|Minister|"
+    r"Chief Justice|Judge|Magistrate|Member of Parliament|Mayor|Chairperson|Chief Executive)\b"
+    r"|\bH\.\s?E\.|\bHon\.")
+
+
+def _is_institution(party: str) -> bool:
+    from engine.reports import issue_profile
+
+    if _INSTITUTION.search(party):
+        return True
+    return any(token in issue_profile.ACRONYMS for token in re.findall(r"\b[A-Z]{2,8}\b", party))
+
+
 def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None, ws, we,
                     identities: list[str], report: dict, publish=lambda *a: None
                     ) -> tuple[list[IngestedMention], list[dict]]:
@@ -842,7 +880,7 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
     from concurrent.futures import ThreadPoolExecutor
 
     from engine.ingestion import kenya_law_records, parliament_records, world_bank_records
-    from engine.reports import issue_framework, issue_profile
+    from engine.reports import issue_framework, issue_match, issue_profile
     from engine.runctx import carry
 
     if not settings.enable_issue_map_records:
@@ -850,33 +888,37 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
         return [], []
     the_issue = issue_profile.profile(issue, issue_aliases)
     terms = the_issue["search_terms"]
-    match_terms = relevance.merge_terms(terms, the_issue["identities"])
     cutoff = we - timedelta(days=365 * issue_framework.BACKGROUND_YEAR_CUTOFF)
+    # The issue's one rule: its names WITH what is said about them. A live
+    # run put "let them emulate Safaricom" under the Safaricom share sale
+    # and the Rironi-Mau Summit road under Mau forest evictions.
+    about = issue_match.of(issue, issue_aliases)
 
-    def about(text: str) -> bool:
-        return relevance.mentions_issue(text, match_terms)
-
-    names = relevance.merge_terms(the_issue["identities"], the_issue["institutions"], identities)
-    distinctive = [t for t in the_issue["identities"]
-                   if t.isupper() or len(t.split()) >= 2 or t in the_issue["anchors"]]
-
-    def on_issue(record: dict) -> bool:
-        """A search engine ranks on any word; a record stays only when its
-        TITLE names the issue, a body that decides it or the principal, or
-        its own words name the issue distinctively. A live run returned an
-        estate case for "school fees" and "Levi House Construction" for
-        "Housing levy". Family and succession causes are never the record
-        of a public issue."""
+    def set_aside(record: dict) -> str | None:
+        """Why a court card is not the record of this issue, or None. A
+        search engine ranks on any word; a live run returned an estate case
+        for "school fees", "Levi House Construction" for "Housing levy",
+        "JMA v SHA" (2019: two people's initials) for SHA, and a child's
+        case whose snippet named a party "IMF"."""
         title = record.get("title") or ""
-        if re.search(r"\b(Succession Cause|Divorce|Matrimonial|Children Case|\(Family\))", title):
-            return False
-        if relevance.mentions_any(title, names) or relevance.mentions_issue(title, match_terms):
-            return True
-        return relevance.mentions_any(record.get("snippet") or "", distinctive)
+        words = f"{title}. {record.get('snippet') or ''}"
+        if _PERSONAL_CAUSE.search(title):
+            return "a family, child or estate cause"
+        if not about(words):
+            return "does not name the issue"
+        acronym = about.acronym_only(words)
+        if acronym and (any(_INITIALS.fullmatch(p) for p in record.get("parties") or [])
+                        or not record.get("parties")):
+            return "names the acronym alone, where it may be a party's initials"
+        parties = record.get("parties") or []
+        if record.get("kind") == "judgment" and parties and not about(title) \
+                and not any(_is_institution(p) for p in parties):
+            return "a dispute between private parties that mentions the issue"
+        return None
 
     def kenya_law():
         queries = list(dict.fromkeys([*terms[:3], f"{identities[0]} {terms[0]}" if identities else terms[0]]))
-        found, notes, off = [], [], 0
+        found, notes, aside = [], [], {}
         for query in queries[:4]:
             records, count, why = kenya_law_records.search(query)
             if why:
@@ -886,13 +928,15 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
                 # history, kept with its real date, never moved into the window.
                 if r["date"] is not None and r["date"] < cutoff:
                     continue
-                if on_issue(r):
-                    found.append(r)
+                reason = set_aside(r)
+                if reason:
+                    aside[reason] = aside.get(reason, 0) + 1
                 else:
-                    off += 1
+                    found.append(r)
         unique = {r["url"]: r for r in found}
         report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique),
-                               "set_aside_off_issue": off, "notes": notes[:4]}
+                               "set_aside_off_issue": sum(aside.values()), "set_aside": aside,
+                               "notes": notes[:4]}
         return [kenya_law_records.as_mention(r) for r in unique.values()], []
 
     def parliament():
@@ -914,7 +958,7 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
                         # and the item's own words name the issue — a live
                         # run returned a 1964 tea project for "Housing levy".
                         recent = item["raw_payload"].get("date_estimated") or item["posted_at"] >= cutoff
-                        if recent and relevance.mentions_issue(item["text"], match_terms):
+                        if recent and about(item["text"]):
                             out.append(item)
                         else:
                             off += 1
@@ -971,6 +1015,26 @@ def _start_connection_reading(acquisition: dict, principal: str, corpus: list[di
         future = pool.submit(carry(lambda: facts.read_all(principal, todo)))
         pool.shutdown(wait=False)
     return {"subject_id": subject_id, "future": future, "to_read": len(todo)}
+
+
+def _connection_paths(record_items: list, principal: str, issue: str, acquisition: dict | None) -> dict:
+    """evidence/paths.py over this map's records. Records that were never
+    read (no database, switched off) are said as such — never as "no record
+    ties them"."""
+    acquisition = acquisition or {}
+    if "records" not in acquisition:
+        return {"state": "not_measured",
+                "reason": "the records were not read for this map" + (
+                    f" ({acquisition['reason']})" if acquisition.get("reason") else "")}
+    try:
+        from engine.evidence import paths
+
+        identities = acquisition.get("identities") or principal_variants(principal)
+        return paths.build(record_items, principal, identities, issue,
+                           ahead=acquisition.get("records_ahead"), sources=acquisition.get("records"))
+    except Exception as exc:  # noqa: BLE001 — the path is one section; the map stands
+        stages.current().failed("issue_map:connection_paths", exc)
+        return {"state": "not_measured", "reason": f"{type(exc).__name__}: {exc}"[:200]}
 
 
 def _finish_connection(job: dict, principal: str, issue: str, aliases: list[str] | None,
@@ -1292,10 +1356,15 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
         # spent ten minutes reading two articles. The intersection still needs
         # both; the background around it does not, and without that background
         # there is nothing to find the intersection IN.
+        # The issue's one rule (reports/issue_match.py): its names WITH
+        # what is said about them. "Safaricom" alone is not the share sale.
+        from engine.reports import issue_match
+
+        the_match = issue_match.of(issue, issue_aliases)
         pools, relevance_report = relevance.partition_corpus(
-            corpus, match_identities, match_issue_terms, require_market)
+            corpus, match_identities, match_issue_terms, require_market, issue_test=the_match)
         relevance_report["matched_on"] = {
-            "principal": match_identities[:6], "issue": match_issue_terms[:6]}
+            "principal": match_identities[:6], "issue": the_match.describe()}
         corpus = _blend_pools(pools)
         relevance_report = _reconcile_relevance_report(relevance_report, corpus)
         counts = relevance_report["pools"]
@@ -1316,6 +1385,11 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             "social_tier": social_report,
             "records": records_report,
             "records_ahead": records_ahead,
+            # In memory only: the payload builder reads the records' roles
+            # for the evidence path and drops these before anything is
+            # stored (`_connection_paths`).
+            "record_items": record_mentions,
+            "identities": identities,
             "fresh_mentions": len(fresh),
             "fresh_documents": len(documents),
             **stored,
