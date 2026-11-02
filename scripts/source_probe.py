@@ -47,6 +47,38 @@ PROBES = [
      ENGINE_UA),
 ]
 
+#: The Issue Map's primary records (docs/ISSUE_MAP_FOUNDATION.md Phase 1),
+#: asked about public topics only. For these the SHAPE of the answer is
+#: printed too — JSON keys and the first row's keys, or an HTML page's title
+#: and how many documents it links — because a connector is written against
+#: what a source returns, never against what it is assumed to return.
+RECORD_PROBES = [
+    ("Mzalendo API root", "https://info.mzalendo.com/api/v0.1/?format=json", ENGINE_UA),
+    ("Mzalendo Hansard entries", "https://info.mzalendo.com/api/v0.1/hansard/entries/?format=json", ENGINE_UA),
+    ("Mzalendo Hansard sittings", "https://info.mzalendo.com/api/v0.1/hansard/sittings/?format=json", ENGINE_UA),
+    ("Mzalendo Hansard search page", "https://info.mzalendo.com/hansard/search/?q=health", ENGINE_UA),
+    ("Kenya Law search API", "https://new.kenyalaw.org/search/api/documents/?search=health%20insurance&format=json", ENGINE_UA),
+    ("Kenya Law cause lists", "https://new.kenyalaw.org/causelists/", ENGINE_UA),
+    ("Kenya Law High Court cause lists", "https://new.kenyalaw.org/causelists/KEHC/", ENGINE_UA),
+    ("Kenya Law gazettes", "https://new.kenyalaw.org/gazettes/", ENGINE_UA),
+    ("PPIP OCDS page", "https://tenders.go.ke/ocds", ENGINE_UA),
+    ("PPIP API guess", "https://tenders.go.ke/api/ocds/releases?page=1", ENGINE_UA),
+    ("ICIJ Offshore Leaks search", "https://offshoreleaks.icij.org/search?q=Safaricom", ENGINE_UA),
+    ("Wikidata SPARQL",
+     "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fh%20WHERE%20%7Bwd%3AQ114%20wdt%3AP35%20%3Fh%7D",
+     ENGINE_UA),
+    ("World Bank projects API",
+     "https://search.worldbank.org/api/v2/projects?format=json&countrycode_exact=KE&rows=2", ENGINE_UA),
+    ("World Bank documents API",
+     "https://search.worldbank.org/api/v2/wds?format=json&qterm=Kenya%20health&rows=2", ENGINE_UA),
+    ("IMF Kenya page", "https://www.imf.org/en/Countries/KEN", ENGINE_UA),
+    ("Parliament home", "https://www.parliament.go.ke/", ENGINE_UA),
+    ("Parliament order papers",
+     "https://www.parliament.go.ke/the-national-assembly/house-business/order-paper", ENGINE_UA),
+    ("Parliament Hansard listing",
+     "https://www.parliament.go.ke/the-national-assembly/house-business/hansard", ENGINE_UA),
+]
+
 WALL_MARKERS = ("just a moment", "cf-browser-verification", "cf_chl_opt",
                 "attention required! | cloudflare", "access denied",
                 "enable javascript and cookies to continue", "blocked")
@@ -82,7 +114,50 @@ def _chrome(url: str) -> str:
         return f"error: {type(exc).__name__}: {str(exc)[:120]}"
 
 
+def _shape(url: str, ua: str) -> str:
+    """What the answer looks like: JSON keys and the first row's, or a
+    page's title and the documents it links."""
+    import json
+    import re
+
+    try:
+        r = requests.get(url, headers={"User-Agent": ua, "Accept": "application/json, text/html"}, timeout=25)
+    except Exception as exc:  # noqa: BLE001
+        return f"error: {type(exc).__name__}"
+    text = r.text or ""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        title = re.search(r"<title[^>]*>(.*?)</title>", text, re.S | re.I)
+        pdfs = len(re.findall(r"href=\"[^\"]+\.(?:pdf|docx?)\"", text, re.I))
+        links = re.findall(r'href="(/[^"#?]{3,80})"', text)
+        sample = sorted({l for l in links if l.count("/") >= 2})[:12]
+        return (f"HTML title={(title.group(1).strip()[:90] if title else None)!r} pdf/doc links={pdfs} "
+                f"sample paths={sample}")
+
+    def keys(node, depth=0):
+        if isinstance(node, dict):
+            out = []
+            for k, v in list(node.items())[:25]:
+                out.append(k if depth >= 1 else f"{k}:{keys(v, depth + 1)}")
+            return "{" + ", ".join(out) + "}"
+        if isinstance(node, list):
+            return f"[{len(node)}x {keys(node[0], depth) if node else ''}]"
+        return type(node).__name__
+    return f"JSON {keys(data)}"[:1500]
+
+
 def main() -> int:
+    for label, url, ua in RECORD_PROBES:
+        plain = _plain(url, ua)
+        shape = _shape(url, ua) if plain.startswith("HTTP 2") else ""
+        line = f"plain requests → {plain}" + (f"  |  shape → {shape}" if shape else
+                                               f"  |  Chrome fingerprint → {_chrome(url)}")
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write(f"- **{label}**: {line}\n")
+        print(f"RECORD {label}: {line}", file=sys.stderr)
     for label, url, ua in PROBES:
         plain = _plain(url, ua)
         chrome = _chrome(url)
