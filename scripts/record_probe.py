@@ -55,6 +55,20 @@ def main() -> int:
             s0 = p["steps"][0]
             print(f"     · {s0['from']} — {s0['relation']} → {s0['to']} | as printed: {s0.get('as_printed')!r}"
                   f" | via {s0.get('basis')} | {s0['record'].get('date')}", file=sys.stderr)
+            for listing in p.get("listings") or []:
+                print(f"         listed {listing['date']}: {listing.get('snippet', '')[:160]!r}", file=sys.stderr)
+        # Every case's cause-list lookup, matched or not — so "nothing ahead"
+        # can be told from "the matcher found nothing at all".
+        from engine.ingestion import kenya_law_records
+
+        for m in mentions:
+            raw = m.get("raw_payload") or {}
+            if raw.get("source") == "kenya_law_search" and raw.get("case_number"):
+                found_dates, why = kenya_law_records.listings(raw["case_number"], raw.get("court_code"),
+                                                              raw.get("parties") or [])
+                print(f"     LISTINGS {raw['case_number'][:40]} ({raw.get('court_code')}, party "
+                      f"{kenya_law_records._first_party_word(raw.get('parties') or [])}): "
+                      f"{[x['date'] for x in found_dates]} {why or ''}", file=sys.stderr)
     _lender_fields()
     return 0
 

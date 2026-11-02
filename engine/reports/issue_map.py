@@ -1004,7 +1004,7 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
         unique = {r["url"]: r for r in found}
         # Each case's dates in the court's own cause lists (Phase 4): a
         # listing ahead is the next decision point, from the record.
-        ahead, asked, cases = [], 0, {}
+        ahead, asked, cases, listed = [], 0, {}, 0
         for r in unique.values():
             key = kenya_law_records.case_key(r.get("case_number"), r.get("court_code"))
             if key:
@@ -1014,6 +1014,7 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
             found_dates, why = kenya_law_records.listings(r.get("case_number") or "", r.get("court_code"),
                                                           r.get("parties") or [])
             asked += 1
+            listed += len(found_dates)
             if why and not found_dates:
                 notes.append(f"cause lists for {kenya_law_records.case_key(r.get('case_number'))}: {why}")
             for other in unique.values():
@@ -1029,7 +1030,8 @@ def acquire_records(principal: str, issue: str, issue_aliases: list[str] | None,
                                   "record": "cause_list"})
         report["kenya_law"] = {"queries": len(queries[:4]), "records": len(unique),
                                "set_aside_off_issue": sum(aside.values()), "set_aside": aside,
-                               "cases_checked_in_cause_lists": asked, "listings_ahead": len(ahead),
+                               "cases_checked_in_cause_lists": asked, "listings_found": listed,
+                               "listings_ahead": len(ahead),
                                "notes": notes[:6]}
         return [kenya_law_records.as_mention(r) for r in unique.values()], ahead
 
