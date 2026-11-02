@@ -1,18 +1,16 @@
 """Can the map read a court case's NEXT date? Observed, not assumed.
 
-Round 2. Round 1 (2 Nov 2026) found: cause lists are indexed by the search
-API as documents (/akn/ke/doc/cause-list-daily/<court>/<date>/…), future
-lists are listed on /causelists/, and a list's own page answers 202 (a
-JavaScript challenge). This asks how to restrict the search to cause lists
-(the facets the API offers), whether a case number then finds its listing,
-and whether a list's /source file is reachable. Public case numbers only.
+Round 3. Round 2 found cause-list cards for a case-number search with
+"cause list" appended, and the map's strict matcher (same court, number and
+year, first party) then found nothing for 30 real cases. This prints what
+each phrasing returns for real case numbers, to tell "these cases are not
+in any published cause list" from "the query does not surface them".
 
     python scripts/causelist_probe.py
 """
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 
@@ -20,48 +18,32 @@ import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
 API = "https://new.kenyalaw.org/search/api/documents/"
+CASES = [("E051", "2026", "Gachoka", "kehc"), ("E001", "2026", "Omtatah", "kehc"), ("E078", "2025", "Abdille", "keelrc"),
+         ("E083", "2023", "Ogiek", "keca")]
 
 
-def search(params: dict) -> dict:
-    r = requests.get(API, params=params, headers=UA, timeout=30)
-    try:
-        return {"status": r.status_code, **r.json()}
-    except ValueError:
-        return {"status": r.status_code, "text": r.text[:200]}
-
-
-def cards(data: dict) -> list[tuple[str, str]]:
-    html = data.get("results_html") or ""
-    out = []
+def show(q: str):
+    r = requests.get(API, params={"search": q, "page": 1}, headers=UA, timeout=30)
+    html = r.json().get("results_html") or ""
+    rows = []
     for card in re.findall(r'<li class="mb-4 hit[^"]*"[^>]*>(.*?)</li>', html, re.S):
         uri = re.search(r'href="(/akn/[^"#]+)"', card)
-        snip = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", card))[:260]
-        out.append((uri.group(1) if uri else "?", snip))
-    return out
+        snip = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", card))
+        rows.append((uri.group(1) if uri else "?", snip))
+    lists = [x for x in rows if "/doc/cause" in x[0] or "causelist" in x[0]]
+    print(f"--- {q!r}: {r.json().get('count')} results; {len(lists)} cause-list cards of {len(rows)}")
+    for uri, snip in lists[:4]:
+        print(f"   {uri} | {snip[:240]}")
 
 
 def main() -> int:
-    base = search({"search": "Petition E051 of 2026", "page": 1})
-    facets = base.get("facets") or {}
-    print("--- facets offered:", json.dumps({k: (list(v)[:12] if isinstance(v, (list, dict)) else v)
-                                            for k, v in facets.items()}, default=str)[:1500])
-    for params in ({"search": "E051 of 2026", "doc_type": "doc"},
-                   {"search": "E051 of 2026", "nature": "Cause List"},
-                   {"search": "E051 of 2026", "nature": "cause-list-daily"},
-                   {"search": "E051 of 2026", "frbr_doctype": "doc"},
-                   {"search": "E051 of 2026 cause list"},
-                   {"search": "\"E051 of 2026\" cause-list-daily"}):
-        data = search({**params, "page": 1})
-        found = cards(data)
-        lists = [c for c in found if "cause" in c[0]]
-        print(f"--- {params}: HTTP {data.get('status')} count={data.get('count')} cards={len(found)} cause-list cards={len(lists)}")
-        for uri, snip in lists[:3]:
-            print(f"   {uri} | {snip}")
-    for path in ("/akn/ke/doc/cause-list-daily/keca/2026-11-30/1/eng@2026-11-30/source",
-                 "/akn/ke/doc/cause-list-daily/keca/2026-11-30/1/eng@2026-11-30/source.pdf",
-                 "/akn/ke/doc/cause-list-daily/keca/2026-11-30/1/eng@2026-11-30.pdf"):
-        r = requests.get("https://new.kenyalaw.org" + path, headers=UA, timeout=30)
-        print(f"--- {path}: HTTP {r.status_code} {r.headers.get('content-type')} {len(r.content)} bytes")
+    for number, year, party, court in CASES:
+        for q in (f"{number}/{year} cause list", f"{number} of {year} {party} cause list", f"{party} cause list",
+                  f'"{number}/{year}"'):
+            try:
+                show(q)
+            except Exception as exc:  # noqa: BLE001
+                print(f"--- {q!r}: {type(exc).__name__}: {exc}"[:200])
     return 0
 
 
