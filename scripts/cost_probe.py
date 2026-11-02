@@ -97,6 +97,15 @@ def usage() -> None:
         if r + m == 1 and tokens[day][1]:
             print(f"   {day} | {'search report' if r else 'issue map':<13} | in {tokens[day][1]:,} | "
                   f"out {tokens[day][2]:,} | calls {tokens[day][0]}")
+    # Which Kenyan newsrooms already reach the corpus, by stored link (counts only).
+    print("\n   Items already stored per Kenyan newsroom (by link):")
+    for host in ("tuko.co.ke", "nation.africa", "standardmedia.co.ke", "the-star.co.ke", "citizen.digital",
+                 "kenyans.co.ke", "capitalfm.co.ke", "businessdailyafrica.com", "kbc.co.ke"):
+        n = q(f"SELECT count(*) FROM raw_mentions WHERE raw_payload->>'url' ILIKE '%{host}%' "
+              f"OR raw_payload->>'source_url' ILIKE '%{host}%'")
+        print(f"   {host:<26} {n[0][0] if n else '?'}")
+    n = q("SELECT count(*) FROM raw_mentions WHERE author_handle ILIKE '%tuko%'")
+    print(f"   items whose publisher name is Tuko: {n[0][0] if n else '?'}")
     size = q("SELECT pg_database_size(current_database())")
     if size:
         print(f"\n   database size: {size[0][0] / 1e9:.2f} GB")
