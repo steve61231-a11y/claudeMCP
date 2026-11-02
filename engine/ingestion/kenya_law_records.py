@@ -17,8 +17,10 @@ URI (`/akn/ke/judgment/kehc/2024/8429/eng@2024-07-10` — the type, the court
 and the date are in it), an italic alternative title, the date and the
 court in `span.me-3`, and a snippet of the source's own words with the
 search terms in `<mark>`. `format=json` is REFUSED (400) — the endpoint
-answers JSON by default — and `nature=` filters nothing; the probe found
-both. The document pages themselves sit behind a JavaScript challenge, so
+answers JSON by default — and `nature=` filters nothing for cases; the
+probe found both. For the Gazette it does: `nature=Gazette` returns Gazette
+issues only, `ordering=-date` puts the newest first and `date__gte=` holds
+to a date (`scripts/gazette_probe.py`, 2 Nov 2026). The document pages themselves sit behind a JavaScript challenge, so
 the record is the card: title, parties, case number, court, date, snippet.
 
 Nothing is inferred. Parties are read from the title's "A v B" form only;
@@ -167,15 +169,19 @@ def parse(results_html: str) -> list[dict]:
         snippet = _text((snip.group(1) or snip.group(2)) if snip else "")
         out.append({"title": title, "url": BASE + href, "kind": kind, "court": body,
                     "court_code": uri.group(2) if uri else None, "date": date,
-                    "parties": parties(title), "case_number": case_number(title), "snippet": snippet})
+                    "parties": parties(title), "case_number": case_number(title), "snippet": snippet,
+                    # Every passage the card shows: a Gazette card shows
+                    # several pages' passages, and `snippet` holds one.
+                    "card_text": _text(card)})
     return out
 
 
-def search(query: str, page: int = 1) -> tuple[list[dict], int, str | None]:
+def search(query: str, page: int = 1, params: dict | None = None) -> tuple[list[dict], int, str | None]:
     """(records, total count, why-nothing) for one query page. The third
-    value says WHICH nothing: refused, unparsable, or genuinely none."""
+    value says WHICH nothing: refused, unparsable, or genuinely none.
+    `params` adds the API's own filters (`nature`, `ordering`, `date__gte`)."""
     try:
-        response = http.get(SEARCH, params={"search": query, "page": page}, timeout=30)
+        response = http.get(SEARCH, params={"search": query, "page": page, **(params or {})}, timeout=30)
     except http.HostRefused as exc:
         return [], 0, str(exc)
     except Exception as exc:  # noqa: BLE001
