@@ -1,4 +1,11 @@
-"""Can the map read a statutory DEADLINE from the Kenya Gazette? Observed, not assumed.
+"""Round 2. Round 1 found: `nature=Gazette` restricts Kenya Law's search to
+Gazette issues (doc_type= returns nothing); a card is a whole ISSUE with
+short "Page N : [...]" snippets; results are ranked over all years; the
+issue pages answer HTTP 202 with no body (the JavaScript challenge). So
+round 2 asks: can the search be held to recent issues, and does any other
+host serve the Gazette's text?
+
+Can the map read a statutory DEADLINE from the Kenya Gazette? Observed, not assumed.
 
 Phase 4 of docs/ISSUE_MAP_FOUNDATION.md: "from the Gazette, statutory
 deadlines". Before writing a reader, this prints what the routes return for
@@ -49,7 +56,46 @@ def cards(query: str, extra: dict | None = None):
     return r.status_code, data.get("count"), rows
 
 
+def round_two() -> None:
+    q = "Social Health Authority"
+    for label, extra in (("none", {}), ("ordering=-date", {"ordering": "-date"}), ("sort=-date", {"sort": "-date"}),
+                         ("year=2026", {"year": "2026"}), ("date__gte", {"date__gte": "2026-01-01"}),
+                         ("date_from", {"date_from": "2026-01-01"}), ("page 2", {"page": 2})):
+        try:
+            status, count, rows = cards(q, dict({"nature": "Gazette"}, **extra))
+            dates = [re.search(r"/(\d{4}-\d\d-\d\d)/", u).group(1) if re.search(r"/(\d{4}-\d\d-\d\d)/", u) else "?"
+                     for u, _ in rows]
+            print(f"--- order [{label}]: HTTP {status}, {count} results; issue dates {dates[:6]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"--- order [{label}]: {type(exc).__name__}: {exc}"[:200])
+    for q in ("Social Health Authority 2026", "Social Health Authority on or before", "public participation 2026"):
+        try:
+            status, count, rows = cards(q, {"nature": "Gazette"})
+            recent = [(u, s) for u, s in rows if "/2026-" in u or "/2025-" in u]
+            print(f"--- {q!r}: {count} results; {len(recent)} of {len(rows)} from 2025-26")
+            for u, snip in recent[:3]:
+                print(f"   {u} | deadline words {bool(DEADLINE.search(snip))} | dates {DATE.findall(snip)[:3]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"--- {q!r}: {type(exc).__name__}: {exc}"[:200])
+    for url in ("https://gazettes.africa/gazettes/ke/2026", "https://gazettes.africa/search?q=Social+Health+Authority",
+                "https://api.gazettes.africa/", "https://kenyalaw.org/kenya_gazette/"):
+        try:
+            r = requests.get(url, headers=UA, timeout=30)
+            text = flat(r.text)
+            links = re.findall(r'href="([^"]+\.pdf)"', r.text)[:3]
+            print(f"   GET {url}: HTTP {r.status_code}, {r.headers.get('content-type','')}, {len(r.content)} bytes; "
+                  f"pdf links {links}")
+            print(f"     {text[:240]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"   GET {url}: {type(exc).__name__}: {exc}"[:200])
+
+
 def main() -> int:
+    round_two()
+    return 0
+
+
+def round_one() -> int:
     gazette_uris: list[str] = []
     for topic in TOPICS:
         for label, extra in (("plain", {}), ("gazette filter", {"nature": "Gazette"}),
