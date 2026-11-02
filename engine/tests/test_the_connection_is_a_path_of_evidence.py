@@ -129,3 +129,28 @@ def test_one_case_is_one_step_however_many_rulings_it_has():
     assert step["steps"][0]["to"] == "Petition E051 of 2026"
     assert [r["citation"] for r in step["rulings"]] == ["[2026] KEHC 13493 (KLR)", "[2026] KEHC 8409 (KLR)"]
     assert out["lead"] == "On the record, Kenya Government is a party to 1 court case on it (2 rulings)."
+
+
+def test_records_from_earlier_maps_join_the_path_when_they_name_this_issue(db_session):
+    """The record compounds: a case an earlier map read is evidence for this
+    one when its own words name this issue — and only then."""
+    from engine.db.models import Politician, RawMention
+    from engine.reports import issue_map
+
+    subject = Politician(name="Ministry of Health", subject_type="organization")
+    db_session.add(subject)
+    db_session.flush()
+    case = _case("Abdille v Ministry of Health & 3 others (Petition E078 of 2025) [2025] KEELRC 2027 (KLR)")
+    other = _case("Abdille v Ministry of Health (Petition E9 of 2025) [2025] KEHC 9 (KLR)",
+                  snippet="the hospital tender was cancelled")
+    for i, m in enumerate((case, other)):
+        db_session.add(RawMention(politician_id=subject.id, platform="kenyalaw.org", source_type="judgment",
+                                  author_handle="High Court", text=m["text"], posted_at=m["posted_at"],
+                                  raw_payload={**m["raw_payload"], "url": f"https://records.example/{i}"},
+                                  content_hash=f"h{i}"))
+    db_session.flush()
+    found = issue_map._stored_records(db_session, subject.id, "SHA", None, set())
+    assert len(found) == 1 and found[0]["raw_payload"]["from_store"]
+    out = paths.build(found, "Ministry of Health", ["Ministry of Health"], "SHA")
+    assert out["counts"]["court"] == 1
+    assert issue_map._stored_records(db_session, subject.id, "SHA", None, {"https://records.example/0"}) == []

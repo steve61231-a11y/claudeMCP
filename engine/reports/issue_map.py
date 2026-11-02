@@ -1036,6 +1036,48 @@ def _start_connection_reading(acquisition: dict, principal: str, corpus: list[di
     return {"subject_id": subject_id, "future": future, "to_read": len(todo)}
 
 
+#: The record sources whose roles a path can rest on.
+RECORD_SOURCES = ("kenya_law_search", "hansard", "world_bank_projects", "world_bank_documents")
+
+
+def _stored_records(db, subject_id: str, issue: str, issue_aliases, seen_urls: set,
+                    limit: int = 400) -> list[dict]:
+    """Records stored under this principal by earlier maps, on THIS issue
+    (`issue_match`), not already read this run. Each keeps its payload —
+    the parties, the case number, the business — and the date it carries
+    (a ruling is dated by the ruling, whenever it was collected)."""
+    from sqlalchemy import text as sql_text
+
+    from engine.reports import issue_match
+
+    try:
+        rows = db.execute(sql_text(
+            """SELECT source_type, author_handle, text, posted_at, raw_payload
+               FROM raw_mentions
+               WHERE politician_id = :pid AND raw_payload->>'source' = ANY(:sources)
+               ORDER BY posted_at DESC LIMIT :lim"""),
+            {"pid": subject_id, "sources": list(RECORD_SOURCES), "lim": limit}).fetchall()
+    except Exception as exc:  # noqa: BLE001 — earlier records are a bonus, never a failure of this map
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        stages.current().failed("issue_map:stored_records", exc)
+        return []
+    about = issue_match.of(issue, issue_aliases)
+    out, seen = [], set(u for u in seen_urls if u)
+    for row in rows:
+        raw = row.raw_payload or {}
+        url = raw.get("url")
+        if (url and url in seen) or not about(row.text or ""):
+            continue
+        if url:
+            seen.add(url)
+        out.append({"source_type": row.source_type, "author_handle": row.author_handle, "text": row.text,
+                    "posted_at": row.posted_at, "engagement": {}, "raw_payload": {**raw, "from_store": True}})
+    return out
+
+
 def _connection_paths(record_items: list, principal: str, issue: str, acquisition: dict | None) -> dict:
     """evidence/paths.py over this map's records. Records that were never
     read (no database, switched off) are said as such — never as "no record
@@ -1354,6 +1396,13 @@ def _acquire_and_store(principal: str, issue: str, ws: datetime, we: datetime,
             principal, issue, issue_aliases, ws, we, identities, records_report, publish)
         fresh = list(fresh) + record_mentions
         stored = _persist_intersection(db, subject, fresh, documents, issue)
+        # The record compounds: what earlier maps of this principal read —
+        # a case found for another issue, a speech from an earlier sitting —
+        # joins this map's path when its own words name this issue.
+        earlier = _stored_records(db, subject.id, issue, issue_aliases,
+                                  {(m.get("raw_payload") or {}).get("url") for m in record_mentions})
+        records_report["from_earlier_maps"] = len(earlier)
+        record_mentions = list(record_mentions) + earlier
         gate = _gate_documents(db, subject)
 
         publish("stage", "Pulling back everything stored that bears on this issue…")
