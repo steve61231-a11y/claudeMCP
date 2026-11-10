@@ -24,7 +24,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 from engine.reports import issue_graph  # noqa: E402
 
-CHROME = Path("/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+from engine.tests.browser import CHROME  # noqa: E402
 pytestmark = pytest.mark.skipif(not CHROME.exists(),
                                 reason="Chromium not available in this environment")
 

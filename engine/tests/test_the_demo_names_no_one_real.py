@@ -93,7 +93,7 @@ def test_a_search_the_engine_never_received_says_so_above_the_sample():
     pytest.importorskip("playwright.sync_api")
     from playwright.sync_api import sync_playwright
 
-    chrome = Path("/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+    from engine.tests.browser import CHROME as chrome
     if not chrome.exists():
         pytest.skip("Chromium not available in this environment")
 

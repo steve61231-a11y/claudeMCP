@@ -21,7 +21,7 @@ import pytest
 from engine.reports import analysts
 from engine.reports import sentiment_framework as fw
 
-CHROME = Path("/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+from engine.tests.browser import CHROME  # noqa: E402
 
 
 def test_a_moment_before_the_period_is_marked_as_context(monkeypatch):

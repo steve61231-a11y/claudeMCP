@@ -2378,8 +2378,15 @@ def health():
         from engine.db.session import engine as _engine
 
         _bound = _engine.url
+        # This endpoint is public. The hostname is not reported — it names
+        # the client's database to anyone who asks — only what KIND of
+        # database it is, which is all an operator reading it needs.
+        _host = (_bound.host or "").lower()
         database: dict = {"configured": bool(_bound.host or _bound.database),
-                          "host": _bound.host, "reachable": False}
+                          "provider": ("neon" if _host.endswith("neon.tech") else
+                                       "supabase" if "supabase" in _host else
+                                       "local" if _host in ("localhost", "127.0.0.1", "") else "other"),
+                          "reachable": False}
     except Exception:
         database = {"configured": False, "reachable": False}
     db = SessionLocal()

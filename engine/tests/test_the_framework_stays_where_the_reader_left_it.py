@@ -27,7 +27,7 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-CHROME = Path("/opt/pw-browsers/chromium-1194/chrome-linux/chrome")
+from engine.tests.browser import CHROME  # noqa: E402
 FIXTURE = Path(__file__).parent / "fixtures" / "broken_run_report.json"
 
 pytestmark = pytest.mark.skipif(not CHROME.exists(),
