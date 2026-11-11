@@ -1,0 +1,30 @@
+name: relevance-probe
+
+# Is what a name-search returns about the name? Runs the engine's real planned
+# queries for PUBLIC subjects (the head of state, a ministry, a listed company)
+# against GDELT and Google News from GitHub's network and counts languages,
+# outlet countries and how many headlines name the subject. No secrets, and
+# nothing from the production database: public sources only.
+
+on:
+  push:
+    branches:
+      - claude/magical-mayer-yzxz5s
+    paths:
+      - "scripts/relevance_probe.py"
+      - ".github/workflows/relevance-probe.yml"
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install what the connectors import
+        run: grep -vE "^(spacy|hdbscan|scikit-learn|scrapling|yt-dlp|trafilatura|sentence-transformers)" engine/requirements.txt > /tmp/req.txt && pip install -q -r /tmp/req.txt python-dotenv
+      - name: Run the planned queries
+        run: PYTHONPATH=. python scripts/relevance_probe.py
