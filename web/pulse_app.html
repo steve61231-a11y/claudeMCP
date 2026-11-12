@@ -2599,6 +2599,54 @@
       named with the issue in ${r.count} verified statement${r.count===1?'':'s'}</summary>${rows}</details>`;
   }
 
+  /** Section 4's action plan: messaging, plays and who to ask for what. */
+  function renderActionPlan(ap){
+    const plan=ap.plan||{}, msg=plan.messaging||{}, box=el('div','');
+    const written=ap.state==='written';
+    box.appendChild(el('div','lbl','Action plan'));
+    box.appendChild(el('div','muted chart-note',written
+      ? esc(ap.basis||'Our judgement, held to the record.')
+      : 'Built from the map’s own stakeholder positions and dates. '+esc(ap.reason||'')));
+    if(msg.core)box.appendChild(el('div','hero-one',esc(msg.core)));
+    if((msg.audiences||[]).length){
+      box.appendChild(el('div','lbl','What each audience needs to hear'));
+      msg.audiences.forEach(a=>box.appendChild(el('div','mentr',
+        `<b>${esc(a.audience||'')}</b><div style="margin-top:3px">${esc(a.line||'')}</div>`)));
+    }
+    if((msg.proof_points||[]).length){
+      box.appendChild(el('div','lbl','Proof points on the record'));
+      box.appendChild(el('ul','',msg.proof_points.map(p=>`<li>${linkifyRefs(esc(p.cited||p.point||''),p.citations)}</li>`).join('')));
+    }
+    if((msg.avoid||[]).length){
+      box.appendChild(el('div','lbl','Avoid'));
+      box.appendChild(el('ul','muted',msg.avoid.map(a=>`<li>${esc(a)}</li>`).join('')));
+    }
+    if((plan.plays||[]).length){
+      box.appendChild(el('div','lbl','Plays, in order'));
+      plan.plays.forEach((p,i)=>{
+        const steps=(p.steps||[]).length?`<ol style="margin:6px 0 0 18px">${p.steps.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>`:'';
+        const meta=[p.owners&&p.owners.length?'<b>Who:</b> '+esc(p.owners.join(', ')):'',
+                    p.when?'<b>When:</b> '+esc(p.when):''].filter(Boolean).join(' · ');
+        box.appendChild(el('div','card',`<div style="font-weight:600">${i+1}. ${esc(p.title||'')}</div>
+          ${p.objective?`<div class="muted" style="margin-top:3px">${esc(p.objective)}</div>`:''}${steps}
+          ${meta?`<div style="font-size:13px;margin-top:6px">${meta}</div>`:''}
+          ${p.risk?`<div style="font-size:13px;margin-top:4px"><b>Risk:</b> ${esc(p.risk)}</div>`:''}
+          ${p.signal?`<div style="font-size:13px;margin-top:4px"><b>Working if:</b> ${esc(p.signal)}</div>`:''}`));
+      });
+    }
+    if((plan.engagement||[]).length){
+      box.appendChild(el('div','lbl','Who to ask for what'));
+      plan.engagement.forEach(e=>box.appendChild(el('div','mentr',
+        `<b>${esc(e.name)}</b>${e.ask?` — ${esc(e.ask)}`:''}
+         ${e.approach?`<div class="muted" style="font-size:13px;margin-top:3px">How: ${esc(e.approach)}</div>`:''}
+         ${e.why?`<div class="muted" style="font-size:13px;margin-top:2px">Why: ${esc(e.why)}</div>`:''}`)));
+    }
+    const rm=((ap.check||{}).removed||[]);
+    if(rm.length)box.appendChild(el('div','muted chart-note op-only',
+      `${rm.length} sentence(s) the record could not support were removed from the plan.`));
+    return box;
+  }
+
   function renderIssueFramework(out,fw,m){
     m=m||{};
     const it=m.intersection||{};
@@ -2803,8 +2851,15 @@
     if(sc.state&&sc.state!=='modelled')s4.appendChild(el('div','muted chart-note op-only',
       'Scenarios were not modelled: '+esc(sc.reason||'no reason was recorded')));
     if(sp.removed)s4.appendChild(sp.removed);
-    s4.appendChild(el('div','lbl','Recommended messaging / positioning'));
-    s4.appendChild(el('div','muted',esc(sr.recommended_messaging||'')));
+    // The action plan (reports/action_plan.py): its own analyst, held to
+    // the record. It replaces "Recommended messaging" and "Best engagement
+    // approaches", which were three fixed sentences on every map.
+    const ap=m.action_plan||{}, plan=ap.plan||null;
+    if(plan)s4.appendChild(renderActionPlan(ap));
+    else{
+      s4.appendChild(el('div','lbl','Recommended messaging / positioning'));
+      s4.appendChild(el('div','muted',esc(sr.recommended_messaging||'')));
+    }
     const g4=el('div','grid');g4.style.gridTemplateColumns='repeat(auto-fit,minmax(200px,1fr))';g4.style.marginTop='14px';
     [['Engage (champions)',sr.who_to_engage_champions,TONE.positive],
      ['Influence (challengers)',sr.who_to_influence_challengers,TONE.negative],
@@ -2818,7 +2873,7 @@
       g4.appendChild(col);
     });
     s4.appendChild(g4);
-    if((sr.best_engagement_approaches||[]).length){
+    if(!plan&&(sr.best_engagement_approaches||[]).length){
       s4.appendChild(el('div','lbl','Best engagement approaches'));
       s4.appendChild(el('ul','muted','<li>'+sr.best_engagement_approaches.map(esc).join('</li><li>')+'</li>'));
     }

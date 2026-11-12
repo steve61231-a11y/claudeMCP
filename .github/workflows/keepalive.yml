@@ -1,38 +1,83 @@
 name: keepalive
 
-# Free 24/7 keep-alive: pings the engine so a sleeping instance never spins
-# down, which in turn lets the in-app 6h ingestion scheduler keep running.
-# Replaces needing UptimeRobot. GitHub disables scheduled workflows after ~60
-# days of repo inactivity — any push re-arms it. Cron is best-effort (GitHub may
-# delay a few minutes), which is fine for keep-warm.
+# Pings the engine every ten minutes, and SAYS when it is down.
 #
-# The default below is the LIVE host. It pointed at the retired Render domain
-# for weeks, so this job pinged a dead address every ten minutes, got a
-# non-200 every time, and deliberately exited 0 — a monitor that cannot
-# distinguish "the service is down" from "I am asking the wrong service" is
-# a monitor whose answer means nothing. Override it with the `ENGINE_URL`
-# repository variable rather than editing this file, and the same variable
-# then drives `deploy.yml` and `deploy-drift.yml` too.
+# This job used to exit 0 whatever the answer, on the theory that a sleeping
+# instance was waking up. On 8 Nov 2026 the Railway service was removed for
+# billing and answered "Application not found" (HTTP 404) for two days; this
+# job saw a 404 three hundred times and showed a green tick every time, and
+# the founder found out when a search failed. A monitor whose answer is
+# always "fine" is not a monitor.
+#
+# So: three tries a minute apart; if none answers 200, the job fails AND an
+# issue titled "The live site is down" is opened (GitHub emails the owner),
+# or commented on if it is already open. When the site answers again, the
+# issue is closed with the time it came back. One issue per outage, never a
+# flood. Override the address with the ENGINE_URL repository variable.
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # every ~10 minutes
-  workflow_dispatch: {}        # allow manual runs
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
       - name: Ping engine health
+        id: ping
         run: |
           URL="${ENGINE_URL:-https://muugi-production-8e01.up.railway.app}/api/health"
           echo "Pinging $URL"
+          code=000
           for i in 1 2 3; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo 000)
+            code=$(curl -s -o /tmp/body -w "%{http_code}" --max-time 60 "$URL" || echo 000)
             echo "attempt $i -> HTTP $code"
-            [ "$code" = "200" ] && exit 0
-            sleep 20
+            [ "$code" = "200" ] && break
+            sleep 60
           done
-          echo "engine did not return 200 (may be waking up); not failing the job"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "detail=$(head -c 200 /tmp/body 2>/dev/null | tr -d '\n\r"' )" >> "$GITHUB_OUTPUT"
         env:
           ENGINE_URL: ${{ vars.ENGINE_URL }}
+
+      - name: Open or update the outage issue
+        if: steps.ping.outputs.code != '200'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODE: ${{ steps.ping.outputs.code }}
+          DETAIL: ${{ steps.ping.outputs.detail }}
+        run: |
+          title="The live site is down"
+          num=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          when=$(date -u '+%Y-%m-%d %H:%M UTC')
+          if [ -z "$num" ]; then
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "The engine did not answer its health check at $when (HTTP $CODE).
+
+          What it said: \`$DETAIL\`
+
+          What this usually means:
+          - **HTTP 404 \"Application not found\"** — the Railway service is not running: check billing and the service in the Railway dashboard.
+          - **HTTP 000** — no answer at all: the service is crashed or restarting; check its deploy logs in Railway.
+          - **HTTP 502/503** — it is starting, or out of memory; if it lasts more than 15 minutes, check Railway.
+
+          This issue closes itself when the site answers again."
+          else
+            gh issue comment "$num" -R "$GITHUB_REPOSITORY" --body "Still down at $when (HTTP $CODE)." >/dev/null
+          fi
+          exit 1
+
+      - name: Close the outage issue when the site is back
+        if: steps.ping.outputs.code == '200'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="The live site is down"
+          num=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number --jq '.[0].number')
+          if [ -n "$num" ]; then
+            gh issue close "$num" -R "$GITHUB_REPOSITORY" --comment "Back up at $(date -u '+%Y-%m-%d %H:%M UTC')."
+          fi

@@ -859,6 +859,27 @@ def build_issue_map(
         stages.current().failed("issue_map:stakeholder_record", exc)
     publish("issue_framework", payload["issue_framework"])
 
+    # Section 4's action plan: its own analyst, handed the findings, the
+    # stakeholders, the dated steps and the scenarios, and held to them
+    # (reports/action_plan.py). It replaces three fixed sentences.
+    try:
+        from engine.reports import action_plan
+
+        counts = (payload.get("connection_record") or {}).get("counts") or {}
+        payload["action_plan"] = action_plan.build(
+            principal, issue, payload["issue_framework"], payload.get("connection_record"),
+            principal_findings, payload.get("scenarios"), desired_outcome=desired_outcome,
+            ahead=payload.get("upcoming"),
+            numbers={str(v) for v in counts.values() if isinstance(v, int)})
+        if payload["action_plan"].get("state") == "written":
+            identity = protected_terms.redact(payload["action_plan"], mentions)
+            if identity.get("removed"):
+                payload["action_plan"]["protected_terms"] = identity
+    except Exception as exc:  # noqa: BLE001 — a plan is never worth the map
+        stages.current().failed("issue_map:action_plan", exc)
+        payload["action_plan"] = {"state": "not_written", "reason": f"{type(exc).__name__}: {exc}"[:200]}
+    publish("action_plan", payload["action_plan"])
+
     # One graph over everything the investigation found, built from the SAME
     # objects the sections are rendered from — so selecting a node can filter
     # the timeline, the actors and the evidence to the same underlying items.
