@@ -349,7 +349,7 @@ def connector_variants(politician: Politician, source: str, budget: int | None =
     """
     if budget is None:
         budget = SOURCE_VARIANT_BUDGET.get(source, 0)
-    name = politician.name
+    name = _for_source(politician.name, source, politician)
     if budget <= 1:
         return [name]
 
@@ -368,8 +368,10 @@ def connector_variants(politician: Politician, source: str, budget: int | None =
     identity_slots = max(0, remaining - probe_slots)
 
     out: list[str] = [name]
-    out.extend(_pending_leads(politician)[:lead_slots])
-    out.extend([v for v in text_variants(politician) if v != name][:identity_slots])
+    out.extend(_for_source(lead, source, politician, phrase=False)
+               for lead in _pending_leads(politician)[:lead_slots])
+    out.extend([_for_source(v, source, politician) for v in text_variants(politician)
+                if v != politician.name][:identity_slots])
 
     probes = probes_for(source)
     if probes and probe_slots:
@@ -378,9 +380,38 @@ def connector_variants(politician: Politician, source: str, budget: int | None =
         # questions or skip whole categories depending on the budget.
         start = (rotation * probe_slots) % len(probes)
         ordered = probes[start:] + probes[:start]
-        out.extend(f'"{name}" {probe}' for probe in ordered[:probe_slots])
+        out.extend(_for_source(f'"{politician.name}" {probe}', source, politician, phrase=False)
+                   for probe in ordered[:probe_slots])
 
     return _dedupe(out)[:budget]
+
+
+#: Sources whose search matches the WORDS anywhere in a document unless they
+#: are quoted. GDELT was sent `Ministry of Health` bare and answered with
+#: every article on earth containing "ministry" and "health" — measured on
+#: 11 Nov 2026: German, Chinese, Portuguese and Russian news, not one item
+#: about Kenya (scripts/relevance_probe.py).
+_PHRASE_SOURCES = frozenset({"gdelt"})
+
+
+def _for_source(query: str, source: str, politician, phrase: bool = True) -> str:
+    """One query as THIS source should be asked it.
+
+    A name of several words is a phrase where the source would otherwise
+    match its words apart; and a subject whose name could be any country's
+    ("Ministry of Health", "National Treasury") is asked for with the market
+    beside it, because the whole world has one. A person's name anchors
+    itself and is never touched by the second rule."""
+    from engine.processing import subject_match
+    from engine.reports import relevance
+
+    q = (query or "").strip()
+    if phrase and source in _PHRASE_SOURCES and " " in q and '"' not in q:
+        q = f'"{q}"'
+    kind = getattr(politician, "subject_type", None) or "politician"
+    if kind not in _PERSON_TYPES and subject_match.is_generic_name(politician.name):
+        q = relevance.anchor_query(q)
+    return q
 
 
 def _pending_leads(politician: Politician) -> list[str]:

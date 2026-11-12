@@ -179,7 +179,9 @@ def plan_run(
         memory = learning.recall(db, politician, connector)
         decision = learning.plan(candidates, memory,
                                  budget=max(budget, len(candidates)) if budget else len(candidates),
-                                 always_first=politician.name)
+                                 # The name query, in whatever form this
+                                 # source is asked it (a phrase, on GDELT).
+                                 always_first=candidates[0] if candidates else politician.name)
         learned[connector] = {
             "remembered": decision["memory_size"],
             "repeated": len(decision["proven"]),
@@ -871,7 +873,16 @@ def _execute_bulk_connector_task(session: Session, run: IngestionRun, task: Inge
     # Against a budget for the RUN, and not after the collection deadline.
     if kind in ("gdelt", "wayback", "curated", "google_news") and not collection_stopped(run_id):
         from engine.ingestion.article_text import enrich_with_article_text
+        from engine.processing import subject_match
 
+        # The download budget is for the run, and it is spent in order. Half
+        # of what a name-search returns is somebody else's news (measured:
+        # 54% of GDELT headlines for the head of state never name him), so
+        # read first the articles whose headline says they are about the
+        # subject, and the rest with whatever is left. A stable sort: within
+        # each group the source's own order stands.
+        gate = subject_match.Gate(name, aliases, getattr(politician, "subject_type", None))
+        mentions.sort(key=lambda m: 0 if gate.judge(m).matched else 1)
         enrich_with_article_text(mentions, run_id=run_id,
                                  should_stop=lambda: collection_stopped(run_id))
     # A connector that came back empty AND recorded a reason is not a source
@@ -960,7 +971,10 @@ def _store_mentions(
         constraint="uq_raw_mentions_politician_platform_hash",
         set_={"text": insert.excluded.text,
               "raw_payload": insert.excluded.raw_payload,
-              "source_url": insert.excluded.source_url},
+              "source_url": insert.excluded.source_url,
+              # Whether it is about the subject was decided on a headline;
+              # it is decided again on the article (processing/subject_match).
+              "link_checked": 0},
         where=func.length(insert.excluded.text) > func.length(RawMention.text),
     ).returning(literal_column("(xmax = 0)").label("inserted"))
     result = session.execute(stmt)

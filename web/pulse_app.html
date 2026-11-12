@@ -994,6 +994,42 @@
     try{ return await api(q); }catch(_){ return null; }
   }
 
+  /** Follow a run by SUBJECT until it ends, when its job id is no use: the
+      engine restarted (the id died with the process) or the poll window ran
+      out. The page used to look once and stop — so after a deploy it showed
+      "Still building this report · 0/16 sections" about a run that no longer
+      existed, and went on showing it. The engine now knows a dead run within
+      seconds (a live one touches its row every few seconds); this asks until
+      the answer is no longer "running". A few failed asks in a row are a
+      restart in progress, not an answer. */
+  async function followRun(name, kind, issue, onUpdate, minutes){
+    const until=Date.now()+(minutes||40)*60000; let misses=0;
+    for(;;){
+      const prog=await fetchProgress(name,kind,issue);
+      if(!prog){ if(++misses>=6) return {status:'unknown'}; }
+      else{
+        misses=0;
+        if(prog.status!=='running') return prog;
+        if(onUpdate) onUpdate(prog);
+        if(Date.now()>until) return Object.assign({},prog,{timedOut:true});
+      }
+      await new Promise(r=>setTimeout(r,4000));
+    }
+  }
+
+  /** A run that died and was started again without the reader asking. Said
+      once, plainly, with the reason the engine gave. */
+  function restartedNote(prog, what){
+    const why=prog&&prog.stalled_reason==='engine_restarted'
+      ? 'The engine was restarted while this '+what+' was being built, so that run was lost.'
+      : 'The run building this '+what+' stopped reporting, so it was abandoned.';
+    const c=noteCard('Started again automatically',
+      why+' A new run has been started for you — everything already collected is kept, '
+      +'so it does not start from nothing.');
+    c.style.borderColor='var(--amber)';
+    return c;
+  }
+
   /** A stored error belongs to THIS run only if it is this run's job.
 
       A failure recorded by an earlier run otherwise outlives it: the current
@@ -1011,11 +1047,14 @@
       by its own corpse. */
   function stalledNote(prog){
     const when=prog&&prog.updated_at?String(prog.updated_at).slice(0,16).replace('T',' '):null;
+    // Which stop it was, when the engine knows: a restart is not a hang.
+    const why=prog&&prog.stalled_reason==='engine_restarted'
+      ? 'The engine was restarted while this was being built, so the run was lost.'
+      : 'The server stopped hearing from this run, so it has been abandoned.';
     const c=noteCard('This run stopped',
-      'The server stopped hearing from this run, so it has been abandoned. Everything below '
-      + 'was finished before it stopped and is stored — press Generate report to start a fresh '
-      + 'run, which builds on what this one already collected.'
-      + (when?' Last update '+when+' UTC.':''));
+      why+' Everything below was finished before it stopped and is stored — run it again to '
+      + 'start a fresh run, which builds on what this one already collected.'
+      + (when?' Last heard from '+when+' UTC.':''));
     c.style.borderColor='var(--amber)';
     return c;
   }
@@ -3639,27 +3678,46 @@
       <div class="row" style="margin-top:14px"><button class="btn" id="grun">Generate report</button>
       <span class="muted" id="gmsg" style="font-size:14px"></span></div>`;
     w.appendChild(form);
+    // Notes about the RUN live above the report, in a box of their own: the
+    // renderer clears `out` on every section that lands, so a note appended
+    // there was wiped by the first redraw.
+    const notes=el('div','');w.appendChild(notes);
     const out=el('div','');w.appendChild(out);
     const run=async()=>{
       const name=$('#q',form).value.trim(); if(!name)return;
       const type=$('#qt',form).value; const btn=$('#grun',form); const msg=$('#gmsg',form);
-      btn.disabled=true; out.innerHTML=''; let jobId=null;
+      btn.disabled=true; out.innerHTML=''; notes.innerHTML=''; let jobId=null;
       // Show what the engine already has for this subject before asking for
       // anything new, so a returning reader starts reading immediately.
       if(LIVE){
         const prior=await fetchProgress(name,'report');
         if(prior&&prior.payload&&Object.keys(prior.payload).length){
-          if(prior.status==='running')out.appendChild(stillRunningNote(prior));
-          else if(prior.status==='stalled')out.appendChild(stalledNote(prior));
+          // In `notes`, not `out`: the renderer clears `out`, so these were
+          // appended and wiped in the same breath. A run that had stalled is
+          // not announced — pressing Generate is the fresh run its note asks for.
+          if(prior.status==='running')notes.appendChild(stillRunningNote(prior));
           renderReport(out,prior.payload,{live:true,partial:prior.status==='running',
             sections_ready:prior.sections_ready,stage:prior.stage});
         }
       }
       const tick=(m)=>{msg.innerHTML='<span class="spinner"></span> '+m;};
-      try{
-        if(!LIVE) throw new Error('demo');
-        tick('Planning ingestion…');
-        const days=parseInt(($('#qd',form)||{}).value||'30',10)||30;
+      const days=parseInt(($('#qd',form)||{}).value||'30',10)||30;
+      // Render each section the moment the server publishes it. Re-rendering
+      // only when the finished set actually changes keeps the page still
+      // while the reader is on it, and the scroll position is held so a
+      // section arriving doesn't yank them back to the top.
+      let lastReady='';
+      const drawPartial=(payload,ready,stage)=>{
+        if(!payload||!Object.keys(payload).length)return;
+        const sig=(ready||[]).join(',');
+        if(sig===lastReady)return;
+        lastReady=sig;
+        const y=window.scrollY;
+        renderReport(out,payload,{live:true,partial:true,sections_ready:ready,stage:stage});
+        window.scrollTo(0,y);
+      };
+      // One run, from the request to the report on the page.
+      const attempt=async()=>{
         const j=await api('/api/report',{method:'POST',body:JSON.stringify({name,type,days})});
         jobId=j.job_id;
         // A second Generate re-attaches to the run already in flight rather
@@ -3667,48 +3725,64 @@
         // the elapsed counter restarts from zero on re-attach, which otherwise
         // reads exactly like the run starting over.
         if(j.already_running)
-          out.appendChild(noteCard('Already running',
+          notes.appendChild(noteCard('Already running',
             'A run for this subject was already in progress, so this reconnected to it '
             + 'instead of starting a second one. The timer below counts from when you '
             + 'reconnected, not from when the run began.'));
         tick('Scraping sources & reading every mention…');
-        // Render each section the moment the server publishes it. Re-rendering
-        // only when the finished set actually changes keeps the page still
-        // while the reader is on it, and the scroll position is held so a
-        // section arriving doesn't yank them back to the top.
-        let lastReady='';
         const done=await pollJob(j.job_id,(i,job)=>{
           tick(esc(job.stage||'Analysing…')+' ('+(i*2)+'s)');
-          if(!job.partial)return;
-          const ready=(job.sections_ready||[]).join(',');
-          if(ready===lastReady)return;
-          lastReady=ready;
-          const y=window.scrollY;
-          renderReport(out,job.partial,{live:true,partial:true,
-            sections_ready:job.sections_ready,stage:job.stage});
-          window.scrollTo(0,y);
+          drawPartial(job.partial,job.sections_ready,job.stage);
         });
         msg.textContent='';
         if(done.ok && done.report) renderReport(out,done.report,done);
         else out.appendChild(errCard(done.error||'Report generation failed.'));
+      };
+      try{
+        if(!LIVE) throw new Error('demo');
+        tick('Planning ingestion…');
+        for(let restarts=0;;){
+          try{ await attempt(); break; }
+          catch(e){
+            if(!(e.jobLost || e.stillRunning)) throw e;
+            // The job id is gone (the engine restarted) or the poll window
+            // ran out. Neither is a failed report: follow the run by subject
+            // until the engine says how it ended.
+            const end=await followRun(name,'report',null,prog=>{
+              tick(esc(prog.stage||'Analysing…'));
+              drawPartial(prog.payload,prog.sections_ready,prog.stage);
+            });
+            msg.textContent='';
+            const stored=end.payload&&Object.keys(end.payload).length;
+            if(end.status==='done' && stored){ renderReport(out,end.payload,{live:true}); break; }
+            if(end.status==='stalled' && restarts<1){
+              // The run is dead — the engine restarted under it, or it stopped
+              // reporting. Start it again, once, and say so. The corpus is
+              // stored, so the second run does not begin from nothing.
+              restarts++; lastReady='';
+              notes.appendChild(restartedNote(end,'report'));
+              tick('Starting the report again…');
+              continue;
+            }
+            if(stored){
+              out.innerHTML='';
+              renderReport(out,end.payload,{live:true,partial:end.status==='running',
+                sections_ready:end.sections_ready,stage:end.stage});
+              notes.appendChild(end.status==='stalled'?stalledNote(end)
+                :end.status==='running'?stillRunningNote(end)
+                :noteCard('Stored result','What the engine has stored for this subject.'));
+            } else if(errorBelongsToRun(end,jobId)){
+              out.appendChild(errCard(end.error));
+            } else if(end.status==='stalled'){
+              notes.appendChild(stalledNote(end));
+            } else {
+              out.appendChild(workingNote(end.status==='unknown'?null:end, name));
+            }
+            break;
+          }
+        }
       }catch(e){
         msg.textContent='';
-        if(LIVE && (e.jobLost || e.stillRunning)){
-          // Neither of these is a failed report. Show every section the engine
-          // has stored and say plainly what is still happening.
-          const prog=await fetchProgress(name,'report');
-          if(prog&&prog.payload&&Object.keys(prog.payload).length){
-            out.innerHTML='';
-            out.appendChild(stillRunningNote(prog));
-            renderReport(out,prog.payload,{live:true,partial:prog.status!=='done',
-              sections_ready:prog.sections_ready,stage:prog.stage});
-          } else if(errorBelongsToRun(prog,jobId)){
-            out.appendChild(errCard(prog.error));
-          } else {
-            out.appendChild(workingNote(prog, name));
-          }
-          return;
-        }
         if(!LIVE){ renderReport(out,DEMO.report,{live:false}); out.prepend(noteCard('Sample','The analysis engine could not be reached, so nothing was searched. Below is a sample report about a fictional person, to show what a report contains. Try again in a minute; if you are setting this up, point Settings at the engine.')); }
         else out.appendChild(el('div','card',`<div class="row" style="gap:10px"><span class="pill neg">error</span><span>Report call failed: ${esc(e.message||e)}</span></div>
           <div class="muted" style="font-size:13px;margin-top:10px">${httpCause(e)}</div>`));
@@ -4725,6 +4799,23 @@
     return c;
   }
 
+  /** Items a search returned that were not about the subject — a foreign-
+      language article, another person with the same surname, a passing
+      mention — counted with examples, so nothing is dropped unseen. */
+  function renderSubjectFilter(sf){
+    if(!sf||!sf.examined)return null;
+    const aside=(sf.set_aside||0)+(sf.unverified||0);
+    const c=deepCard('Not about the subject',
+      `${fmt(aside)} of ${fmt(sf.examined)} search results set aside; ${fmt(sf.about_the_subject)} name them`);
+    Object.entries(sf.reasons||{}).forEach(([why,n])=>{
+      const ex=((sf.examples||{})[why]||[]).map(t=>`<div class="muted" style="font-size:12.5px;margin-top:3px">“${esc(t)}”</div>`).join('');
+      c.appendChild(el('div','mentr',`<b>${fmt(n)}</b> — ${esc(why)}${ex}`));
+    });
+    if(sf.earlier_links_withdrawn)c.appendChild(el('div','muted',
+      `${fmt(sf.earlier_links_withdrawn)} item(s) an earlier run had counted were withdrawn.`));
+    return c;
+  }
+
   /** What the disambiguation gate filtered out. Filtering nobody can see is
       indistinguishable from data loss. */
   function renderEvidenceGate(gate){
@@ -4814,6 +4905,7 @@
       renderClaims(r.claims,r.verification),
       renderOpenQuestions(r.open_questions,r.investigation_leads),
       renderScoringCoverage(r.sentimentScoring),
+      renderSubjectFilter(r.subjectFilter),
       renderRecency(r.recency,r.volume),
       renderEvidenceGate(r.evidence_gate),
       renderDataCoverage(r.dataCoverage),
@@ -5461,11 +5553,13 @@
       <div style="margin-top:12px"><label class="fl">Desired outcome (optional — INPUT 2)</label>
         <input id="do" placeholder="e.g. a softer levy regime"></div>
       <div class="row" style="margin-top:14px"><button class="btn" id="mrun">Map it</button><span class="muted" id="mmsg" style="font-size:14px"></span></div>`;
-    w.appendChild(form);const out=el('div','');w.appendChild(out);
+    w.appendChild(form);
+    const notes=el('div','');w.appendChild(notes);
+    const out=el('div','');w.appendChild(out);
     const run=async()=>{
       const principal=$('#pr',form).value.trim(),issue=$('#is',form).value.trim();
       if(!principal||!issue)return;const days=parseInt($('#dy',form).value)||365;
-      const btn=$('#mrun',form),msg=$('#mmsg',form);btn.disabled=true;out.innerHTML='';let jobId=null;
+      const btn=$('#mrun',form),msg=$('#mmsg',form);btn.disabled=true;out.innerHTML='';notes.innerHTML='';let jobId=null;
       if(LIVE){
         const prior=await fetchProgress(principal,'issue_map',issue);
         if(prior&&prior.payload&&prior.payload.intersection){
@@ -5475,8 +5569,7 @@
           // run appeared to come back with "Analysed 0 of 2" seconds after it
           // started.
           renderIssueUnder(out,
-            prior.status==='stalled' ? stalledNote(prior)
-            : prior.status==='running' ? stillRunningNote(prior)
+            prior.status==='running' ? stillRunningNote(prior)
               : noteCard('Previous result',
                   'The stored map from the last run of this pair. The new run is in '
                   +'progress and replaces this as its sections land.'),
@@ -5484,62 +5577,89 @@
         }
       }
       const tick=m=>msg.innerHTML='<span class="spinner"></span> '+m;
-      try{
-        if(!LIVE)throw new Error('demo');
-        tick('Building intersection corpus…');
+      // Four analysts land separately; re-render each time another section
+      // of the map arrives, not just on the first one. The research plan
+      // and the graph arrive on their own — they are not keys of the
+      // intersection, so watching the intersection alone left the plan
+      // invisible until the run finished.
+      let lastFilled='';
+      const drawPartial=pm=>{
+        if(!pm||!pm.intersection)return;
+        const filled=Object.keys(pm.intersection)
+          .filter(k=>{const v=pm.intersection[k];return v&&v.length;}).sort().join(',')
+          +'|'+((pm.research_plan||[]).length)
+          +'|'+(((pm.issue_graph||{}).stats||{}).edges||0)
+          +'|'+(pm.issue_framework?'fw':'');
+        if(filled===lastFilled)return;
+        lastFilled=filled;
+        const y=window.scrollY;
+        renderIssue(out,pm);
+        window.scrollTo(0,y);
+      };
+      // One map, from the request to the result on the page.
+      const attempt=async()=>{
         const j=await api('/api/issue-map',{method:'POST',body:JSON.stringify({principal,issue,days,desired_outcome:$('#do',form).value.trim()||null})});
         jobId=j.job_id;
+        if(j.already_running)
+          notes.appendChild(noteCard('Already running',
+            'A map of this pair was already being built, so this reconnected to it '
+            +'instead of starting a second one.'));
         // The map runs the full acquisition stack now — dozens of queries and
         // an 80-probe discovery sweep — so it is a long run. Show the stage the
         // engine reports, and render the intersection the moment the analyst
         // returns it, before the framework view is built on top.
-        let lastFilled='';
         const done=await pollJob(j.job_id,(i,job)=>{
           tick(esc(job.stage||'Reading the intersection…')+' ('+(i*2)+'s)');
-          const pm=job.partial_issue_map;
-          if(!pm||!pm.intersection)return;
-          // Four analysts land separately; re-render each time another section
-          // of the map arrives, not just on the first one. The research plan
-          // and the graph arrive on their own — they are not keys of the
-          // intersection, so watching the intersection alone left the plan
-          // invisible until the run finished.
-          const filled=Object.keys(pm.intersection)
-            .filter(k=>{const v=pm.intersection[k];return v&&v.length;}).sort().join(',')
-            +'|'+((pm.research_plan||[]).length)
-            +'|'+(((pm.issue_graph||{}).stats||{}).edges||0)
-            +'|'+(pm.issue_framework?'fw':'');
-          if(filled===lastFilled)return;
-          lastFilled=filled;
-          const y=window.scrollY;
-          renderIssue(out,pm);
-          window.scrollTo(0,y);
+          drawPartial(job.partial_issue_map);
         });
         msg.textContent='';
         if(done.ok&&done.issue_map)renderIssue(out,done.issue_map);
         else out.appendChild(errCard(done.error||'Issue map failed.'));
-      }catch(e){msg.textContent='';
-        if(!LIVE){renderIssue(out,DEMO.issue);out.prepend(noteCard('Sample','The analysis engine could not be reached, so nothing was searched. Below is a sample map about a fictional person.'));}
-        else if(e.jobLost || e.stillRunning){
-          // The engine restarted mid-run. The map is stored as soon as it
-          // finishes, so ask for it by subject rather than by a job id that
-          // no longer exists anywhere.
-          const prog=await fetchProgress(principal,'issue_map',issue);
-          if(prog&&prog.payload&&prog.payload.intersection){
-            renderIssueUnder(out, prog.status!=='done'?stillRunningNote(prog):null,
-                             prog.payload);
-          } else if(errorBelongsToRun(prog,jobId)){
-            out.appendChild(errCard(prog.error));
-          } else {
-            try{
-              const rec=await api('/api/issue-map/latest?principal='+encodeURIComponent(principal)+'&issue='+encodeURIComponent(issue));
-              renderIssueUnder(out, noteCard('Recovered',
-                'The most recent stored map for this pair — re-run to refresh it.'),
-                rec.issue_map);
-            }catch(_){
-              out.appendChild(workingNote(prog, principal+' × '+issue));
+      };
+      try{
+        if(!LIVE)throw new Error('demo');
+        tick('Building intersection corpus…');
+        for(let restarts=0;;){
+          try{ await attempt(); break; }
+          catch(e){
+            if(!(e.jobLost || e.stillRunning)) throw e;
+            // The job id is gone (the engine restarted) or the poll window
+            // ran out. Follow the map by subject until the engine says how
+            // it ended, rather than looking once and stopping.
+            const end=await followRun(principal,'issue_map',issue,prog=>{
+              tick(esc(prog.stage||'Reading the intersection…'));
+              drawPartial(prog.payload);
+            });
+            msg.textContent='';
+            const stored=end.payload&&end.payload.intersection;
+            if(end.status==='done' && stored){ renderIssue(out,end.payload); break; }
+            if(end.status==='stalled' && restarts<1){
+              restarts++; lastFilled='';
+              notes.appendChild(restartedNote(end,'map'));
+              tick('Starting the map again…');
+              continue;
             }
+            if(stored){
+              renderIssueUnder(out, end.status==='stalled'?stalledNote(end)
+                :end.status==='running'?stillRunningNote(end):null, end.payload);
+            } else if(errorBelongsToRun(end,jobId)){
+              out.appendChild(errCard(end.error));
+            } else {
+              try{
+                const rec=await api('/api/issue-map/latest?principal='+encodeURIComponent(principal)+'&issue='+encodeURIComponent(issue));
+                renderIssueUnder(out, noteCard('Recovered',
+                  'The most recent stored map for this pair — re-run to refresh it.'),
+                  rec.issue_map);
+              }catch(_){
+                out.appendChild(end.status==='stalled'?stalledNote(end)
+                  :workingNote(end.status==='unknown'?null:end, principal+' × '+issue));
+              }
+            }
+            break;
           }
         }
+      }catch(e){msg.textContent='';
+        if(!LIVE){renderIssue(out,DEMO.issue);out.prepend(noteCard('Sample','The analysis engine could not be reached, so nothing was searched. Below is a sample map about a fictional person.'));}
         else out.appendChild(errCard('Engine error: '+e.message));}
       finally{btn.disabled=false;}
     };

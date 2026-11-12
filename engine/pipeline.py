@@ -173,6 +173,48 @@ def _as_corpus_dicts(rows) -> list[dict]:
     ]
 
 
+def _parent_states(db: Session, politician: Politician, politician_entity, keys: set,
+                   window_rows: list, links: dict, newly_linked: dict) -> dict:
+    """For each key a reaction names its post by: is that post the subject's
+    ("linked"), not yet known ("unverified" — a headline over an unread
+    article), or absent. Read from the rows this run holds and, for a post
+    outside the report's window, from the store."""
+    from engine.processing import subject_match
+
+    state: dict[str, str] = {}
+    if not keys:
+        return state
+
+    def note(row, linked: bool) -> None:
+        for key in subject_match.own_keys(row) & keys:
+            if linked:
+                state[key] = "linked"
+            elif not row.link_checked:
+                state.setdefault(key, "unverified")
+
+    in_window = set()
+    for row in window_rows:
+        if row.source_type == "comment":
+            continue
+        in_window.add(row.id)
+        note(row, row.id in links or row.id in newly_linked)
+    missing = [k for k in keys if k not in state]
+    if missing:
+        found = (
+            db.query(RawMention, MentionEntity.id)
+            .outerjoin(MentionEntity, (MentionEntity.mention_id == RawMention.id)
+                       & (MentionEntity.entity_id == politician_entity.id))
+            .filter(RawMention.politician_id == politician.id,
+                    RawMention.source_type != "comment",
+                    RawMention.source_url.in_(missing))
+            .all()
+        )
+        for row, link_id in found:
+            if row.id not in in_window:
+                note(row, link_id is not None)
+    return state
+
+
 def _per_mention_workers() -> int:
     """How wide the highest-volume model stage runs.
 
@@ -328,18 +370,83 @@ def run_analysis(
         e = m.engagement_json or {}
         return sum(int(e.get(k, 0) or 0) for k in ("likes", "shares", "comments", "views"))
 
+    # ------------------------------------------------------------------
+    # Who is each item about? Decided on its own words, before anything
+    # is counted (processing/subject_match.py).
+    #
+    # Every result from a source that searches BY the subject's name used
+    # to be linked to them unread — "on-topic by construction" — and a
+    # report on a ministry then carried German, Chinese and Russian health
+    # news as coverage of it. A search returning an item is a reason to
+    # look at it; the item is the subject's only when its own words say
+    # so. Links an earlier run made on the old assumption are judged again
+    # here, so a stored corpus is cleaned the first time it is read.
+    # ------------------------------------------------------------------
+    from engine.processing import subject_match
+
+    gate = subject_match.gate_for(politician)
+    gate_tally = subject_match.Tally()
+    window_rows = db.query(RawMention).filter(*window_filter).all()
+    links = {
+        link.mention_id: link
+        for link in (
+            db.query(MentionEntity)
+            .join(RawMention, RawMention.id == MentionEntity.mention_id)
+            .filter(MentionEntity.entity_id == politician_entity.id, *window_filter)
+            .all()
+        )
+    }
+
+    def _searched_by_name(mention: RawMention) -> bool:
+        src = (mention.raw_payload or {}).get("source")
+        return isinstance(src, str) and src in subject_match.SEARCHED_BY_NAME
+
+    newly_linked: dict[str, dict] = {}
+    for mention in window_rows:
+        if mention.source_type == "comment":
+            continue
+        link = links.get(mention.id)
+        assumed = link is not None and str(link.match_type or "").startswith("targeted_")
+        if link is not None and not assumed:
+            gate_tally.examined += 1
+            gate_tally.about += 1          # judged on its words already
+            continue
+        if not (assumed or _searched_by_name(mention)):
+            continue                        # the name-or-alias check below reads it
+        verdict = gate.judge(mention)
+        gate_tally.record(verdict, mention)
+        if verdict.matched:
+            if assumed:
+                link.match_type, link.confidence = verdict.match_type, verdict.confidence
+            else:
+                newly_linked[mention.id] = {"matched": True, "match_type": verdict.match_type,
+                                            "confidence": verdict.confidence}
+            continue
+        if assumed:
+            db.delete(link)
+            links.pop(mention.id, None)
+            gate_tally.unlinked += 1
+        # Decided, or the third answer: a headline that does not name them
+        # over an article nobody has read. That one is judged again when
+        # the article is.
+        mention.link_checked = 1 if verdict.final else 0
+
     # The first thing a reader gets, and it costs nothing: volume, platform
     # spread, recency and the loudest mentions are arithmetic over rows we
     # already hold. This used to be computed alongside sentiment and narratives
     # and therefore arrived only after entity linking, people extraction and
     # whole-corpus scoring — the longest stretch of a run. A reader waited ten
-    # minutes to be told how many mentions there were.
+    # minutes to be told how many mentions there were. It counts what the
+    # gate above found to be ABOUT the subject — it used to count everything
+    # collected, which is how a report opened on a mention count of which a
+    # share was other people's news.
     if on_section is not None:
         try:
             from engine.reports.generator import corpus_preview
 
             preview = corpus_preview(
-                _as_corpus_dicts(db.query(RawMention).filter(*window_filter).all()),
+                _as_corpus_dicts([m for m in window_rows
+                                  if m.id in links or m.id in newly_linked]),
                 window_end,
             )
             for _key, _value in preview.items():
@@ -357,73 +464,91 @@ def run_analysis(
 
     _llm_cap = settings.low_memory_max_llm_mentions if settings.low_memory else settings.max_llm_mentions
 
-    unchecked = db.query(RawMention).filter(*window_filter, RawMention.link_checked == 0).all()
-
-    # Sources that fetch BY the subject's name are on-topic by construction —
-    # a Google News / GDELT / Reddit / YouTube / Wikipedia / X result returned
-    # for a "John Mbadi" query is about John Mbadi. Auto-linking them (instead of
-    # gambling on an LLM yes/no that can wrongly drop the FEW items we get when
-    # data is thin) is the difference between a real report and "no data yet".
-    _TARGETED_SOURCES = {"google_news_rss", "gdelt", "reddit", "youtube", "wikipedia", "scweet", "twscrape"}
-
-    def _needs_llm_link(mention: RawMention) -> bool:
-        src = (mention.raw_payload or {}).get("source")
-        if not isinstance(src, str):
-            src = ""  # some feeds nest `source` as a dict; never hash a dict
-        return not (src in _TARGETED_SOURCES and mention.source_type != "comment")
+    # Everything the gate does not own: sources that do not search by name
+    # (curated feeds, the paid social backbone, discovered documents) and
+    # every reaction. These were never linked on an assumption — a literal
+    # name or alias, or the model where a keyword hints at an indirect
+    # reference — and that is unchanged.
+    unchecked = [m for m in window_rows
+                 if m.link_checked == 0 and m.id not in links and m.id not in newly_linked
+                 and (m.source_type == "comment" or not _searched_by_name(m))]
 
     # Linking decides whether a mention is analysed AT ALL, so it must not be
     # capped wholesale — an unlinked mention is indistinguishable from evidence
-    # that was never collected. For targeted sources linking is free (no model
-    # call), so every one of those is linked, however many there are. Only the
-    # mentions that genuinely need an LLM adjudication are bounded, and the
-    # remainder carry over to the next incremental run.
-    llm_link_needed = [m for m in unchecked if _needs_llm_link(m)]
-    if len(llm_link_needed) > _llm_cap:
-        keep = {m.id for m in sorted(llm_link_needed, key=_engagement, reverse=True)[:_llm_cap]}
-        unchecked = [m for m in unchecked if not _needs_llm_link(m) or m.id in keep]
-
-    # People extraction is enrichment rather than gating, so it is bounded
-    # independently of linking.
-    people_budget = {
-        m.id for m in sorted(unchecked, key=_engagement, reverse=True)[:_llm_cap]
-    }
+    # that was never collected. The name-or-alias check is free and reads
+    # every one; only where a keyword can send an item to the model is the
+    # number bounded, and the remainder carry over to the next run.
+    if len(unchecked) > _llm_cap and (politician.keywords or []):
+        keep = {m.id for m in sorted(unchecked, key=_engagement, reverse=True)[:_llm_cap]}
+        unchecked = [m for m in unchecked if m.id in keep]
 
     def link_only(mention: RawMention) -> dict | None:
-        if not _needs_llm_link(mention):
-            src = (mention.raw_payload or {}).get("source")
-            return {"matched": True, "match_type": f"targeted_{src}", "confidence": 0.75}
-
-        link = entities.detect_entity_link(
+        return entities.detect_entity_link(
             mention.text, politician.name, politician.aliases or [], politician.keywords or []
         )
-        if not link and mention.source_type == "comment":
-            # A comment under a post about the politician is relevant even
-            # when the comment text never names them — that's most grassroots
-            # reaction. The orchestrator tags comments with their parent post.
-            parent = (mention.raw_payload or {}).get("_parent_post")
-            if parent:
-                link = {"matched": True, "match_type": "comment_on_linked_post", "confidence": 0.7}
-        return link
 
     with ThreadPoolExecutor(max_workers=_per_mention_workers()) as pool:
         link_results = list(pool.map(link_only, unchecked))
+
+    # A reaction under a post is about the subject when the POST is — and
+    # only then. It used to be linked whenever it had a parent at all, so
+    # the comments under a video the search returned by mistake came in as
+    # the public's reaction to the subject.
+    comment_parents: dict[str, set] = {}
+    for mention, link in zip(unchecked, link_results):
+        if not link and mention.source_type == "comment":
+            comment_parents[mention.id] = subject_match.parent_keys(mention)
+    for mention in window_rows:
+        link = links.get(mention.id)
+        if (mention.source_type == "comment" and link is not None
+                and link.match_type == "comment_on_linked_post"):
+            comment_parents[mention.id] = subject_match.parent_keys(mention)
+    parent_state = _parent_states(
+        db, politician, politician_entity,
+        set().union(*comment_parents.values()) if comment_parents else set(),
+        window_rows, links, newly_linked)
+    undecided: set[str] = set()
+    for mention, link in zip(unchecked, link_results):
+        if link:
+            newly_linked[mention.id] = link
+            continue
+        states = {parent_state.get(k) for k in comment_parents.get(mention.id, ())}
+        if "linked" in states:
+            newly_linked[mention.id] = {"matched": True, "match_type": "comment_on_linked_post",
+                                        "confidence": 0.7}
+        elif "unverified" in states:
+            undecided.add(mention.id)      # its post has not been read yet
+    for mention in window_rows:
+        link = links.get(mention.id)
+        if (mention.source_type == "comment" and link is not None
+                and link.match_type == "comment_on_linked_post"):
+            states = {parent_state.get(k) for k in comment_parents.get(mention.id, ())}
+            if "linked" not in states:
+                db.delete(link)
+                links.pop(mention.id, None)
+                gate_tally.unlinked += 1
+                mention.link_checked = 0 if "unverified" in states else 1
+
+    # People extraction is enrichment rather than gating, so it is bounded
+    # independently of linking.
+    by_id = {m.id: m for m in window_rows}
+    fresh = [by_id[mid] for mid in newly_linked if mid in by_id]
+    people_budget = {m.id for m in sorted(fresh, key=_engagement, reverse=True)[:_llm_cap]}
 
     # People extraction, batched over the whole set in one pass rather than a
     # round-trip per mention. This was the last unbatched per-item stage left,
     # and at a few hundred mentions it was most of the wall-clock of a report:
     # on a rate-limited backend, ~300 serialised calls is the difference
     # between a report that finishes and one that times out.
-    linked_for_people = [
-        (m.id, m.text) for m, link in zip(unchecked, link_results)
-        if link and m.id in people_budget
-    ]
+    linked_for_people = [(m.id, m.text) for m in fresh if m.id in people_budget]
     people_by_mention = entities.extract_people_items(linked_for_people, politician.name)
 
-    for mention, link in zip(unchecked, link_results):
+    for mention in unchecked:
+        if mention.id not in undecided:
+            mention.link_checked = 1
+    for mention in fresh:
+        link = newly_linked[mention.id]
         mention.link_checked = 1
-        if not link:
-            continue
         people = people_by_mention.get(mention.id, [])
         db.add(
             MentionEntity(
@@ -445,6 +570,7 @@ def run_analysis(
                 )
             )
     db.flush()
+    subject_filter = gate_tally.summary()
 
     stages.current().lap("linking")
     if settings.socialcrawl_api_key and settings.transcripts_per_run > 0:
@@ -643,6 +769,10 @@ def run_analysis(
     if scoring_report:
         payload["sentiment_scoring"] = scoring_report
         publish("sentiment_scoring", scoring_report)
+    # What the subject gate kept and set aside, with examples: an item set
+    # aside must be said (processing/subject_match.py).
+    payload["subject_filter"] = subject_filter
+    publish("subject_filter", subject_filter)
 
     # The rule-based payload is complete here — sentiment, volume, narratives,
     # influence and the network are all computed. That is the entire overview,

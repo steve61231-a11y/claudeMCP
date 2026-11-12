@@ -176,6 +176,81 @@ _JOB_TTL_SECONDS = 3600
 #: being nowhere near the hours a real run can take.
 _JOB_SILENCE_SECONDS = 1800
 
+#: When this process started. A stored run whose last sign of life predates
+#: it, and which this process is not running, was being run by a process that
+#: no longer exists.
+_BOOT_TIME = datetime.utcnow()
+
+#: How often a live run says so, and how long without it before the stored
+#: row is known to be dead.
+#:
+#: A deploy on 10 Nov 2026 restarted the engine while a report was being
+#: built. The run died with the process; its stored row went on saying
+#: "running", and the only test for a dead run was thirty minutes of silence
+#: — so the page told the reader "Still building this report · 0/16
+#: sections" about a run nobody was running, for half an hour. Silence
+#: between SECTIONS cannot be a short test, because the stretch before the
+#: first section is legitimately minutes long. So a live run now touches its
+#: row every few seconds from a thread of its own, whatever stage it is in,
+#: and a row that has gone ninety seconds without that is dead — said to the
+#: reader at once, and the page starts the run again by itself.
+_RUN_HEARTBEAT_SECONDS = 15
+_RUN_DEAD_AFTER_SECONDS = 90
+
+
+def _touch_progress(job_id: str) -> None:
+    """One run's sign of life. Never raises; a heartbeat that cannot be
+    written is retried at the next beat, and costs the run nothing."""
+    from sqlalchemy import text
+
+    db = None
+    try:
+        db = SessionLocal()
+        db.execute(text("UPDATE run_progress SET updated_at = :now "
+                        "WHERE job_id = :job AND status = 'running'"),
+                   {"now": datetime.utcnow(), "job": job_id})
+        db.commit()
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+
+class _Heartbeat(threading.Thread):
+    """The thread that says a run is alive. Its own class, so it is never
+    mistaken for a run's worker by anything counting the runs started."""
+
+
+def _start_run(job_id: str, target, args: tuple) -> threading.Thread:
+    """Start a run's worker and, beside it, the thread that says it is alive.
+
+    The heartbeat follows the WORKER's life, not the job's status: a worker
+    that died without marking its job stops beating, and is found out in
+    ninety seconds rather than thirty minutes."""
+    worker = threading.Thread(target=target, args=args, daemon=True)
+
+    def beat() -> None:
+        while worker.is_alive():
+            worker.join(_RUN_HEARTBEAT_SECONDS)
+            job = _jobs.get(job_id)
+            if worker.is_alive() and job is not None and job.get("status") == "running":
+                _touch_progress(job_id)
+
+    worker.start()
+    _Heartbeat(target=beat, daemon=True).start()
+    return worker
+
+
+def _runs_in_flight() -> int:
+    """How many runs this process is building now — a count, never a name.
+    A deploy restarts the process and takes these with it, so anything about
+    to deploy can ask first."""
+    return sum(1 for job in list(_jobs.values()) if job.get("status") == "running")
+
 
 def _evict_stale_jobs() -> None:
     """Drop finished jobs older than the TTL.
@@ -613,6 +688,8 @@ def _build_frontend_payload(politician: Politician, report) -> dict:
         # why anything was lost. Without it, "0 scored" and "genuinely neutral"
         # are the same report.
         "sentimentScoring": payload.get("sentiment_scoring", {}),
+        # Items a search returned that were not about the subject, and why.
+        "subjectFilter": payload.get("subject_filter"),
         # Period-over-period series behind the client's dashboard charts.
         "periodSeries": payload.get("period_series", {}),
         # The worklist: what to act on, what it is about, and whether the
@@ -756,14 +833,23 @@ def _read_progress(subject_key: str, kind: str) -> dict | None:
         # clear it. Report it for what it is. The already-collected payload is
         # still returned: the work it did reach is not lost.
         status = row.status
+        stalled_reason = None
         if status == "running" and row.updated_at:
             from datetime import datetime as _dt
 
             silent = (_dt.utcnow() - row.updated_at).total_seconds()
-            if silent > _JOB_SILENCE_SECONDS:
+            held = (_jobs.get(row.job_id) or {}).get("status") == "running"
+            # A live run touches its row every few seconds (`_start_run`).
+            # One this process is not running, last heard from before this
+            # process existed, died with the process that was running it.
+            if not held and row.updated_at < _BOOT_TIME:
+                status, stalled_reason = "stalled", "engine_restarted"
+            elif silent > _RUN_DEAD_AFTER_SECONDS:
                 status = "stalled"
+                stalled_reason = "stopped_reporting" if held else "engine_restarted"
         return {
             "status": status,
+            "stalled_reason": stalled_reason,
             "job_id": row.job_id,
             "stage": row.stage,
             "sections_ready": row.sections_ready or [],
@@ -1275,9 +1361,7 @@ def generate_report(req: ReportRequest, request: Request, x_api_key: str | None 
     # (see _run_report_job) — never as a substitute for a fresh run.
     _jobs[job_id] = {"status": "running", "created_at": time.time(),
                      "subject": (name.lower(), req.type)}
-    thread = threading.Thread(target=_run_report_job,
-                              args=(job_id, name, req.type, req.days), daemon=True)
-    thread.start()
+    _start_run(job_id, _run_report_job, (job_id, name, req.type, req.days))
     return {"ok": True, "job_id": job_id}
 
 
@@ -1392,11 +1476,18 @@ def create_issue_map(req: IssueMapRequest, request: Request, x_api_key: str | No
     issue = req.issue.strip()
     if not principal or not issue:
         raise HTTPException(status_code=400, detail="principal and issue are both required")
+    # Re-attach to a map of this pair already in flight, as a report does: a
+    # second "Map it" — or the page restarting a run it wrongly took for dead
+    # — must not launch a rival over the same sources and the same rows.
+    existing = _inflight_job(_subject_key(principal, issue), "issue_map")
+    if existing:
+        return {"ok": True, "job_id": existing, "already_running": True}
     _admit_or_refuse()
     job_id = uuid.uuid4().hex
-    _jobs[job_id] = {"status": "running", "created_at": time.time()}
-    thread = threading.Thread(target=_run_issue_map_job, args=(job_id, principal, issue, req.days, (req.desired_outcome or "").strip() or None), daemon=True)
-    thread.start()
+    _jobs[job_id] = {"status": "running", "created_at": time.time(),
+                     "subject": (_subject_key(principal, issue), "issue_map")}
+    _start_run(job_id, _run_issue_map_job,
+               (job_id, principal, issue, req.days, (req.desired_outcome or "").strip() or None))
     return {"ok": True, "job_id": job_id}
 
 
@@ -2468,6 +2559,10 @@ def health():
         # reads (Hansard, Kenya Law, Parliament…) — public hosts, no
         # subject named, measured in the background (evidence/record_reach.py).
         "record_reach": _record_reach(),
+        # How many runs this process is building now — a count, never a
+        # subject. A deploy restarts the process and kills them, so whoever
+        # is about to deploy can look first.
+        "runs": {"in_flight": _runs_in_flight()},
         # Did the last deploy's migration actually run? See `_schema_state`.
         "schema": schema,
         "uptime_seconds": int(time.time() - _PROCESS_START),

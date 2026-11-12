@@ -70,7 +70,10 @@ def test_the_bare_name_is_always_first():
     were ever dropped, the expansion would be a regression wearing a fix."""
     for source in queries.SOURCE_VARIANT_BUDGET:
         out = queries.connector_variants(_Subject(), source)
-        assert out[0] == "Musalia Mudavadi"
+        # GDELT matches the words apart unless they are quoted, so it is
+        # asked for the name as a phrase (queries._PHRASE_SOURCES).
+        want = '"Musalia Mudavadi"' if source in queries._PHRASE_SOURCES else "Musalia Mudavadi"
+        assert out[0] == want
 
 
 # --- the loop that had no consumer -------------------------------------------
@@ -114,8 +117,8 @@ def test_identities_cannot_crowd_out_the_probes():
 def test_a_budget_of_one_is_the_old_behaviour():
     """An explicit way back to a single query per source, for a host that
     cannot take the traffic."""
-    assert queries.connector_variants(_Subject(), "gdelt", budget=1) == ["Musalia Mudavadi"]
-    assert queries.connector_variants(_Subject(), "gdelt", budget=0) == ["Musalia Mudavadi"]
+    assert queries.connector_variants(_Subject(), "gdelt", budget=1) == ['"Musalia Mudavadi"']
+    assert queries.connector_variants(_Subject(), "gdelt", budget=0) == ['"Musalia Mudavadi"']
 
 
 def test_a_source_nobody_budgeted_for_is_not_expanded():
