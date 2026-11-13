@@ -380,6 +380,26 @@ def enrich_report_payload(
     # arrive. A section that cannot be produced inside the budget is a failed
     # section, and a report with a failed section beats a report that never
     # comes.
+    # The counted version of every analyst section, on the page BEFORE the
+    # analysts are asked anything. A live report sat at "7/16 sections" for
+    # the whole analyst phase — up to its twelve-minute budget — because the
+    # floor below was only built after the last analyst had come back or
+    # timed out. Counting cannot be slow and cannot refuse, so the reader
+    # gets platforms, accounts, dates and terms at once, labelled "derived,
+    # not analysed", and each is replaced the moment its analyst lands. The
+    # run's own payload is not touched: what the analysts write still wins.
+    if mentions:
+        try:
+            from engine.reports import report_floor
+
+            early = dict(payload)
+            for key in report_floor.fill(early, mentions, politician_name):
+                publish(key, early[key])
+            if early.get("derived_sections"):
+                publish("derived_sections", early["derived_sections"])
+        except Exception as exc:  # noqa: BLE001 — an early floor never costs the report
+            stages.current().failed("report_floor:early", exc)
+
     pool = ThreadPoolExecutor(max_workers=min(_cap, len(jobs)))
     from engine.runctx import carry
 
@@ -421,8 +441,10 @@ def enrich_report_payload(
             filled = report_floor.fill(payload, mentions, politician_name)
             for key in filled:
                 publish(key, payload[key])
-            if filled:
-                publish("derived_sections", payload.get("derived_sections"))
+            # Always, even when nothing was filled: the early floor said
+            # which sections were counted, and a section an analyst has
+            # since written must stop being labelled as counted.
+            publish("derived_sections", payload.get("derived_sections") or [])
         except Exception as exc:  # noqa: BLE001 — a floor must never cost a report
             stages.current().failed("report_floor", exc)
 
